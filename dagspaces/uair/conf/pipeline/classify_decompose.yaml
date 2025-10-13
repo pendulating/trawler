@@ -1,16 +1,20 @@
 # @package _global_
+# Pipeline: classify -> decompose (LLM-enabled)
+
 defaults:
   - override /hydra/launcher: slurm_monitor
 
+
 runtime:
   debug: false
+  sample_n: null
 
 pipeline:
   output_root: ${runtime.output_root}
   allow_partial: false
   sources:
     articles:
-      path: ${data.parquet_path}
+      path: ${oc.env:ARTICLES_PATH,${data.parquet_path}}
       type: parquet
   graph:
     nodes:
@@ -28,24 +32,36 @@ pipeline:
           runtime.sample_n: ${runtime.sample_n}
           runtime.debug: ${runtime.debug}
           runtime.use_llm_classify: ${runtime.use_llm_classify}
-          # Model config overrides for 2-GPU setup (g2_slurm_pierson)
+          runtime.job_memory_gb: 48
+          
+          # Model config for 2xGPU setup
           model.engine_kwargs.gpu_memory_utilization: 0.8
           model.engine_kwargs.max_model_len: 8192
-          model.engine_kwargs.max_num_seqs: 4
+          model.engine_kwargs.max_num_seqs: 8
           model.engine_kwargs.enable_prefix_caching: false
+          model.batch_size: 16
         launcher: g2_slurm_pierson
         wandb_suffix: classify
-      topic:
-        stage: topic
-        depends_on:
-          - classify
+
+      decompose:
+        stage: decompose_nbl
+        depends_on: [classify]
         inputs:
           dataset: classify.relevant
         outputs:
-          docs: outputs/topic/docs_topics.parquet
+          results: outputs/decompose/decompose_results.parquet
         overrides:
-          runtime.streaming_io: ${runtime.streaming_io}
+          runtime.streaming_io: false
           runtime.debug: ${runtime.debug}
-          topic.embed.device: cpu
-        launcher: g2_slurm_gpu_1x
-        wandb_suffix: topic
+          runtime.job_memory_gb: 32
+          runtime.use_llm_decompose: true
+          runtime.guided_decoding_decompose: true
+          model.engine_kwargs.max_model_len: 20480
+          model.engine_kwargs.max_num_seqs: 1
+          model.engine_kwargs.gpu_memory_utilization: 0.8
+          model.batch_size: 1
+          sampling_params_decompose_nbl.max_tokens: 2048
+        launcher: g2_slurm_pierson
+        wandb_suffix: decompose_nbl
+
+

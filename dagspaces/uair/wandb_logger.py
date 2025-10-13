@@ -711,15 +711,29 @@ class WandbLogger:
             exp_name = "UAIR"
         
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        
-        # Build name: [group-]experiment-stage-timestamp[-run_id]
+        # Derive pipeline name from Hydra overrides (e.g., pipeline=topic_with_synthesis)
+        pipeline_name = None
+        try:
+            from hydra.core.hydra_config import HydraConfig  # type: ignore
+            hydra_cfg = HydraConfig.get()
+            if hydra_cfg and getattr(hydra_cfg, "job", None):
+                override_dir = getattr(hydra_cfg.job, "override_dirname", None)
+                if override_dir:
+                    for part in str(override_dir).split(","):
+                        p = part.strip()
+                        if p.startswith("pipeline="):
+                            pipeline_name = p.split("=", 1)[1]
+                            break
+        except Exception:
+            # Fallback: allow explicit pipeline name via env if provided
+            pipeline_name = os.environ.get("UAIR_PIPELINE_NAME") or None
+
+        # Build name: [pipeline-]experiment-stage-timestamp
         parts = []
-        if self.wb_config.group:
-            parts.append(self.wb_config.group)
+        if pipeline_name:
+            parts.append(pipeline_name)
         parts.extend([exp_name, self.stage, timestamp])
-        if self.run_id:
-            parts.append(self.run_id)
-        
+
         return "-".join(parts)
     
     def _get_mode(self) -> str:
@@ -980,39 +994,108 @@ class WandbLogger:
             # Apply panel group prefix if specified
             table_key = f"{panel_group}/{key}" if panel_group else key
             
+            # Deduplicate columns by name (keep first occurrence)
+            try:
+                df_local = df.loc[:, ~df.columns.duplicated()]
+            except Exception:
+                df_local = df
+
             # Select columns
-            cols = [c for c in (prefer_cols or []) if c in df.columns]
-            if not cols:
-                cols = list(df.columns)[:12]
+            # For decompose stage, log ALL available columns in inspect_results table,
+            # but drop heavy ndarray/list-like columns that cause schema issues.
+            def _filter_heavy_columns(df_local, candidate_cols):
+                keep = []
+                for c in candidate_cols:
+                    try:
+                        if c in {"generated_tokens", "prompt_token_ids", "embeddings"}:
+                            continue
+                        # Find a representative non-null value
+                        sample = None
+                        for v in df_local[c].values:
+                            if v is not None:
+                                sample = v
+                                break
+                        if sample is not None:
+                            mod = getattr(type(sample), "__module__", "") or ""
+                            name = getattr(type(sample), "__name__", "") or ""
+                            # Exclude numpy arrays (and similar) to avoid Ndarray schema mismatches
+                            if mod.startswith("numpy") or name == "ndarray":
+                                continue
+                        keep.append(c)
+                    except Exception:
+                        # Best-effort: if we can't inspect, keep the column
+                        keep.append(c)
+                return keep
+
+            if (
+                (
+                    self.stage in ("decompose", "decompose_nbl")
+                    and (
+                        panel_group == "inspect_results"
+                        or key.startswith("decompose/")
+                        or key.startswith("decompose_nbl/")
+                    )
+                )
+                or (
+                    self.stage == "classify"
+                    and (panel_group == "inspect_results" or key.startswith("classify/"))
+                )
+            ):
+                cols = _filter_heavy_columns(df_local, list(df_local.columns))
+            else:
+                cols = [c for c in (prefer_cols or []) if c in df_local.columns]
+                if not cols:
+                    cols = list(df_local.columns)[:12]
+                cols = _filter_heavy_columns(df_local, cols)
+
+            # Exclude internal LLM columns for decompose stages
+            if self.stage in ("decompose", "decompose_nbl"):
+                exclude_internals = {
+                    "generated_text",
+                    "llm_output",
+                    "messages",
+                    "params",
+                    "prompt",
+                    "sampling_params",
+                }
+                cols = [c for c in cols if c not in exclude_internals]
             
             # Sample if needed (always use random sampling, not head())
             max_rows = max_rows or self.wb_config.table_sample_rows
-            total_rows = len(df)
+            total_rows = len(df_local)
             
             if total_rows > max_rows:
-                df_sample = df.sample(
+                df_sample = df_local.sample(
                     n=max_rows,
                     random_state=self.wb_config.table_sample_seed
                 ).reset_index(drop=True)
                 sampled = True
             else:
-                df_sample = df.reset_index(drop=True)
+                df_sample = df_local.reset_index(drop=True)
                 sampled = False
+            
+            # Ensure no duplicate columns in the sampled DataFrame
+            try:
+                df_sample = df_sample.loc[:, ~df_sample.columns.duplicated()]
+            except Exception:
+                pass
             
             # Create table
             table = self.wandb.Table(dataframe=df_sample[cols])
             
             # Log table with metadata
+            # Table goes to panel_group (e.g., "inspect_results")
+            # But row counts go to stage-specific panel (use original key, not table_key)
             log_data = {
                 table_key: table,
-                f"{table_key}/rows": len(df_sample),
-                f"{table_key}/total_rows": total_rows,
+                f"{key}/rows": len(df_sample),
+                f"{key}/total_rows": total_rows,
             }
             
             # Add sampling metadata if applicable
             if sampled:
-                log_data[f"{table_key}/sampled"] = True
-                log_data[f"{table_key}/sample_seed"] = self.wb_config.table_sample_seed
+                log_data[f"{key}/sampled"] = True
+                log_data[f"{key}/sample_seed"] = self.wb_config.table_sample_seed
             
             self.wandb.log(log_data)
             

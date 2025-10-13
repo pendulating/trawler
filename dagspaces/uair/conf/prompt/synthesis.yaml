@@ -1,0 +1,65 @@
+# Synthesis stage prompts
+
+# Map phase: Extract article insights
+map_article_prompt: |
+  Analyze this AI news article and extract structured information.
+  
+  Article ID: {article_id}
+  Text: {chunk_text}
+  
+  Extract:
+  1. Primary AI risk/harm type (use taxonomy categories)
+  2. Confidence level (0-1)
+  3. Key entities mentioned (companies, organizations)
+  4. Technology type
+  5. Most relevant quote (verbatim)
+  
+  Be precise and evidence-based.
+
+# Reduce phase: Aggregate insights
+reduce_batch_prompt: |
+  Synthesize these {num_articles} article analyses into a coherent summary.
+  
+  Article Insights:
+  {formatted_insights}
+  
+  Generate:
+  1. Dominant AI risk pattern
+  2. Common themes
+  3. Recurring entities
+  4. Key findings
+  
+  Keep factual and concise.
+
+# Final synthesis: Cluster-level
+synthesis_prompt: |
+  Generate comprehensive synthesis for AI news cluster {cluster_id}.
+  
+  Cluster Metadata:
+  - Total articles: {num_articles}
+  - Top terms: {cluster_top_terms}
+  - Date range: {date_range}
+  - Geographic coverage: {countries}
+  
+  Aggregated Insights:
+  {aggregated_insights}
+  
+  Top Representative Articles:
+  {top_articles}
+  
+  Generate structured synthesis including:
+  1. Primary AI risk type (from taxonomy)
+  2. Risk confidence score
+  3. Common themes (3-5)
+  4. Key entities (companies, orgs)
+  5. Technology types involved
+  6. Geographic/temporal patterns
+  7. Concise narrative summary (2-3 paragraphs)
+  
+  Use evidence from articles to support claims.
+
+system_prompt: |
+  You are an expert AI safety researcher analyzing news articles about AI risks and harms.
+  Your task is to identify patterns, synthesize information, and categorize risks according to 
+  the provided taxonomy. Be precise, evidence-based, and cite specific articles when possible.
+

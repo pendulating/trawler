@@ -18,19 +18,65 @@ try:
 except Exception:
     _RAY_OK = False
 
+try:
+    import yaml  # type: ignore
+    _YAML_OK = True
+except Exception:
+    yaml = None  # type: ignore
+    _YAML_OK = False
+
 def _ensure_ids(pdf: pd.DataFrame) -> pd.DataFrame:
-    if "article_id" not in pdf.columns:
-        try:
-            import hashlib as _h
-            def _gen(r: pd.Series) -> str:
+    # Ensure article_id exists for all rows (deterministic hash of path or text)
+    # Logic matches classify.py for consistency
+    try:
+        import hashlib as _hash
+        if "article_id" not in pdf.columns:
+            print(f"[_ensure_ids] No article_id column found, creating for {len(pdf)} rows...", flush=True)
+            pdf = pdf.copy()
+            pdf["article_id"] = None
+        else:
+            print(f"[_ensure_ids] article_id column exists, checking for missing values...", flush=True)
+            pdf = pdf.copy()
+        
+        def _gen_id_row(r: pd.Series) -> str:
+            try:
                 src = r.get("article_path")
                 if not isinstance(src, str) or src.strip() == "":
                     src = r.get("article_text") or r.get("chunk_text") or ""
-                return _h.sha1(str(src).encode("utf-8")).hexdigest()
-            pdf = pdf.copy()
-            pdf["article_id"] = pdf.apply(_gen, axis=1)
+                return _hash.sha1(str(src).encode("utf-8")).hexdigest()
+            except Exception:
+                return _hash.sha1(str(r.get("article_text") or r.get("chunk_text") or "").encode("utf-8")).hexdigest()
+        
+        try:
+            # Check for missing/invalid article_ids: None, NaN, empty string, or "None" string
+            mask_missing = (
+                pdf["article_id"].isnull() |
+                (pdf["article_id"].astype(str).str.strip() == "") |
+                (pdf["article_id"].astype(str).str.strip() == "None")
+            )
         except Exception:
-            pdf["article_id"] = None
+            mask_missing = True
+        
+        if isinstance(mask_missing, bool):
+            print(f"[_ensure_ids] Generating article_id for all {len(pdf)} rows...", flush=True)
+            pdf["article_id"] = pdf.apply(_gen_id_row, axis=1)
+        else:
+            n_missing = mask_missing.sum()
+            if n_missing > 0:
+                print(f"[_ensure_ids] Generating article_id for {n_missing} missing rows...", flush=True)
+                pdf.loc[mask_missing, "article_id"] = pdf[mask_missing].apply(_gen_id_row, axis=1)
+            else:
+                print(f"[_ensure_ids] All article_ids already present", flush=True)
+        
+        n_unique = pdf["article_id"].nunique()
+        print(f"[_ensure_ids] Result: {len(pdf)} rows, {n_unique} unique article_ids", flush=True)
+    except Exception as e:
+        print(f"[_ensure_ids] ERROR: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        # Don't raise, just pass through - maintains classify.py behavior
+        pass
+    
     return pdf
 
 def _get_logger() -> logging.Logger:
@@ -382,19 +428,32 @@ def run_topic_stage(df, cfg, logger=None):
         pdf = df.to_pandas()
     else:
         pdf = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame([])
+    
+    print(f"[run_topic_stage] Initial input: {len(pdf)} rows", flush=True)
+    
     if pdf is None or len(pdf) == 0:
         _log_event("input_empty", logger=logger)
+        print(f"[run_topic_stage] Input is empty, returning empty DataFrame", flush=True)
         return pd.DataFrame([])
 
     pdf = _ensure_ids(pdf)
+    
     # Gate to relevant rows when present
     try:
         if "is_relevant" in pdf.columns:
+            before_filter = len(pdf)
             pdf = pdf[pdf["is_relevant"].astype(bool) == True]
-    except Exception:
+            after_filter = len(pdf)
+            print(f"[run_topic_stage] Filtered by is_relevant: {before_filter} → {after_filter} rows", flush=True)
+        else:
+            print(f"[run_topic_stage] No is_relevant column, keeping all {len(pdf)} rows", flush=True)
+    except Exception as e:
+        print(f"[run_topic_stage] Error filtering by is_relevant: {e}", flush=True)
         pass
+        
     if len(pdf) == 0:
         _log_event("no_rows_after_gate", logger=logger)
+        print(f"[run_topic_stage] No rows after relevance gate, returning empty DataFrame", flush=True)
         return pd.DataFrame([])
 
     # Environment preflight logging (CUDA / RAPIDS visibility)
@@ -495,16 +554,24 @@ def run_topic_stage(df, cfg, logger=None):
             pdf["chunk_text"] = base
 
     if cluster_on == "chunk" and "chunk_id" in pdf.columns:
+        print(f"[run_topic_stage] Using chunk-level clustering", flush=True)
         df_units = pdf[["article_id", "chunk_id"]].copy()
         df_units["unit_id"] = df_units.apply(lambda r: f"{r['article_id']}__{r['chunk_id']}", axis=1)
         texts = _select_text(pdf, text_pref)
         units = pd.DataFrame({"unit_id": df_units["unit_id"], "text": texts})
+        print(f"[run_topic_stage] Created {len(units)} chunk-level units", flush=True)
     else:
         # collapse to article_id → first/concat text
+        print(f"[run_topic_stage] Using article-level clustering, grouping by article_id", flush=True)
+        n_unique_articles = pdf["article_id"].nunique()
+        n_null_articles = pdf["article_id"].isnull().sum()
+        print(f"[run_topic_stage] Input has {len(pdf)} rows, {n_unique_articles} unique article_ids, {n_null_articles} null article_ids", flush=True)
         texts = _select_text(pdf, text_pref)
         tmp = pd.DataFrame({"article_id": pdf["article_id"], "text": texts})
+        print(f"[run_topic_stage] Grouping {len(tmp)} rows by article_id...", flush=True)
         units = tmp.groupby("article_id", dropna=False)["text"].apply(lambda s: "\n\n".join([t for t in s.tolist() if isinstance(t, str) and t.strip()])).reset_index()
         units = units.rename(columns={"article_id": "unit_id"})
+        print(f"[run_topic_stage] After groupby: {len(units)} unique article units", flush=True)
 
     # Optional sampling to bound memory footprint (prefer runtime.sample_n for consistency across stages)
     try:
@@ -530,6 +597,135 @@ def run_topic_stage(df, cfg, logger=None):
 
     # Progress: units prepared
     _log_event("units_prepared", logger=logger, units=int(len(units)))
+    
+    # Log all topic hyperparameters to W&B config for reproducibility
+    if logger:
+        try:
+            # Extract config values directly to avoid UnboundLocalError
+            _model_name = str(getattr(cfg.topic.embed, "model_source", "nomic-ai/nomic-embed-text-v1.5"))
+            _mat_dim = getattr(cfg.topic.embed, "matryoshka_dim", None)
+            _max_len = getattr(cfg.topic.embed, "max_seq_length", None)
+            _torch_dtype = getattr(cfg.topic.embed, "torch_dtype", None)
+            
+            hyperparams_config = {
+                "topic": {
+                    "cluster_on": cluster_on,
+                    "text_column": text_pref,
+                    "max_tokens_for_embed": max_tok,
+                    "seed": int(getattr(cfg.topic, "seed", 777)),
+                    "sample_max_units": getattr(cfg.topic, "sample_max_units", None),
+                    "tfidf_stop_words": str(getattr(cfg.topic, "tfidf_stop_words", "english"))[:100],  # Truncate if list
+                    "tfidf_max_df": float(getattr(cfg.topic, "tfidf_max_df", 0.90)),
+                    "tfidf_ngram_max": int(getattr(cfg.topic, "tfidf_ngram_max", 2)),
+                    "doc_terms_k": int(getattr(cfg.topic, "doc_terms_k", 10)),
+                    "embed": {
+                        "model_source": _model_name,
+                        "device": str(getattr(cfg.topic.embed, "device", "auto")),
+                        "batch_size": int(getattr(cfg.topic.embed, "batch_size", 64)),
+                        "normalize": bool(getattr(cfg.topic.embed, "normalize", True)),
+                        "trust_remote_code": bool(getattr(cfg.topic.embed, "trust_remote_code", True)),
+                        "matryoshka_dim": (int(_mat_dim) if _mat_dim else None),
+                        "max_seq_length": (int(_max_len) if _max_len else None),
+                        "torch_dtype": str(_torch_dtype) if _torch_dtype else None,
+                    },
+                    "gpu": {
+                        "use_rapids": bool(getattr(getattr(cfg.topic, "gpu", object()), "use_rapids", False)),
+                    },
+                    "reduce": {
+                        "method": str(getattr(cfg.topic.reduce, "method", "umap")),
+                        "n_components": int(getattr(cfg.topic.reduce, "n_components", 15)),
+                        "n_neighbors": int(getattr(cfg.topic.reduce, "n_neighbors", 50)),
+                        "min_dist": float(getattr(cfg.topic.reduce, "min_dist", 0.05)),
+                        "metric": str(getattr(cfg.topic.reduce, "metric", "cosine")),
+                    },
+                    "hdbscan": {
+                        "min_cluster_size": int(getattr(cfg.topic.hdbscan, "min_cluster_size", 10)),
+                        "min_samples": (int(getattr(cfg.topic.hdbscan, "min_samples", 5)) if getattr(cfg.topic.hdbscan, "min_samples", None) else None),
+                        "metric": str(getattr(cfg.topic.hdbscan, "metric", "euclidean")),
+                        "cluster_selection_epsilon": float(getattr(cfg.topic.hdbscan, "cluster_selection_epsilon", 0.0)),
+                    },
+                    "plot": {
+                        "method": str(getattr(getattr(cfg.topic, "plot", object()), "method", "scatter")),
+                    },
+                }
+            }
+            
+            # Add tfidf_stopwords_path if set
+            try:
+                stopwords_path_cfg = str(getattr(cfg, "tfidf_stopwords_path", "") or "")
+                if stopwords_path_cfg and stopwords_path_cfg.lower() not in ("null", "none", ""):
+                    hyperparams_config["topic"]["tfidf_stopwords_path"] = stopwords_path_cfg
+            except Exception:
+                pass
+            
+            # Add runtime settings that affect topic stage
+            try:
+                hyperparams_config["runtime"] = {
+                    "keyword_buffering": bool(getattr(getattr(cfg, "runtime", object()), "keyword_buffering", True)),
+                    "keyword_window_words": int(getattr(getattr(cfg, "runtime", object()), "keyword_window_words", 100)),
+                    "debug": bool(getattr(getattr(cfg, "runtime", object()), "debug", False)),
+                    "sample_n": getattr(getattr(cfg, "runtime", object()), "sample_n", None),
+                }
+            except Exception:
+                pass
+            
+            # Log full config first
+            try:
+                logger.set_config(hyperparams_config)
+                print(f"✓ Logged full config to W&B", flush=True)
+            except Exception as e:
+                print(f"Warning: Failed to log config to W&B: {e}", flush=True)
+            
+            # Log key hyperparameters as summary for easy filtering in W&B UI
+            # Use values from hyperparams_config which are already extracted
+            try:
+                summary_params = {
+                    "topic/config/cluster_on": cluster_on,
+                    "topic/config/text_column": text_pref,
+                    "topic/config/embed_model": hyperparams_config["topic"]["embed"]["model_source"],
+                    "topic/config/embed_device": hyperparams_config["topic"]["embed"]["device"],
+                    "topic/config/embed_batch_size": hyperparams_config["topic"]["embed"]["batch_size"],
+                    "topic/config/embed_normalize": hyperparams_config["topic"]["embed"]["normalize"],
+                    "topic/config/embed_torch_dtype": hyperparams_config["topic"]["embed"].get("torch_dtype", "float16"),
+                    "topic/config/matryoshka_dim": hyperparams_config["topic"]["embed"]["matryoshka_dim"],
+                    "topic/config/max_seq_length": hyperparams_config["topic"]["embed"]["max_seq_length"],
+                    "topic/config/reduction_method": hyperparams_config["topic"]["reduce"]["method"],
+                    "topic/config/n_components": hyperparams_config["topic"]["reduce"]["n_components"],
+                    "topic/config/n_neighbors": hyperparams_config["topic"]["reduce"]["n_neighbors"],
+                    "topic/config/min_dist": hyperparams_config["topic"]["reduce"]["min_dist"],
+                    "topic/config/reduction_metric": hyperparams_config["topic"]["reduce"]["metric"],
+                    "topic/config/min_cluster_size": hyperparams_config["topic"]["hdbscan"]["min_cluster_size"],
+                    "topic/config/min_samples": hyperparams_config["topic"]["hdbscan"]["min_samples"],
+                    "topic/config/hdbscan_metric": hyperparams_config["topic"]["hdbscan"]["metric"],
+                    "topic/config/cluster_selection_epsilon": hyperparams_config["topic"]["hdbscan"]["cluster_selection_epsilon"],
+                    "topic/config/use_rapids": hyperparams_config["topic"]["gpu"]["use_rapids"],
+                    "topic/config/tfidf_max_df": hyperparams_config["topic"]["tfidf_max_df"],
+                    "topic/config/tfidf_ngram_max": hyperparams_config["topic"]["tfidf_ngram_max"],
+                    "topic/config/doc_terms_k": hyperparams_config["topic"]["doc_terms_k"],
+                    "topic/config/seed": hyperparams_config["topic"]["seed"],
+                    "topic/config/max_tokens_for_embed": hyperparams_config["topic"]["max_tokens_for_embed"],
+                }
+                
+                logged_count = 0
+                failed_count = 0
+                for key, value in summary_params.items():
+                    try:
+                        logger.set_summary(key, value)
+                        logged_count += 1
+                    except Exception as e:
+                        print(f"Warning: Failed to log {key}={value} to W&B: {e}", flush=True)
+                        failed_count += 1
+                
+                print(f"✓ Logged {logged_count} hyperparameters to W&B summary (failed: {failed_count})", flush=True)
+            except Exception as e:
+                print(f"Warning: Failed to build summary params: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+            
+        except Exception as e:
+            print(f"Warning: Failed to log topic hyperparameters to W&B: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
     texts_list = [str(t or "") for t in units["text"].tolist()]
     texts_list = _trim_texts(texts_list, max_tok)
@@ -904,29 +1100,108 @@ def run_topic_stage(df, cfg, logger=None):
 
     # Summaries (top terms via TF-IDF) with RAPIDS/cuML when available; fallback to scikit-learn
     try:
-        # Common config
-        min_df_v = 1 if len(texts_list) < 50 else 2
+        # Common config - adjust for very small datasets
+        n_docs = len(texts_list)
+        if n_docs < 10:
+            # Very small dataset: use permissive settings
+            min_df_v = 1
+            max_df_v = 1.0  # Don't filter by max_df
+        elif n_docs < 50:
+            min_df_v = 1
+            max_df_v = min(0.95, float(getattr(getattr(cfg, "topic", object()), "tfidf_max_df", 0.95)))
+        else:
+            min_df_v = 2
+            max_df_v = float(getattr(getattr(cfg, "topic", object()), "tfidf_max_df", 0.95))
+        
+        # Load stopwords from file path if specified, otherwise use config value
+        stop_words_cfg = None
+        stopwords_loaded_from = None
+        
+        # Helper function to load stopwords from a file path
+        def _load_stopwords_from_file(path: str):
+            if not os.path.exists(path):
+                print(f"Warning: Stopwords file not found: {path}", flush=True)
+                return None
+            try:
+                if path.endswith((".yaml", ".yml")) and _YAML_OK:
+                    with open(path, "r", encoding="utf-8") as f:
+                        stopwords_data = yaml.safe_load(f)
+                        if isinstance(stopwords_data, dict) and "stopwords" in stopwords_data:
+                            return stopwords_data["stopwords"]
+                        elif isinstance(stopwords_data, list):
+                            return stopwords_data
+                elif path.endswith(".json"):
+                    with open(path, "r", encoding="utf-8") as f:
+                        stopwords_data = json.load(f)
+                        if isinstance(stopwords_data, dict) and "stopwords" in stopwords_data:
+                            return stopwords_data["stopwords"]
+                        elif isinstance(stopwords_data, list):
+                            return stopwords_data
+                elif path.endswith(".txt"):
+                    with open(path, "r", encoding="utf-8") as f:
+                        return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+            except Exception as e:
+                print(f"Warning: Failed to load stopwords from {path}: {e}", flush=True)
+            return None
+        
+        # Try loading from tfidf_stopwords_path first (global parameter)
         try:
-            stop_words_cfg = getattr(getattr(cfg, "topic", object()), "tfidf_stop_words", "english")
-        except Exception:
-            stop_words_cfg = "english"
-        try:
-            max_df_cfg = getattr(getattr(cfg, "topic", object()), "tfidf_max_df", 0.95)
-        except Exception:
-            max_df_cfg = 0.95
+            stopwords_path = str(getattr(cfg, "tfidf_stopwords_path", "") or "")
+            if stopwords_path and stopwords_path.lower() not in ("null", "none", ""):
+                stop_words_cfg = _load_stopwords_from_file(stopwords_path)
+                if stop_words_cfg:
+                    stopwords_loaded_from = "tfidf_stopwords_path"
+        except Exception as e:
+            print(f"Warning: Failed to process tfidf_stopwords_path: {e}", flush=True)
+        
+        # Fallback to topic.tfidf_stop_words config if no file loaded
+        if stop_words_cfg is None:
+            try:
+                stop_words_cfg = getattr(getattr(cfg, "topic", object()), "tfidf_stop_words", "english")
+                # Check if topic.tfidf_stop_words is also a file path
+                if isinstance(stop_words_cfg, str) and stop_words_cfg.endswith((".yaml", ".yml", ".json", ".txt")):
+                    loaded = _load_stopwords_from_file(stop_words_cfg)
+                    if loaded:
+                        stop_words_cfg = loaded
+                        stopwords_loaded_from = "topic.tfidf_stop_words (file)"
+                    else:
+                        stopwords_loaded_from = "topic.tfidf_stop_words (fallback to string)"
+                elif isinstance(stop_words_cfg, str):
+                    stopwords_loaded_from = f"topic.tfidf_stop_words ({stop_words_cfg})"
+                elif isinstance(stop_words_cfg, list):
+                    stopwords_loaded_from = "topic.tfidf_stop_words (list)"
+            except Exception:
+                stop_words_cfg = "english"
+                stopwords_loaded_from = "default (english)"
         try:
             ngram_max = int(getattr(getattr(cfg, "topic", object()), "tfidf_ngram_max", 3))
         except Exception:
             ngram_max = 3
+        
+        # Log stopwords info
+        stopwords_log_str = str(stop_words_cfg) if isinstance(stop_words_cfg, str) else f"list[{len(stop_words_cfg)}]" if isinstance(stop_words_cfg, list) else "None"
         _log_event(
             "tfidf_start",
             max_features=20000,
             min_df=min_df_v,
-            max_df=float(max_df_cfg),
-            stop_words=str(stop_words_cfg),
+            max_df=float(max_df_v),
+            stop_words=stopwords_log_str,
+            stopwords_source=stopwords_loaded_from,
+            stopwords_count=(len(stop_words_cfg) if isinstance(stop_words_cfg, list) else None),
             ngram_max=int(ngram_max),
-            docs=int(len(texts_list)),
+            docs=int(n_docs),
         )
+        
+        # Log to W&B if available
+        if logger:
+            try:
+                logger.set_summary("topic/config/tfidf_stopwords_source", str(stopwords_loaded_from or "unknown"))
+                if isinstance(stop_words_cfg, list):
+                    logger.set_summary("topic/config/tfidf_stopwords_count", len(stop_words_cfg))
+                elif isinstance(stop_words_cfg, str):
+                    logger.set_summary("topic/config/tfidf_stopwords_type", stop_words_cfg)
+            except Exception:
+                pass
         tfidf_start = time.perf_counter()
         used_gpu = False
         terms = None
@@ -948,24 +1223,34 @@ def run_topic_stage(df, cfg, logger=None):
                     texts_gpu = texts_list
                 # Use cuDF Series input so cuML can apply .str ops internally
                 gser = _cudf.Series(texts_gpu)
-                # Map stop_words to supported form
-                _sw = stop_words_cfg
+                # Map stop_words to supported form (cuML requires list or None)
+                _sw = None
                 try:
-                    if isinstance(_sw, str):
-                        s = _sw.strip().lower()
+                    if isinstance(stop_words_cfg, list):
+                        # Already a list, use as-is
+                        _sw = stop_words_cfg
+                    elif isinstance(stop_words_cfg, str):
+                        s = stop_words_cfg.strip().lower()
                         if s in ("english", "en"):
                             try:
                                 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS as _EN  # type: ignore
                                 _sw = list(_EN)
                             except Exception:
                                 _sw = None
-                except Exception:
-                    _sw = None
+                        else:
+                            # String but not "english" - skip cuML, fall back to sklearn
+                            _log_event("tfidf_gpu_skip", reason=f"stop_words is string (not 'english'): {s[:50]}")
+                            raise ValueError("cuML TF-IDF requires list or 'english', got string")
+                    elif stop_words_cfg is None:
+                        _sw = None
+                except Exception as e:
+                    # Fall back to sklearn
+                    pass
                 cu_vect = _cuTfidf(
                     max_features=20000,
                     ngram_range=(1, int(max(1, ngram_max))),
                     min_df=min_df_v,
-                    max_df=max_df_cfg,
+                    max_df=max_df_v,
                     stop_words=_sw,
                     lowercase=True,
                 )
@@ -1089,7 +1374,7 @@ def run_topic_stage(df, cfg, logger=None):
             # CPU fallback (scikit-learn)
             from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
             import numpy as np  # type: ignore
-            vect = TfidfVectorizer(max_features=20000, ngram_range=(1,int(max(1, ngram_max))), min_df=min_df_v, max_df=max_df_cfg, stop_words=stop_words_cfg)
+            vect = TfidfVectorizer(max_features=20000, ngram_range=(1,int(max(1, ngram_max))), min_df=min_df_v, max_df=max_df_v, stop_words=stop_words_cfg)
             X = vect.fit_transform(texts_list)
             terms = np.array(vect.get_feature_names_out())
             top_terms: Dict[int, Any] = {}
@@ -1188,6 +1473,124 @@ def run_topic_stage(df, cfg, logger=None):
                 out["article_id"] = out["unit_id"].apply(lambda s: str(s).split("__", 1)[0] if isinstance(s, str) else None)
         except Exception:
             pass
+
+    # Log results to W&B: both article-level and cluster-level tables
+    if logger:
+        try:
+            # Article-level table (sample if large)
+            article_cols = ["topic_id", "topic_prob", "unit_id", "article_id"]
+            if "topic_top_terms" in out.columns:
+                article_cols.append("topic_top_terms")
+            if "article_keywords" in out.columns:
+                article_cols.append("article_keywords")
+            if "plot_x" in out.columns and "plot_y" in out.columns:
+                article_cols.extend(["plot_x", "plot_y"])
+            # Add metadata columns if available
+            for col in ["article_path", "country", "year"]:
+                if col in out.columns:
+                    article_cols.append(col)
+            
+            article_cols_avail = [c for c in article_cols if c in out.columns]
+            logger.log_table(
+                out[article_cols_avail],
+                key="topic/results",
+                panel_group="inspect_results",
+                max_rows=1000,
+            )
+            
+            # Cluster-level summary table
+            try:
+                cluster_summary = []
+                for topic_id in sorted(out["topic_id"].unique()):
+                    cluster_data = out[out["topic_id"] == topic_id]
+                    
+                    summary_row = {
+                        "topic_id": int(topic_id),
+                        "cluster_size": len(cluster_data),
+                    }
+                    
+                    # Top terms (take from first row since all rows in cluster have same terms)
+                    if "topic_top_terms" in cluster_data.columns:
+                        try:
+                            terms = cluster_data["topic_top_terms"].iloc[0]
+                            if isinstance(terms, list):
+                                summary_row["top_terms"] = ", ".join([str(t) for t in terms[:5]])  # Show top 5
+                            else:
+                                summary_row["top_terms"] = str(terms) if terms is not None else ""
+                        except Exception:
+                            summary_row["top_terms"] = ""
+                    
+                    # Probability statistics
+                    if "topic_prob" in cluster_data.columns:
+                        try:
+                            probs = cluster_data["topic_prob"].dropna()
+                            if len(probs) > 0:
+                                summary_row["prob_mean"] = round(float(probs.mean()), 3)
+                                summary_row["prob_median"] = round(float(probs.median()), 3)
+                                summary_row["prob_min"] = round(float(probs.min()), 3)
+                                summary_row["prob_max"] = round(float(probs.max()), 3)
+                        except Exception:
+                            pass
+                    
+                    # Centroid coordinates (mean of plot positions)
+                    if "plot_x" in cluster_data.columns and "plot_y" in cluster_data.columns:
+                        try:
+                            summary_row["centroid_x"] = round(float(cluster_data["plot_x"].mean()), 2)
+                            summary_row["centroid_y"] = round(float(cluster_data["plot_y"].mean()), 2)
+                        except Exception:
+                            pass
+                    
+                    # Country distribution (if available)
+                    if "country" in cluster_data.columns:
+                        try:
+                            country_counts = cluster_data["country"].value_counts()
+                            if len(country_counts) > 0:
+                                top_countries = country_counts.head(3)
+                                summary_row["top_countries"] = ", ".join([f"{c}({int(n)})" for c, n in top_countries.items()])
+                        except Exception:
+                            pass
+                    
+                    # Year distribution (if available)
+                    if "year" in cluster_data.columns:
+                        try:
+                            years = cluster_data["year"].dropna()
+                            if len(years) > 0:
+                                summary_row["year_min"] = int(years.min())
+                                summary_row["year_max"] = int(years.max())
+                                summary_row["year_mode"] = int(years.mode().iloc[0]) if len(years.mode()) > 0 else int(years.median())
+                        except Exception:
+                            pass
+                    
+                    cluster_summary.append(summary_row)
+                
+                if cluster_summary:
+                    cluster_df = pd.DataFrame(cluster_summary)
+                    # Sort by cluster size (largest first) and limit to top clusters
+                    cluster_df = cluster_df.sort_values("cluster_size", ascending=False)
+                    
+                    # Get max_rows from config or use default
+                    try:
+                        max_cluster_rows = getattr(getattr(cfg, "wandb", object()), "cluster_table_max_rows", 500)
+                    except Exception:
+                        max_cluster_rows = 500
+                    
+                    total_clusters = len(cluster_df)
+                    print(f"✓ Created cluster summary table: {total_clusters} total clusters (logging top {min(total_clusters, max_cluster_rows)} to W&B)", flush=True)
+                    
+                    logger.log_table(
+                        cluster_df,
+                        key="topic/clusters",
+                        panel_group="inspect_results",
+                        max_rows=max_cluster_rows,
+                    )
+            except Exception as e:
+                print(f"Warning: Failed to create cluster summary table: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+        except Exception as e:
+            print(f"Warning: Failed to log results tables to W&B: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
     return out
 

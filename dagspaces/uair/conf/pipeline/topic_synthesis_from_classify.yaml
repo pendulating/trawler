@@ -1,0 +1,84 @@
+# @package _global_
+# Run topic modeling on precomputed classify output, then synthesize cluster insights
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+runtime:
+  debug: false
+  sample_n: null
+
+topic:
+  embed:
+    device: cuda
+    batch_size: 128
+    model_name: sentence-transformers/all-mpnet-base-v2
+  hdbscan:
+    min_cluster_size: 10
+    min_samples: 5
+    metric: euclidean
+  umap:
+    n_neighbors: 15
+    n_components: 2
+    metric: cosine
+
+synthesis:
+  strategy: hierarchical_map_reduce
+  schema_path: ${oc.env:SYNTHESIS_SCHEMA,dagspaces/uair/conf/synthesis/schema.json}
+  max_articles_per_cluster: 100
+  min_topic_prob: 0.3
+
+sampling_params_synthesis:
+  seed: 777
+  temperature: 0.1
+  top_p: 0.95
+  max_tokens: 2048
+
+pipeline:
+  output_root: ${runtime.output_root}
+  allow_partial: false
+  sources:
+    articles:
+      path: ${oc.env:ARTICLES_PATH,/share/pierson/matt/UAIR/outputs/classify/classify_relevant.parquet}
+      type: parquet
+  graph:
+    nodes:
+      topic:
+        stage: topic
+        depends_on: []
+        inputs:
+          dataset: articles
+        outputs:
+          docs: outputs/topic/docs_topics.parquet
+        overrides:
+          runtime.streaming_io: false
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 24
+          topic.embed.device: cuda
+          topic.embed.batch_size: 128
+        launcher: g2_slurm_pierson
+        wandb_suffix: topic
+      
+      synthesis:
+        stage: synthesis
+        depends_on: [topic]
+        inputs:
+          clusters: topic.docs
+          articles: articles
+        outputs:
+          clusters: outputs/synthesis/cluster_synthesis.parquet
+        overrides:
+          runtime.streaming_io: false
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 32
+          model.engine_kwargs.max_model_len: 8192
+          model.engine_kwargs.max_num_seqs: 2
+          model.engine_kwargs.gpu_memory_utilization: 0.8
+          model.batch_size: 1
+          sampling_params_synthesis.max_tokens: 2048
+          synthesis.max_articles_per_cluster: 100
+          synthesis.min_topic_prob: 0.3
+        launcher: g2_slurm_pierson
+        wandb_suffix: synthesis
+
+

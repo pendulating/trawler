@@ -1,0 +1,172 @@
+# @package _global_
+# Topic stage configuration optimized for narrative event detection in news articles.
+#
+# Philosophy:
+# - Events are defined as 2+ articles covering the same narrative
+# - Singleton articles (noise) represent truly unique stories
+# - cluster_selection_epsilon merges sub-events into coherent narratives
+# - Optimized for 100k-1M article datasets
+#
+# Usage:
+#   This file serves as a REFERENCE configuration. Due to Hydra's composition rules,
+#   you cannot directly override /topic in pipeline configs.
+#
+#   Instead, use one of these methods:
+#   
+#   1. Use the dedicated pipeline (recommended):
+#      python -m dagspaces.uair.run_pipeline pipeline=event_detection_from_articles
+#   
+#   2. Copy parameters into your pipeline's node.overrides section:
+#      See: dagspaces/uair/conf/pipeline/event_detection_from_articles.yaml
+#
+#   3. Override parameters via CLI:
+#      topic.hdbscan.min_cluster_size=2 topic.hdbscan.cluster_selection_epsilon=0.03
+
+topic:
+  # Clustering strategy: article-level (not chunks)
+  cluster_on: article
+  
+  # Text selection (prefer full article over chunks for event context)
+  text_column: auto  # auto selects article_text or chunk_text based on cluster_on
+  
+  # Maximum tokens to embed (balance context vs. speed)
+  max_tokens_for_embed: 8192  # Full article context for event understanding
+  
+  # Random seed for reproducibility
+  seed: 777
+
+  # Embedding configuration
+  embed:
+    model_source: "nomic-ai/nomic-embed-text-v1.5"  # High-quality semantic embeddings
+    device: cuda                                     # Use GPU for speed
+    batch_size: 128                                  # Tune based on GPU memory
+    normalize: true                                  # Normalize embeddings for cosine similarity
+    trust_remote_code: true
+    
+    # Matryoshka embeddings: higher dim = richer semantics for event distinction
+    matryoshka_dim: 384  # Increased from 256 for better event separation
+    
+    # Sequence length: preserve full article context
+    max_seq_length: 8192
+    
+    # Precision (optional, leave null for auto)
+    torch_dtype: null  # Auto-selects fp16/bf16 based on GPU capability
+
+  # GPU acceleration (recommended for large datasets)
+  gpu:
+    use_rapids: true  # cuML for fast UMAP + HDBSCAN on GPU
+
+  # Dimensionality reduction: UMAP for preserving local event structure
+  reduce:
+    method: umap
+    
+    # Key parameters for event detection:
+    n_components: 25      # Higher dims separate many distinct events (was 15)
+    n_neighbors: 15       # Focus on local event structure, not global topics (was 50)
+    min_dist: 0.0         # Tightest packing for clear event boundaries (optimize for clustering)
+    metric: cosine        # Cosine similarity for text embeddings
+    
+    # Advanced UMAP parameters (optional tuning)
+    # set_op_mix_ratio: 1.0
+    # local_connectivity: 1.0
+    # repulsion_strength: 1.0
+    # negative_sample_rate: 5
+    # random_state: 777
+
+  # Density-based clustering: HDBSCAN for hierarchical event discovery
+  hdbscan:
+    # Event = 2+ articles covering the same narrative
+    min_cluster_size: 2   # Minimum: 2 articles define an "event"
+    
+    # Permissive inclusion: let peripheral articles join events
+    min_samples: 1        # Very low = include articles on event periphery
+    
+    # Distance metric (euclidean works well after UMAP with cosine metric)
+    metric: euclidean
+    
+    # Event merging: KEY PARAMETER for narrative coherence
+    # Merges nested sub-events within this distance threshold
+    # Examples:
+    #   0.0  = no merging (separate: "Bill Intro", "Bill Debate", "Bill Passed")
+    #   0.03 = moderate merging (merge closely related sub-events)
+    #   0.05 = aggressive merging (all coverage → single event)
+    #   0.10 = very aggressive (thematic grouping)
+    cluster_selection_epsilon: 0.03
+    
+    # Cluster selection strategy
+    cluster_selection_method: eom  # Excess of Mass = better hierarchical extraction
+    
+    # Advanced parameters (optional tuning)
+    # cluster_selection_persistence: 0.0
+    # alpha: 1.0  # Conservatism parameter (higher = more conservative clustering)
+
+  # TF-IDF for cluster top-term summaries
+  tfidf_max_df: 0.90        # Ignore terms in >90% of cluster docs (too common)
+  tfidf_stop_words: dagspaces/uair/conf/stopwords/comprehensive.yaml  # Comprehensive stopwords (news + prepositions + web terms)
+  tfidf_ngram_max: 1        # Unigrams only (bigrams include stopwords that can't be filtered)
+  
+  # Number of top terms to extract per cluster
+  doc_terms_k: 10
+  
+  # Optional: limit number of units for memory (null = no limit)
+  sample_max_units: null
+
+  # Visualization (if enabled)
+  plot:
+    method: scatter  # 2D scatter plot of events
+    # enable: true
+    # library: plotly
+
+# Runtime overrides for event detection workflow
+runtime:
+  # Disable keyword buffering (we want full article text for events)
+  keyword_buffering: false
+  
+  # Debug mode (set true for verbose logging)
+  debug: false
+  
+  # Sampling (null = process all articles)
+  sample_n: null
+
+# Expected Results with these settings:
+# ----------------------------------------
+# Dataset size: 386k articles
+# 
+# Estimated outcomes:
+#   - Clustered articles (events): 60-75% (~230k-290k articles)
+#   - Number of event clusters: 15,000-40,000
+#     * Small events (2-5 articles): ~80% of clusters
+#     * Medium events (6-20 articles): ~15% of clusters  
+#     * Large events (20+ articles): ~5% of clusters
+#   - Noise (unique stories): 25-40% (~95k-155k articles)
+#
+# Cluster size distribution (approximate):
+#   - size=2:  10,000-20,000 clusters (emerging/small events)
+#   - size=3-5:  8,000-15,000 clusters (standard events)
+#   - size=6-10: 1,500-3,000 clusters (notable events)
+#   - size=11-20: 500-1,000 clusters (significant events)
+#   - size=20+: 100-500 clusters (major events)
+#
+# Tuning Guide:
+# ----------------------------------------
+# Too many tiny clusters?
+#   → Increase cluster_selection_epsilon to 0.05-0.08
+#   → Or increase min_cluster_size to 3
+#
+# Events too merged (losing granularity)?
+#   → Decrease cluster_selection_epsilon to 0.01-0.02
+#   → Or increase n_components to 30
+#
+# Too much noise (>40%)?
+#   → Decrease min_samples to make clustering more permissive
+#   → Or decrease cluster_selection_epsilon (more merging = fewer singletons)
+#
+# Events not separating well?
+#   → Increase n_components to 30-35
+#   → Or increase matryoshka_dim to 512
+#   → Or decrease n_neighbors to 10
+#
+# Performance issues?
+#   → Reduce matryoshka_dim to 256
+#   → Reduce max_tokens_for_embed to 4096
+#   → Reduce batch_size if GPU OOM

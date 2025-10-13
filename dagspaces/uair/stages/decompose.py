@@ -4,6 +4,11 @@ import json
 import os
 import logging
 from omegaconf import OmegaConf
+from dagspaces.uair.schema_builders import (
+    object_schema,
+    string_or_null,
+    array_of_strings,
+)
 
 try:
     import ray  # noqa: F401
@@ -230,18 +235,31 @@ def _extract_last_json(text: str) -> Optional[Dict[str, Any]]:
 
 
 def run_decomposition_stage(df: pd.DataFrame, cfg):
-    """Placeholder decomposition stage.
+    """Urban AI risk decomposition stage.
 
-    Produces CI tuple columns with None defaults; later replaced by LLM extraction.
-    Columns: ci_subject, ci_sender, ci_receiver, ci_information, ci_transmission_principle, ci_missing_elements (list)
+    Produces structured fields as defined by prompt_decompose:
+    - deployment_domain
+    - deployment_purpose
+    - deployment_capability
+    - identity_of_ai_deployer
+    - identity_of_ai_subject
+    - identity_of_ai_developer
+    - location_of_ai_deployer
+    - location_of_ai_subject
+    - date_and_time_of_event
+    - missing (list of missing/uncertain fields)
     """
     base_cols = [
-        "ci_subject",
-        "ci_sender",
-        "ci_receiver",
-        "ci_information",
-        "ci_transmission_principle",
-        "ci_missing_elements",
+        "deployment_domain",
+        "deployment_purpose",
+        "deployment_capability",
+        "identity_of_ai_deployer",
+        "identity_of_ai_subject",
+        "identity_of_ai_developer",
+        "location_of_ai_deployer",
+        "location_of_ai_subject",
+        "date_and_time_of_event",
+        "missing",
     ]
     is_ray_ds = hasattr(df, "map_batches") and hasattr(df, "count") and _RAY_OK
     if not is_ray_ds:
@@ -255,25 +273,50 @@ def run_decomposition_stage(df: pd.DataFrame, cfg):
     except Exception:
         serialize_nested = True
     if not use_llm or not _RAY_OK:
+        missing_keys = [
+            "deployment_domain",
+            "deployment_purpose",
+            "deployment_capability",
+            "identity_of_ai_deployer",
+            "identity_of_ai_subject",
+            "identity_of_ai_developer",
+            "location_of_ai_deployer",
+            "location_of_ai_subject",
+            "date_and_time_of_event",
+        ]
         if is_ray_ds:
             def _fill_empty(pdf: pd.DataFrame) -> pd.DataFrame:
                 pdf = pdf.copy()
                 for c in base_cols:
                     pdf[c] = None
-                pdf["ci_missing_elements"] = pdf.apply(lambda r: ["subject","sender","receiver","information","transmission_principle"], axis=1)
+                pdf["missing"] = pdf.apply(lambda r: list(missing_keys), axis=1)
                 if serialize_nested:
-                    pdf["ci_missing_elements"] = pdf["ci_missing_elements"].map(_to_json_str)
+                    pdf["missing"] = pdf["missing"].map(_to_json_str)
                 return pdf
             return df.map_batches(_fill_empty, batch_format="pandas")
         for c in base_cols:
             out[c] = None
-        out["ci_missing_elements"] = out.apply(lambda r: ["subject","sender","receiver","information","transmission_principle"], axis=1)
+        out["missing"] = out.apply(lambda r: list(missing_keys), axis=1)
         if serialize_nested:
-            out["ci_missing_elements"] = out["ci_missing_elements"].map(_to_json_str)
+            out["missing"] = out["missing"].map(_to_json_str)
         return out
 
-    system_prompt = str(getattr(cfg.prompt_decompose, "system_prompt", ""))
-    prompt_template = str(getattr(cfg.prompt_decompose, "prompt_template", ""))
+    try:
+        system_prompt = str(
+            OmegaConf.select(cfg, "prompt_decompose.system_prompt")
+            or OmegaConf.select(cfg, "prompt.system_prompt")
+            or ""
+        )
+    except Exception:
+        system_prompt = ""
+    try:
+        prompt_template = str(
+            OmegaConf.select(cfg, "prompt_decompose.prompt_template")
+            or OmegaConf.select(cfg, "prompt.prompt_template")
+            or ""
+        )
+    except Exception:
+        prompt_template = ""
 
     def _format_prompt(article_text: str) -> str:
         return (
@@ -350,19 +393,24 @@ def run_decomposition_stage(df: pd.DataFrame, cfg):
         # Optional guided decoding hook (future-proof; requires vLLM support)
         try:
             if bool(getattr(cfg.runtime, "guided_decoding_decompose", False)):
-                schema = {
-                    "type": "object",
-                    "properties": {
-                        "subject": {"type": ["string","null"]},
-                        "sender": {"type": ["string","null"]},
-                        "receiver": {"type": ["string","null"]},
-                        "information": {"type": ["string","null"]},
-                        "transmission_principle": {"type": ["string","null"]},
-                        "missing": {"type": "array", "items": {"type": "string"}},
+                schema = object_schema(
+                    properties={
+                        # Canonical string-or-null fields
+                        "deployment_domain": string_or_null(),
+                        "deployment_purpose": string_or_null(),
+                        "deployment_capability": string_or_null(),
+                        "identity_of_ai_deployer": string_or_null(),
+                        "identity_of_ai_subject": string_or_null(),
+                        "identity_of_ai_developer": string_or_null(),
+                        "location_of_ai_deployer": string_or_null(),
+                        "location_of_ai_subject": string_or_null(),
+                        "date_and_time_of_event": string_or_null(),
+                        # Lists
+                        "missing": array_of_strings(),
                     },
-                    "required": ["missing"],
-                    "additionalProperties": True,
-                }
+                    required=["missing"],
+                    additional_properties=False,
+                )
                 sp["guided_decoding"] = {"json": schema}
         except Exception:
             pass
@@ -402,11 +450,15 @@ def run_decomposition_stage(df: pd.DataFrame, cfg):
                     return norm_obj.get(k)
             return None
 
-        subject = _first_key(["subject", "data_subject", "person", "individual"])
-        sender = _first_key(["sender", "source", "discloser", "actor_sender"])
-        receiver = _first_key(["receiver", "recipient", "audience", "actor_receiver", "target"])
-        information = _first_key(["information", "info", "data", "content", "pii"])
-        tp = _first_key(["transmission_principle", "transmissionprinciple", "principle", "condition", "constraint", "rule"])
+        deployment_domain = _first_key(["deployment_domain", "domain", "use_domain"]) 
+        deployment_purpose = _first_key(["deployment_purpose", "purpose", "goal", "objective"]) 
+        deployment_capability = _first_key(["deployment_capability", "capability", "capabilities", "function", "ability"]) 
+        identity_of_ai_deployer = _first_key(["identity_of_ai_deployer", "deployer", "operator", "implementer", "user", "agency", "organization_deployer"]) 
+        identity_of_ai_subject = _first_key(["identity_of_ai_subject", "subject", "data_subject", "affected_party", "individual", "group"]) 
+        identity_of_ai_developer = _first_key(["identity_of_ai_developer", "developer", "vendor", "builder", "provider", "manufacturer"]) 
+        location_of_ai_deployer = _first_key(["location_of_ai_deployer", "deployer_location", "operator_location", "location_deployer"]) 
+        location_of_ai_subject = _first_key(["location_of_ai_subject", "subject_location", "location_subject", "where"]) 
+        date_and_time_of_event = _first_key(["date_and_time_of_event", "datetime", "date_time", "date", "time", "event_time", "when"]) 
         missing = _first_key(["missing", "missing_elements", "missing_fields"]) or []
         if not isinstance(missing, list):
             try:
@@ -426,7 +478,7 @@ def run_decomposition_stage(df: pd.DataFrame, cfg):
         else:
             missing_out = missing
 
-        # Ensure ci_* scalar columns are Arrow-friendly (no lists/dicts in columns)
+        # Ensure scalar columns are Arrow-friendly (no lists/dicts in columns)
         def _norm_ci_value(v: Any) -> Any:
             if isinstance(v, (list, tuple)):
                 return _to_json_str(v) if serialize_nested else ", ".join([str(x) for x in v if x is not None])
@@ -434,20 +486,28 @@ def run_decomposition_stage(df: pd.DataFrame, cfg):
                 return _to_json_str(v) if serialize_nested else str(v)
             return v
 
-        subject_out = _norm_ci_value(subject)
-        sender_out = _norm_ci_value(sender)
-        receiver_out = _norm_ci_value(receiver)
-        information_out = _norm_ci_value(information)
-        tp_out = _norm_ci_value(tp)
+        deployment_domain_out = _norm_ci_value(deployment_domain)
+        deployment_purpose_out = _norm_ci_value(deployment_purpose)
+        deployment_capability_out = _norm_ci_value(deployment_capability)
+        identity_of_ai_deployer_out = _norm_ci_value(identity_of_ai_deployer)
+        identity_of_ai_subject_out = _norm_ci_value(identity_of_ai_subject)
+        identity_of_ai_developer_out = _norm_ci_value(identity_of_ai_developer)
+        location_of_ai_deployer_out = _norm_ci_value(location_of_ai_deployer)
+        location_of_ai_subject_out = _norm_ci_value(location_of_ai_subject)
+        date_and_time_of_event_out = _norm_ci_value(date_and_time_of_event)
 
         return {
             **row,
-            "ci_subject": subject_out,
-            "ci_sender": sender_out,
-            "ci_receiver": receiver_out,
-            "ci_information": information_out,
-            "ci_transmission_principle": tp_out,
-            "ci_missing_elements": missing_out,
+            "deployment_domain": deployment_domain_out,
+            "deployment_purpose": deployment_purpose_out,
+            "deployment_capability": deployment_capability_out,
+            "identity_of_ai_deployer": identity_of_ai_deployer_out,
+            "identity_of_ai_subject": identity_of_ai_subject_out,
+            "identity_of_ai_developer": identity_of_ai_developer_out,
+            "location_of_ai_deployer": location_of_ai_deployer_out,
+            "location_of_ai_subject": location_of_ai_subject_out,
+            "date_and_time_of_event": date_and_time_of_event_out,
+            "missing": missing_out,
             "llm_output": row.get("generated_text"),
             "_progress_row": 1,
         }

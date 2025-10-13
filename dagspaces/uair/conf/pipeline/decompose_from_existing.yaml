@@ -1,0 +1,42 @@
+# @package _global_
+# Run only the decompose stage using precomputed classify output
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${runtime.output_root}
+  allow_partial: false
+  sources:
+    articles:
+      # Use precomputed classify output; override with ARTICLES_PATH if desired
+      path: ${oc.env:ARTICLES_PATH,/share/pierson/matt/UAIR/outputs/classify/classify_relevant.parquet}
+      type: parquet
+  graph:
+    nodes:
+      decompose:
+        stage: decompose_nbl
+        depends_on: []
+        inputs:
+          dataset: articles
+        outputs:
+          results: outputs/decompose/decompose_results.parquet
+        overrides:
+          runtime.streaming_io: false
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 32
+          runtime.use_llm_decompose: true
+          runtime.guided_decoding_decompose: true
+          model.engine_kwargs.max_model_len: 20480
+          model.engine_kwargs.max_num_seqs: 1
+          model.engine_kwargs.gpu_memory_utilization: 0.8
+          model.batch_size: 1
+          sampling_params_decompose_nbl.max_tokens: 2048
+        launcher: g2_slurm_pierson
+        wandb_suffix: decompose_nbl
+
+

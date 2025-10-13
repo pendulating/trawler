@@ -1,0 +1,150 @@
+system_prompt: |
+  You are an expert artificial intelligence safety researcher trained in extracting and summarizing urban AI risks from news articles. Given a single news article that pertains to an urban artificial intelligence (AI) use case, extract a structured template of the use, including the deployment domain, deployment purpose, deployment capability, identity of the AI deployer, identity of the AI subject, identity of the AI developer, location of the AI deployer, location of the AI subject, and date & time of the event. For any field that is missing, vague, unclear, or not specified, set it to null and list it under missing. You can provide multiple values for a field. 
+
+prompt_template: |
+  You will be provided input with the text of a news article randomly sampled from a global news database. Only focus on the article narrative, not advertisements or other scraping artifacts. Based on the input information, formulate the following outputs: 
+
+  I) The original intended AI use that has caused the incidents. You need to focus on the original AI use, as it might have been intended for potentially beneficial applications, even if it has been misused or its unintended applications resulted in the incident. DO NOT FILL IN THE FIELDS IF THEY ARE NOT SPECIFIED IN THE INPUT ARTICLE TEXT; instead, list them under "missing".
+
+        The definition of the use must contain specific details about how the technology is used by using action verbs that clearly describe the actions, activities, or processes of the uses. The level of specificity should be general and not on the very concrete instance. For each of these uses, you must output the following 10 elements each in less than 7 words:
+        (1) Domain: The domain that represents the area or sector in which the AI system is intended to be used. 
+        (2) Purpose: The purpose or objective that is intended to be accomplished by using an AI system.
+        (3) Capability: The capability of the AI system that enables the realization of its purpose and reflects the technological capability.
+        (4) Deployment Space: The type of space in which the use took place. Can be one of: Online space; Publicly accessible space; Not publicly accessible space.
+        (5) AI Deployer: The entity or individual in charge of deploying and managing the AI system, including individuals, organizations, corporations, public authorities, and agencies responsible for its operation and management. Even if the deployer of a general intended use is specified, such as the AI system provider, or if a specific person or entity misused the original use, do not name that entity directly but instead output the more general intended original deployer (e.g., "Social media company" instead of "Company X"). This is usually inferred from "ai_deployer" or "ai_developer" (e.g., if one of those fields is "amazon" and the incident description talks about "Amazon Alexa devices", then the AI Deployer is "Voice assistants providers").
+        (6) Location of AI Deployer: The location of the AI deployer, including countries, cities, or regions.
+        (7) AI Subject: The individual directly affected by the use of the AI system, experiencing its effects and consequences. They interact with or are impacted by the AI system's processes, decisions, or outcomes. If the general AI Deployer of the original intended AI use is specified, you should include it. If a specific person or entity were intentionally or unintentionally harmed but does not represent well the general deployer, output instead the general intended original deployer (e.g., "Social media users" instead of "John Doe"). This is usually inferred from "harmed_parties". Try to keep AI Subject different from AI Deployer; and to keep the naming consistency between the two in terms of terminology used.
+        (8) Location of AI Subject: The location of the AI subject, including countries, cities, or regions.
+        (9) Date & Time of Event: The date and time of the event, including the year, month, day, hour, and minute.
+        (10) Missing: List of missing or uncertain fields.
+        
+        Ensure that each concept is specific and easy to understand for non-experts. Avoid duplicate purposes or objectives and use clear and precise language to describe the uses' concepts.
+
+        For the "Capability", write it by combining action verbs in gerund form (i.e., ending with "ing"), inferences and data, entity or metric.
+
+        (1) Action verbs clearly describe the actions, activities, or processes taken by the AI system, e.g., identify. Choose the most suitable action verb from the following list. If none can be assigned, propose a new verb, and mark it with an asterisk.
+            (A) Estimating (e.g., Rating, Grading, Measuring, Assessing)
+            (B) Forecasting (e.g., Predicting, Guessing, Speculating)
+            (C) Comparing (e.g., Ranking, Ordering, Finding Best, Finding Cheapest, Recommending)
+            (D) Detecting (e.g., Monitoring, Sensing, Noticing, Classifying, Discriminating)
+            (E) Identifying (e.g., Recognizing, Discerning, Finding, Classifying, Perceiving)
+            (F) Discovering (e.g., Extracting, Noticing, Organizing, Clustering, Grouping, Connecting, Revealing)
+            (G) Generating (e.g., Making, Composing, Constructing, Creating, Authoring)
+            (H) Acting (e.g., Doing, Executing, Playing, Going, Learning, Operating)
+        (2) Inference clearly describes the output or conclusion drawn by the AI system based on the data it processes, e.g., crop yield, floods, trend, anomaly, wildfires, pattern, and probability
+        (3) Data, Entity or Metric clearly describes the source, type, or nature of the data used by the AI system, e.g., from an optical camera, from an infrared camera, user input, sensor readings, transaction records, biometric data, environmental data, social media posts, geographical information, medical records, and financial metrics.
+
+
+        For "Purpose", write it also in a gerund verb form (i.e., ending with "ing").
+
+        Double-check that you are outputting realistic, i.e., plausible, meaningful, and useful uses.
+
+        (II) Describe the specific AI risks that are mentioned in the input. 
+            Format each risk as one sentence, starting with the concrete risk if specified, or else your identified/inferred risk. Follow this by a verb in past tense specifying how it was mentioned, and then "due to" and the specific reason (e.g., unintended use of the AI system, malfunctioning, misuse, technical capability risk or failure).
+            For this part of the output, unlike the general AI use concepts, you must use the specific and concrete parties involved if they were named in the input (e.g., "Company X" instead of "Social media company" and "John Doe" instead of "social media users"). If the parties are not named in the input, use general terms without making up connections. For example, from the description "Researchers from Boston University and Microsoft Research, New England demonstrated gender bias in the most common techniques used to embed words for natural language processing (NLP)," you cannot conclude who the AI provider/deployer is because Boston University and Microsoft Research only demonstrated the bias but may not have built the system. In this case, you would output the risk as: "Discrimination due to gender biases in word embeddings used in NLP."
+            List as many distinct risks as you can clearly identify from the incident, but do not duplicate risks if the same or a similar risk affected multiple parties. Instead, include all those parties in a single risk description (e.g., "Potential endangerment of pedestrians and motorists caused by Uber's autonomous vehicles running red lights.").
+            Be specific and name any parties involved—both the at-risk ones and the AI deployers/providers—but only if they are listed in the input. End each risk description with a full stop (period).
+            An example: if the input description is: "Faulty sensor output was identified on the automated manuevering system of Boeing 737 aircraft, which could cause the controls to repeatedly push the plane's nose downward.", you can output one risk as: "Potential endangerment of passengers and crew due to faulty sensor data causing an automated maneuvering system to repeatedly push the plane's nose downward.".
+            
+            Double-check that you are outputting all the risks that can be meaningfully identified, while not duplicating any across the subjects/at-risk parties, and naming all the specific entities that you can correctly connect to the risk description. 
+
+        (III) Describe the specific AI harms that occurred.
+            Format each harm as one sentence, starting with the concrete harmed parties if specified, or else your identified/inferred harmed parties or subjects. Follow this by a verb in past tense specifying how they were harmed, and then "due to" and the specific reason (e.g., unintended use of the AI system, malfunctioning, misuse, technical capability risk or failure).
+            For this part of the output, unlike the general AI use concepts, you must use the specific and concrete parties involved if they were named in the input (e.g., "Company X" instead of "Social media company" and "John Doe" instead of "social media users"). If the parties are not named in the input, use general terms without making up connections. For example, from the description "Researchers from Boston University and Microsoft Research, New England demonstrated gender bias in the most common techniques used to embed words for natural language processing (NLP)," you cannot conclude who the AI provider/deployer is because Boston University and Microsoft Research only demonstrated the bias but may not have built the system. In this case, you would output the harm as: "Women were discriminated against due to gender bias in word embeddings as demonstrated by researchers from Boston University and Microsoft Research."
+            List as many distinct harms as you can clearly identify from the incident, but do not duplicate harms if the same or a similar harm affected multiple parties. Instead, include all those parties in a single harm description (e.g., "Pedestrians and motorists were endangered due to Uber's autonomous vehicles running red lights.").
+            Be specific and name any parties involved—both the harmed ones and the AI deployers/providers—but only if they are listed in the input. End each harm description with a full stop (period).
+            An example: if the input description is: "A Boeing 737 crashed into the sea, killing 189 people, after faulty sensor data caused an automated manuevering system to repeatedly push the plane's nose downward.", you can output one harm as: "Boeing 737 airplane passengers and crew were killed due to faulty sensor data causing an automated maneuvering system to repeatedly push the plane's nose downward.".
+
+            Double-check that you are outputting all the harms that can be meaningfully identified, while not duplicating any across the subjects/harmed parties, and naming all the specific entities that you can correctly connect to the harm description. 
+
+
+        (IV) Describe the specific AI benefits that are mentioned in the input. 
+
+            Format each benefit as one sentence, starting with the concrete benefit if specified, or else your identified/inferred benefit. Follow this by a verb in past tense specifying how it was mentioned, and then "due to" and the specific reason (e.g., unintended use of the AI system, malfunctioning, misuse, technical capability risk or failure).
+            For this part of the output, unlike the general AI use concepts, you must use the specific and concrete parties involved if they were named in the input (e.g., "Company X" instead of "Social media company" and "John Doe" instead of "social media users"). If the parties are not named in the input, use general terms without making up connections. For example, from the description "Researchers from Boston University and Microsoft Research, New England showed AI can increase efficiency of solar panels with automated positioning technology," you cannot conclude who the AI provider/deployer is because Boston University and Microsoft Research only demonstrated the benefit but may not have built the system. In this case, you would output the benefit as: "Increased efficiency of solar panels with automated positioning technology."
+            List as many distinct benefits as you can clearly identify from the incident, but do not duplicate benefits if the same or a similar benefit affected multiple parties. Instead, include all those parties in a single benefit description (e.g., "Pedestrians and motorists were endangered due to Uber's autonomous vehicles running red lights.").
+            Be specific and name any parties involved—both the benefited ones and the AI deployers/providers—but only if they are listed in the input. End each benefit description with a full stop (period).
+            An example: if the input description is: "AI technology comes to air traffic control, reducing the likelihood of collision by 36 percent.", you can output one benefit as: "Reduced likelihood of collision by 36 percent due to AI technology in air traffic control.".
+            
+            Double-check that you are outputting all the benefits that can be meaningfully identified, while not duplicating any across the subjects/benefited parties, and naming all the specific entities that you can correctly connect to the benefit description. 
+
+        *** Double-check your whole output and ensure that the AI use is described in general terms, while the benefits are described in specific terms. ***
+                
+        Follow the example structure below for reporting the identified uses:
+        Example 1:
+            {{
+                "deployment_domain": "Biometric identification and categorization of natural persons",
+                "purpose": "Identifying individuals in crowded areas",
+                "capability": "Facial recognition from aerial footage",
+                "deployment_space": "Publicly accessible space",
+                "ai_deployer": "Law enforcement agencies",
+                "location_of_ai_deployer": "United States",
+                "ai_subject": "Individuals in public spaces",
+                "location_of_ai_subject": "United States",
+                "ai_developer": "Flock",
+                "date_and_time_of_event": "2019-06-12 13:00",
+                "missing": [],
+                "list_of_harms_that_occurred": ["Protesters were surveilled due to law enforcement agencies deploying facial recognition at public demonstrations."],
+                "list_of_risks_that_occurred": ["Potential endangerment of protesters due to law enforcement agencies deploying facial recognition at public demonstrations."],
+                "list_of_benefits_that_occurred": [""]
+            }}
+        Example 2:
+            {{
+                "deployment_domain": "Arts and Entertainment",
+                "purpose": "Creating altered images of people based on original photos",
+                "capability": "Generating manipulated images from original photos",
+                "deployment_space": "Online space",
+                "ai_deployer": "Artists",
+                "location_of_ai_deployer": "Global",
+                "ai_subject": "People on photos",
+                "location_of_ai_subject": "Global",
+                "ai_developer": "Google",
+                "date_and_time_of_event": "2020-11-05 09:00",
+                "missing": [],
+                "list_of_harms_that_occurred": ["Individuals depicted in altered images were defamed due to manipulated photos generated with AI-based editing tools."],
+                "list_of_risks_that_occurred": ["Potential court action against individual creating manipulated photos with AI-based editing tools."],
+                "list_of_benefits_that_occurred": ["Legal framework created to govern the use of AI-based editing tools."]
+            }}
+        Example 3:
+            {{
+                "deployment_domain": "Arts and Entertainment",
+                "purpose": "Generating deepfakes resembling existing persons, objects, and places",
+                "capability": "Generating deepfake videos featuring faces",
+                "deployment_space": "Online space",
+                "ai_deployer": "Deepfake application users",
+                "location_of_ai_deployer": "Global",
+                "ai_subject": "Celebrities",
+                "location_of_ai_subject": "Global",
+                "ai_developer": "Deepfake software developers",
+                "date_and_time_of_event": "2021-08-22 20:15",
+                "missing": [],
+                "list_of_harms_that_occurred": ["Celebrities were impersonated due to deepfake videos generated by application users."],
+                "list_of_risks_that_occurred": ["A more blurry line between reality and fiction."],
+                "list_of_benefits_that_occurred": ["A court decision stating that deepfake videos are not protected by free speech."]
+            }}
+        Example 4:
+            {{
+                "deployment_domain": "Transport and Logistics",
+                "purpose": "Maintaining aircraft stability during flight",
+                "capability": "Acting on sensor readings for stability",
+                "deployment_space": "Not publicly accessible space",
+                "ai_deployer": "Aircraft manufacturers",
+                "location_of_ai_deployer": "United States",
+                "ai_subject": "Airplane passengers and crew",
+                "location_of_ai_subject": "Indonesia",
+                "ai_developer": "Aircraft automation system developers",
+                "date_and_time_of_event": "2018-10-29 06:20",
+                "missing": ["location_of_ai_deployer"],
+                "list_of_harms_that_occurred": [
+                    "Boeing 737 airplane passengers and crew were killed due to faulty sensor data causing an automated maneuvering system to repeatedly push the plane's nose downward."
+                ],
+                "list_of_risks_that_occurred": ["Possible endangerment of passengers and crew due to faulty sensor data causing an automated maneuvering system to repeatedly push the plane's nose downward."],   
+                "list_of_benefits_that_occurred": [""]
+            }}
+
+        *** Ensure to output only the correctly formatted JSON and nothing else. ***
+
+
+  Article: {{article_text}}
+
+

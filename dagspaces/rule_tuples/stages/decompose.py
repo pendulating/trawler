@@ -4,6 +4,11 @@ import json
 import os
 import logging
 from omegaconf import OmegaConf
+from dagspaces.uair.schema_builders import (
+    object_schema,
+    string_or_null,
+    array_of_strings,
+)
 
 try:
     import ray  # noqa: F401
@@ -206,19 +211,18 @@ def run_decomposition_stage(df: pd.DataFrame, cfg):
         # Optional guided decoding hook (future-proof; requires vLLM support)
         try:
             if bool(getattr(cfg.runtime, "guided_decoding_decompose", False)):
-                schema = {
-                    "type": "object",
-                    "properties": {
-                        "subject": {"type": ["string","null"]},
-                        "sender": {"type": ["string","null"]},
-                        "receiver": {"type": ["string","null"]},
-                        "information": {"type": ["string","null"]},
-                        "transmission_principle": {"type": ["string","null"]},
-                        "missing": {"type": "array", "items": {"type": "string"}},
+                schema = object_schema(
+                    properties={
+                        "subject": string_or_null(),
+                        "sender": string_or_null(),
+                        "receiver": string_or_null(),
+                        "information": string_or_null(),
+                        "transmission_principle": string_or_null(),
+                        "missing": array_of_strings(),
                     },
-                    "required": ["missing"],
-                    "additionalProperties": True,
-                }
+                    required=["missing"],
+                    additional_properties=False,
+                )
                 sp["guided_decoding"] = {"json": schema}
         except Exception:
             pass

@@ -1,0 +1,111 @@
+# @package _global_
+# Pipeline: classify -> topic -> synthesis
+# Analyzes articles, clusters them, then synthesizes cluster-level insights
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+runtime:
+  debug: false
+  sample_n: null
+
+synthesis:
+  # Processing strategy
+  strategy: hierarchical_map_reduce  # hierarchical_map_reduce | direct | longcite
+  
+  # Token budgets
+  map_article_tokens: 2048
+  reduce_batch_tokens: 4096
+  synthesis_tokens: 6144
+  
+  # Batching
+  articles_per_map_batch: 10
+  max_reduce_depth: 3
+  
+  # Filtering
+  min_topic_prob: 0.3  # Only use high-confidence cluster members
+  max_articles_per_cluster: 100
+  top_k_articles: 50  # Use top K by topic_prob for synthesis
+  
+  # Schema
+  schema_path: ${oc.env:SYNTHESIS_SCHEMA,dagspaces/uair/conf/synthesis/schema.json}
+  
+  # Citation tracking
+  enable_citations: true
+  citation_threshold: 0.7
+
+sampling_params_synthesis:
+  seed: 777
+  temperature: 0.1  # More deterministic for synthesis
+  top_p: 0.95
+  max_tokens: 2048
+  guided_decoding:
+    json: null  # Will be set from schema_path
+
+pipeline:
+  output_root: ${runtime.output_root}
+  allow_partial: false
+  sources:
+    articles:
+      path: ${data.parquet_path}
+      type: parquet
+  graph:
+    nodes:
+      classify:
+        stage: classify
+        depends_on: []
+        inputs:
+          dataset: articles
+        outputs:
+          all: outputs/classify/classify_all.parquet
+          relevant: outputs/classify/classify_relevant.parquet
+        overrides:
+          runtime.rows_per_block: ${runtime.rows_per_block}
+          runtime.streaming_io: ${runtime.streaming_io}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.debug: ${runtime.debug}
+          runtime.use_llm_classify: ${runtime.use_llm_classify}
+          model.engine_kwargs.gpu_memory_utilization: 0.8
+          model.engine_kwargs.max_model_len: 8192
+          model.engine_kwargs.max_num_seqs: 4
+          model.engine_kwargs.enable_prefix_caching: false
+        launcher: g2_slurm_pierson
+        wandb_suffix: classify
+        
+      topic:
+        stage: topic
+        depends_on:
+          - classify
+        inputs:
+          dataset: classify.relevant
+        outputs:
+          docs: outputs/topic/docs_topics.parquet
+        overrides:
+          runtime.streaming_io: ${runtime.streaming_io}
+          runtime.debug: ${runtime.debug}
+          topic.embed.device: cpu
+        launcher: g2_slurm_gpu_1x
+        wandb_suffix: topic
+        
+      synthesis:
+        stage: synthesis
+        depends_on:
+          - topic
+        inputs:
+          clusters: topic.docs          # Cluster assignments from topic stage
+          articles: classify.relevant   # Original articles with text
+        outputs:
+          clusters: outputs/synthesis/cluster_synthesis.parquet
+        overrides:
+          runtime.streaming_io: ${runtime.streaming_io}
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 32
+          # Synthesis uses guided decoding with 2 GPUs (like classify)
+          model.engine_kwargs.max_model_len: 8192
+          model.engine_kwargs.max_num_seqs: 2
+          model.engine_kwargs.gpu_memory_utilization: 0.8
+          model.batch_size: 1  # Process one cluster at a time
+          sampling_params_synthesis.max_tokens: 2048
+        launcher: g2_slurm_pierson
+        wandb_suffix: synthesis
+

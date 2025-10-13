@@ -1,0 +1,15 @@
+# Minimal custom stopwords for topic modeling
+# Just the most common news boilerplate terms
+
+stopwords:
+  - newsletter
+  - subscribe
+  - article
+  - story
+  - breaking
+  - update
+  - click
+  - read
+  - more
+  - share
+  - comment

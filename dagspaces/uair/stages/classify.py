@@ -914,14 +914,17 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                     return _hash.sha1(str(src).encode("utf-8")).hexdigest()
                 except Exception:
                     return _hash.sha1(str(r.get("article_text") or r.get("chunk_text") or "").encode("utf-8")).hexdigest()
+            def _need_id(val: Any) -> bool:
+                # Treat non-strings, empty strings, and NaNs as missing IDs
+                return not (isinstance(val, str) and val.strip() != "")
             try:
-                mask_missing = (~out["article_id"].astype(str).str.strip().astype(bool))
+                mask_missing = out["article_id"].apply(_need_id)
             except Exception:
                 mask_missing = True
             if isinstance(mask_missing, bool):
                 out["article_id"] = out.apply(_gen_id_row, axis=1)
             else:
-                out.loc[mask_missing, "article_id"] = out[mask_missing].apply(_gen_id_row, axis=1)
+                out.loc[mask_missing, "article_id"] = out.loc[mask_missing].apply(_gen_id_row, axis=1)
         except Exception:
             pass
     def _heuristic(text: Any) -> bool:
@@ -982,6 +985,34 @@ def run_classification_stage(df: pd.DataFrame, cfg):
             return bool(kw_regex.search(str(text or "")))
         except Exception:
             return True
+    
+    # Extract specific keywords that matched in the text
+    def _extract_matched_keywords(text: Any) -> tuple[bool, list[str], int]:
+        """Extract which keywords matched in the text.
+        
+        Returns:
+            tuple: (has_keyword, matched_keywords_list, match_count)
+        """
+        if kw_regex is None:
+            return True, [], 0
+        try:
+            text_str = str(text or "").lower()
+            if not text_str:
+                return False, [], 0
+            
+            # Use finditer() and .group() to get full matches (not capture groups)
+            # This avoids the issue where findall() with capturing groups returns tuples
+            matches = [m.group() for m in kw_regex.finditer(text_str)]
+            if not matches:
+                return False, [], 0
+            
+            # Deduplicate and sort for consistency
+            unique_keywords = sorted(set(matches))
+            match_count = len(matches)  # Total matches (including duplicates)
+            
+            return True, unique_keywords, match_count
+        except Exception:
+            return True, [], 0
     # Prefer experiments-style prompts when available; otherwise fall back to UAIR prompt
     try:
         system_prompt = (
@@ -1232,6 +1263,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                 "sampling_params",
                 "usage",
                 "token_counts",
+                "matched_keywords",  # List of matched keyword strings
             ])
         return {
             **row,
@@ -1250,6 +1282,26 @@ def run_classification_stage(df: pd.DataFrame, cfg):
     # Pre-attach chunk_text in a separate map when streaming; apply prefilter gating and trimming
     if is_ray_ds:
         ds_in = df
+        ds_all = None  # Track ALL articles (including filtered ones)
+        
+        # Ensure every row has an article_id BEFORE any materialization/merging
+        def _ensure_article_id_map(r: Dict[str, Any]) -> Dict[str, Any]:
+            try:
+                aid = r.get("article_id")
+                if not (isinstance(aid, str) and aid.strip() != ""):
+                    src = r.get("article_path")
+                    if not isinstance(src, str) or src.strip() == "":
+                        src = r.get("article_text") or r.get("chunk_text") or ""
+                    import hashlib as _hash
+                    r["article_id"] = _hash.sha1(str(src).encode("utf-8")).hexdigest()
+            except Exception:
+                pass
+            return r
+        try:
+            ds_in = ds_in.map(_ensure_article_id_map)
+        except Exception:
+            pass
+
         # Keyword flag + gating
         if prefilter_mode in ("pre_gating", "post_gating"):
             # First mark keyword and tally BEFORE any filter so W&B sees true totals
@@ -1259,7 +1311,16 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                     usage_actor = ray.get_actor("uair_usage_agg")  # type: ignore
             except Exception:
                 usage_actor = None  # type: ignore
-            ds_in = ds_in.map(lambda r: {**r, "relevant_keyword": _kw_flag(r.get("article_text"))})
+            # Add keyword information: binary flag, matched keywords list, and match count
+            def _add_keyword_info(r: Dict[str, Any]) -> Dict[str, Any]:
+                has_kw, matched_kws, match_count = _extract_matched_keywords(r.get("article_text"))
+                return {
+                    **r,
+                    "relevant_keyword": has_kw,
+                    "matched_keywords": matched_kws,
+                    "keyword_match_count": match_count,
+                }
+            ds_in = ds_in.map(_add_keyword_info)
             if usage_actor is not None:
                 def _acc_kw(pdf: pd.DataFrame) -> pd.DataFrame:
                     try:
@@ -1280,7 +1341,12 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                 except Exception:
                     pass
             if prefilter_mode == "pre_gating":
-                ds_in = ds_in.filter(lambda r: bool(r.get("relevant_keyword", True)))
+                # Keep a copy of ALL articles before filtering
+                # Must materialize to cache the unfiltered data, otherwise ds_all will reference
+                # the same lazy execution plan as ds_in and both will be filtered
+                ds_all = ds_in.materialize()
+                # Filter to only articles WITH keywords for LLM processing
+                ds_in = ds_all.filter(lambda r: bool(r.get("relevant_keyword", True)))
         # Attach chunk_text
         if enable_kw_buf and kw_regex is not None:
             ds_in = ds_in.map(_attach_chunk_text)
@@ -1293,7 +1359,53 @@ def run_classification_stage(df: pd.DataFrame, cfg):
             return r
         ds_in = ds_in.map(_trim_row)
         processor = build_llm_processor(engine_config, preprocess=_pre, postprocess=_post)
-        return processor(ds_in)
+        ds_llm_results = processor(ds_in)
+        
+        # If we filtered articles, merge LLM results back with filtered articles
+        if ds_all is not None:
+            try:
+                # Convert to pandas for easier merging
+                df_llm = ds_llm_results.to_pandas()
+                df_all = ds_all.to_pandas()
+                
+                # Mark filtered articles as not relevant
+                def _mark_filtered(pdf: pd.DataFrame) -> pd.DataFrame:
+                    pdf = pdf.copy()
+                    pdf["is_relevant"] = False
+                    pdf["classification_mode"] = "filtered_by_keyword"
+                    # Provide consistent columns for logging
+                    if "relevance_answer" not in pdf.columns:
+                        pdf["relevance_answer"] = None
+                    return pdf
+                
+                # Get article_ids that were processed by LLM
+                processed_ids = set(df_llm["article_id"].unique())
+                
+                # Find articles that were filtered out
+                df_filtered = df_all[~df_all["article_id"].isin(processed_ids)].copy()
+                df_filtered["is_relevant"] = False
+                df_filtered["classification_mode"] = "filtered_by_keyword"
+                if "relevance_answer" not in df_filtered.columns:
+                    df_filtered["relevance_answer"] = None
+                
+                # Serialize matched_keywords to JSON for Arrow/Parquet compatibility
+                if "matched_keywords" in df_filtered.columns:
+                    df_filtered["matched_keywords"] = df_filtered["matched_keywords"].apply(_to_json_str)
+                
+                # Merge: LLM results + filtered articles
+                result_df = pd.concat([df_llm, df_filtered], ignore_index=True)
+                
+                print(f"[classify] Merged results: {len(df_llm)} LLM-processed + {len(df_filtered)} filtered = {len(result_df)} total", flush=True)
+                
+                return result_df
+            except Exception as e:
+                print(f"Warning: Failed to merge filtered articles back into results: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                # Fall back to just LLM results
+                return ds_llm_results
+        
+        return ds_llm_results
 
     # Pandas path: build Ray Dataset directly and push prefilter/trim into maps
     # Build a Ray Dataset with multiple blocks to enable true streaming.
@@ -1320,10 +1432,26 @@ def run_classification_stage(df: pd.DataFrame, cfg):
 
     # Apply keyword flag + pre-gating and trimming in Ray maps (same as streaming path)
     ds_in = ds
+    ds_all = None  # Track ALL articles (including filtered ones)
+    
     if prefilter_mode in ("pre_gating", "post_gating"):
-        ds_in = ds_in.map(lambda r: {**r, "relevant_keyword": _kw_flag(r.get("article_text"))})
+        # Add keyword information: binary flag, matched keywords list, and match count
+        def _add_keyword_info_pandas(r: Dict[str, Any]) -> Dict[str, Any]:
+            has_kw, matched_kws, match_count = _extract_matched_keywords(r.get("article_text"))
+            return {
+                **r,
+                "relevant_keyword": has_kw,
+                "matched_keywords": matched_kws,
+                "keyword_match_count": match_count,
+            }
+        ds_in = ds_in.map(_add_keyword_info_pandas)
         if prefilter_mode == "pre_gating":
-            ds_in = ds_in.filter(lambda r: bool(r.get("relevant_keyword", True)))
+            # Keep a copy of ALL articles before filtering
+            # Must materialize to cache the unfiltered data, otherwise ds_all will reference
+            # the same lazy execution plan as ds_in and both will be filtered
+            ds_all = ds_in.materialize()
+            # Filter to only articles WITH keywords for LLM processing
+            ds_in = ds_all.filter(lambda r: bool(r.get("relevant_keyword", True)))
     if enable_kw_buf and kw_regex is not None:
         ds_in = ds_in.map(_attach_chunk_text)
     sys_text = system_prompt
@@ -1337,6 +1465,35 @@ def run_classification_stage(df: pd.DataFrame, cfg):
     processor = build_llm_processor(engine_config, preprocess=_pre, postprocess=_post)
     # Avoid an extra materialize; converting to pandas will trigger execution.
     out_df = processor(ds_in).to_pandas()
+    
+    # If we filtered articles, merge LLM results back with filtered articles
+    if ds_all is not None:
+        try:
+            df_llm = out_df
+            df_all = ds_all.to_pandas()
+            
+            # Get article_ids that were processed by LLM
+            processed_ids = set(df_llm["article_id"].unique())
+            
+            # Find articles that were filtered out
+            df_filtered = df_all[~df_all["article_id"].isin(processed_ids)].copy()
+            df_filtered["is_relevant"] = False
+            df_filtered["classification_mode"] = "filtered_by_keyword"
+            
+            # Serialize matched_keywords to JSON for Arrow/Parquet compatibility
+            if "matched_keywords" in df_filtered.columns:
+                df_filtered["matched_keywords"] = df_filtered["matched_keywords"].apply(_to_json_str)
+            
+            # Merge: LLM results + filtered articles
+            out_df = pd.concat([df_llm, df_filtered], ignore_index=True)
+            
+            print(f"[classify] Merged results: {len(df_llm)} LLM-processed + {len(df_filtered)} filtered = {len(out_df)} total", flush=True)
+        except Exception as e:
+            print(f"Warning: Failed to merge filtered articles back into results: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            # Fall back to just LLM results
+    
     # Stage-scoped logging is handled by the orchestrator
     return out_df
 

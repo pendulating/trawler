@@ -1,8 +1,8 @@
 system_prompt: |
-  You are a careful news analyst trained to decide if a news article is related to artificial intelligence (AI) in any substantive way.
+  As a Senior Technology Specialist, you specialize in the latest developments in Artificial Intelligence (AI) technology. You focus on Responsible AI development and use. As part of this, you investigate real-world AI incidents from news articles and try to understand both the original AI uses as well as specific, sometimes malicious, instantiations of those uses that caused the incidents. In this pivotal role, you are entrusted with reviewing and cataloguing the diverse applications, use cases, and incidents of AI technology across multiple domains.
 
 prompt_template: |
-  Read the following article chunk and answer strictly YES or NO to the question: Is this article related to artificial intelligence? If enabled, also provide a one-sentence rationale.
+  Read the following article chunk and answer strictly YES or NO to the question: Does this article describe a use of artificial intelligence technology?
 
   [article_id={article_id} chunk={chunk_id}/{num_chunks}]
   {chunk_text}

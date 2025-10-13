@@ -1,0 +1,57 @@
+# @package _global_
+# Event detection pipeline: extracts narrative events from raw articles
+#
+# Input: Parquet file with articles (columns: article_path, article_text)
+# Output: Event clusters with metadata and top terms
+#
+# Usage:
+#   python -m dagspaces.uair.run_pipeline \
+#     pipeline=event_detection_from_articles \
+#     ARTICLES_PATH=/path/to/articles.parquet
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+runtime:
+  debug: false
+  sample_n: null  # Process all articles (set to N for testing subset)
+
+pipeline:
+  output_root: ${runtime.output_root}
+  allow_partial: false
+  
+  sources:
+    articles:
+      path: ${oc.env:ARTICLES_PATH,/share/pierson/matt/UAIR/data/global_subset/all_articles.parquet}
+      type: parquet
+  
+  graph:
+    nodes:
+      topic:
+        stage: topic
+        depends_on: []
+        inputs:
+          dataset: articles
+        outputs:
+          docs: outputs/topic/event_clusters.parquet
+        overrides:
+          runtime.streaming_io: ${runtime.streaming_io}
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 64  # Adjust based on dataset size
+          
+          # Event detection parameters (from event_detection.yaml)
+          topic.hdbscan.min_cluster_size: 2
+          topic.hdbscan.min_samples: 1
+          topic.hdbscan.cluster_selection_epsilon: 0.03
+          topic.hdbscan.cluster_selection_method: eom
+          topic.reduce.n_neighbors: 15
+          topic.reduce.min_dist: 0.0
+          topic.reduce.n_components: 25
+          topic.embed.matryoshka_dim: 384
+          topic.embed.device: cuda
+          topic.embed.batch_size: 128
+          topic.gpu.use_rapids: true
+          topic.tfidf_stop_words: dagspaces/uair/conf/stopwords/comprehensive.yaml
+        
+        launcher: g2_slurm_pierson  # 2 GPU node (adjust to your launcher)
+        wandb_suffix: events

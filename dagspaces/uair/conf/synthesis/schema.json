@@ -1,0 +1,133 @@
+{
+  "type": "object",
+  "properties": {
+    "primary_risk_type": {
+      "type": "string",
+      "enum": [
+        "Bias and Discrimination",
+        "Privacy Violations",
+        "Misinformation and Manipulation",
+        "Labor Displacement",
+        "Surveillance and Control",
+        "Safety and Reliability",
+        "Dual Use and Weaponization",
+        "Environmental Impact",
+        "Concentration of Power",
+        "Existential Risk",
+        "Other"
+      ],
+      "description": "Primary AI risk category identified in this cluster"
+    },
+    "risk_confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Confidence score for risk classification (0-1)"
+    },
+    "common_themes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 5,
+      "description": "3-5 common themes across cluster articles"
+    },
+    "key_entities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "description": "Companies, organizations, or key actors mentioned"
+    },
+    "technology_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 5,
+      "description": "AI technologies involved (e.g., NLP, Computer Vision)"
+    },
+    "geographic_distribution": {
+      "type": "object",
+      "properties": {
+        "primary_countries": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Main countries mentioned"
+        },
+        "global_scope": {
+          "type": "boolean",
+          "description": "Whether risk has global implications"
+        }
+      },
+      "description": "Geographic patterns in cluster"
+    },
+    "temporal_patterns": {
+      "type": "object",
+      "properties": {
+        "trend": {
+          "type": "string",
+          "enum": ["increasing", "stable", "decreasing", "emerging"],
+          "description": "How coverage/intensity changes over time"
+        },
+        "peak_period": {
+          "type": "string",
+          "description": "When coverage peaked (if applicable)"
+        }
+      },
+      "description": "Temporal analysis of cluster"
+    },
+    "synthesis_summary": {
+      "type": "string",
+      "minLength": 100,
+      "maxLength": 2000,
+      "description": "2-3 paragraph narrative synthesis of cluster insights"
+    },
+    "impact_areas": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "healthcare", "finance", "education", "employment", 
+          "justice", "governance", "media", "environment", "security"
+        ]
+      },
+      "description": "Societal domains impacted"
+    },
+    "supporting_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "description": "Source article identifier"
+          },
+          "quote": {
+            "type": "string",
+            "description": "Relevant excerpt from article"
+          },
+          "relevance": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "description": "Relevance score for this evidence"
+          }
+        },
+        "required": ["article_id", "quote"]
+      },
+      "maxItems": 5,
+      "description": "Top 5 supporting evidence pieces with citations"
+    }
+  },
+  "required": [
+    "primary_risk_type",
+    "risk_confidence",
+    "common_themes",
+    "synthesis_summary"
+  ],
+  "additionalProperties": false
+}
+

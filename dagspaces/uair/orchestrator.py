@@ -20,9 +20,11 @@ from .config_schema import (
 )
 from .stages.classify import run_classification_stage
 from .stages.decompose import run_decomposition_stage
+from .stages.decompose_nbl import run_decomposition_stage_nbl
 from .stages.taxonomy import run_taxonomy_stage
 from .stages.topic import run_topic_stage
 from .stages.verify import run_verification_stage
+from .stages.synthesis import run_synthesis_stage
 from .wandb_logger import WandbLogger
 
 try:
@@ -100,7 +102,10 @@ def clone_config(cfg: DictConfig) -> DictConfig:
 def merge_overrides(base_cfg: DictConfig, overrides: Optional[Mapping[str, Any]]) -> DictConfig:
     if not overrides:
         return base_cfg
-    return OmegaConf.merge(base_cfg, OmegaConf.create(overrides))  # type: ignore[return-value]
+    # Apply each override using OmegaConf.update to properly handle dot notation
+    for key, value in overrides.items():
+        OmegaConf.update(base_cfg, key, value, merge=True)
+    return base_cfg
 
 
 def ensure_section(cfg: DictConfig, section: str) -> None:
@@ -309,13 +314,64 @@ class ClassificationRunner(StageRunner):
                 relevant_df = out[out["is_relevant"] == True].copy()
                 relevant_df.to_parquet(context.output_paths["relevant"], index=False)
         
-        # Log results table to wandb (in inspect_results panel group)
+        # Log results table and keyword statistics to wandb
         if isinstance(out, pd.DataFrame) and context.logger:
             try:
-                prefer_cols = ["article_id", "is_relevant", "article_text", "article_path", "country", "year"]
+                # Include keyword columns and classification mode if available
+                prefer_cols = ["article_id", "is_relevant", "classification_mode", "relevant_keyword", "matched_keywords", "keyword_match_count", "article_text", "article_path", "country", "year"]
+                # Filter to only columns that exist
+                prefer_cols = [c for c in prefer_cols if c in out.columns]
                 context.logger.log_table(out, "classify/results", prefer_cols=prefer_cols, panel_group="inspect_results")
+                
+                # Log keyword filtering statistics
+                if "relevant_keyword" in out.columns:
+                    total_articles = len(out)
+                    articles_with_keywords = out["relevant_keyword"].sum() if "relevant_keyword" in out.columns else 0
+                    articles_without_keywords = total_articles - articles_with_keywords
+                    keyword_presence_rate = articles_with_keywords / total_articles if total_articles > 0 else 0
+                    
+                    keyword_stats = {
+                        "classify/keyword_filtering/total_articles": total_articles,
+                        "classify/keyword_filtering/articles_with_keywords": int(articles_with_keywords),
+                        "classify/keyword_filtering/articles_without_keywords": int(articles_without_keywords),
+                        "classify/keyword_filtering/keyword_presence_rate": keyword_presence_rate,
+                    }
+                    
+                    # Average matches per article (for articles with matches)
+                    if "keyword_match_count" in out.columns:
+                        articles_with_matches = out[out["keyword_match_count"] > 0]
+                        if len(articles_with_matches) > 0:
+                            avg_matches = articles_with_matches["keyword_match_count"].mean()
+                            max_matches = articles_with_matches["keyword_match_count"].max()
+                            keyword_stats["classify/keyword_filtering/avg_matches_per_article"] = avg_matches
+                            keyword_stats["classify/keyword_filtering/max_matches_in_article"] = int(max_matches)
+                    
+                    context.logger.log_metrics(keyword_stats)
+                    print(f"[classify] Keyword filtering: {articles_with_keywords}/{total_articles} articles ({keyword_presence_rate:.1%}) have keywords", flush=True)
+                    
+                    # Log top matched keywords if available
+                    if "matched_keywords" in out.columns:
+                        try:
+                            # Flatten all matched keywords and count frequency
+                            from collections import Counter
+                            all_keywords = []
+                            for kws in out["matched_keywords"].dropna():
+                                if isinstance(kws, list):
+                                    all_keywords.extend(kws)
+                            
+                            if all_keywords:
+                                keyword_freq = Counter(all_keywords)
+                                top_10_keywords = keyword_freq.most_common(10)
+                                
+                                # Log as wandb summary (for easy viewing)
+                                for i, (keyword, count) in enumerate(top_10_keywords, 1):
+                                    context.logger.set_summary(f"classify/top_keywords/{i:02d}_{keyword}", count)
+                                
+                                print(f"[classify] Top 5 keywords: {', '.join([f'{kw}({cnt})' for kw, cnt in top_10_keywords[:5]])}", flush=True)
+                        except Exception as e:
+                            print(f"Warning: Failed to log top keywords: {e}", flush=True)
             except Exception as e:
-                print(f"Warning: Failed to log classify results table to wandb: {e}", flush=True)
+                print(f"Warning: Failed to log classify results or keyword statistics to wandb: {e}", flush=True)
         
         metadata: Dict[str, Any] = {
             "rows": row_count,
@@ -410,6 +466,47 @@ class DecomposeRunner(StageRunner):
         return StageResult(outputs=outputs, metadata=metadata)
 
 
+class DecomposeNBLRunner(StageRunner):
+    stage_name = "decompose_nbl"
+
+    def run(self, context: StageExecutionContext) -> StageResult:
+        dataset_path = context.inputs.get("dataset")
+        if not dataset_path:
+            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
+        cfg = context.cfg
+        OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
+        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
+        in_obj = ds if use_streaming and ds is not None else df
+        out = run_decomposition_stage_nbl(in_obj, cfg)
+        
+        # Convert to pandas if needed
+        if hasattr(out, "to_pandas"):
+            out = out.to_pandas()
+        
+        # Save outputs to disk
+        if isinstance(out, pd.DataFrame):
+            for output_name, output_path in context.output_paths.items():
+                out.to_parquet(output_path, index=False)
+        
+        # Log results table to wandb (in inspect_results panel group)
+        if isinstance(out, pd.DataFrame) and context.logger:
+            try:
+                prefer_cols = ["article_id", "chunk_id", "chunk_text", "article_path"]
+                context.logger.log_table(out, "decompose_nbl/results", prefer_cols=prefer_cols, panel_group="inspect_results")
+            except Exception as e:
+                print(f"Warning: Failed to log decompose_nbl results table to wandb: {e}", flush=True)
+        
+        metadata: Dict[str, Any] = {
+            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
+            "streaming": bool(use_streaming),
+        }
+        outputs = _collect_outputs(
+            context,
+            {name: spec.optional for name, spec in context.node.outputs.items()},
+        )
+        return StageResult(outputs=outputs, metadata=metadata)
+
+
 class TopicRunner(StageRunner):
     stage_name = "topic"
 
@@ -431,10 +528,32 @@ class TopicRunner(StageRunner):
         if not dataset_path:
             raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
         resolved_path = self._resolve_topic_path(dataset_path)
+        
+        # Debug: Check what's being loaded
+        print(f"[TopicRunner] Input path: {dataset_path}", flush=True)
+        print(f"[TopicRunner] Resolved path: {resolved_path}", flush=True)
+        if os.path.exists(resolved_path):
+            import pandas as pd
+            try:
+                df_check = pd.read_parquet(resolved_path)
+                print(f"[TopicRunner] File has {len(df_check)} rows", flush=True)
+                print(f"[TopicRunner] Columns: {list(df_check.columns)}", flush=True)
+            except Exception as e:
+                print(f"[TopicRunner] Could not read file for debugging: {e}", flush=True)
+        else:
+            print(f"[TopicRunner] WARNING: File does not exist!", flush=True)
+        
         cfg = context.cfg
         OmegaConf.update(cfg, "data.parquet_path", resolved_path, merge=True)
         df, ds, use_streaming = prepare_stage_input(cfg, resolved_path, self.stage_name)
         in_obj = ds if use_streaming and ds is not None else df
+        
+        # Debug: Check what prepare_stage_input returned
+        if df is not None:
+            print(f"[TopicRunner] DataFrame loaded with {len(df)} rows", flush=True)
+        elif ds is not None:
+            print(f"[TopicRunner] Ray Dataset loaded (streaming)", flush=True)
+        
         out = run_topic_stage(in_obj, cfg, logger=context.logger)
         
         # Convert to pandas if needed
@@ -514,12 +633,76 @@ class VerificationRunner(StageRunner):
         return StageResult(outputs=outputs, metadata=metadata)
 
 
+class SynthesisRunner(StageRunner):
+    stage_name = "synthesis"
+
+    def run(self, context: StageExecutionContext) -> StageResult:
+        # Synthesis requires clusters; articles are optional (enables text-aware join when provided)
+        clusters_path = context.inputs.get("clusters")
+        articles_path = context.inputs.get("articles")
+        
+        if not clusters_path:
+            raise ValueError(f"Node '{context.node.key}' requires 'clusters' input (topic assignments)")
+        
+        cfg = context.cfg
+        
+        # Load both datasets
+        try:
+            df_clusters = pd.read_parquet(clusters_path)
+            print(f"Loaded {len(df_clusters)} rows from clusters: {clusters_path}", flush=True)
+        except Exception as e:
+            raise ValueError(f"Failed to load clusters from '{clusters_path}': {e}")
+        
+        df_articles = None
+        if articles_path:
+            try:
+                if os.path.exists(articles_path):
+                    df_articles = pd.read_parquet(articles_path)
+                    print(f"Loaded {len(df_articles)} rows from articles: {articles_path}", flush=True)
+                else:
+                    print(f"Articles path not found; proceeding without articles: {articles_path}", flush=True)
+            except Exception as e:
+                print(f"Warning: Failed to load articles from '{articles_path}': {e}; proceeding without articles.", flush=True)
+        
+        # Pass both to synthesis stage
+        out = run_synthesis_stage(df_clusters, cfg, logger=context.logger, articles_df=df_articles)
+        
+        # Convert to pandas if needed
+        if hasattr(out, "to_pandas"):
+            out = out.to_pandas()
+        
+        # Save outputs to disk
+        if isinstance(out, pd.DataFrame):
+            for output_name, output_path in context.output_paths.items():
+                out.to_parquet(output_path, index=False)
+        
+        # Log results table to wandb (in inspect_results panel group)
+        if isinstance(out, pd.DataFrame) and context.logger:
+            try:
+                prefer_cols = ["cluster_id", "num_articles", "primary_risk_type", "risk_confidence", "synthesis_summary"]
+                context.logger.log_table(out, "synthesis/results", prefer_cols=prefer_cols, panel_group="inspect_results")
+            except Exception as e:
+                print(f"Warning: Failed to log synthesis results table to wandb: {e}", flush=True)
+        
+        metadata: Dict[str, Any] = {
+            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
+            "streaming": False,  # Synthesis uses dual-input join, not streaming
+        }
+        outputs = _collect_outputs(
+            context,
+            {name: spec.optional for name, spec in context.node.outputs.items()},
+        )
+        return StageResult(outputs=outputs, metadata=metadata)
+
+
 _STAGE_REGISTRY: Dict[str, StageRunner] = {
     "classify": ClassificationRunner(),
     "decompose": DecomposeRunner(),
+    "decompose_nbl": DecomposeNBLRunner(),
     "taxonomy": TaxonomyRunner(),
     "topic": TopicRunner(),
     "verification": VerificationRunner(),
+    "synthesis": SynthesisRunner(),
 }
 
 

@@ -1,0 +1,56 @@
+# @package _global_
+# Run only the synthesis stage using precomputed topic clusters and precomputed articles parquet
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+runtime:
+  debug: false
+  sample_n: null
+
+synthesis:
+  strategy: hierarchical_map_reduce
+  schema_path: ${oc.env:SYNTHESIS_SCHEMA,dagspaces/uair/conf/synthesis/schema.json}
+
+sampling_params_synthesis:
+  seed: 777
+  temperature: 0.1
+  top_p: 0.95
+  max_tokens: 2048
+
+pipeline:
+  output_root: ${runtime.output_root}
+  allow_partial: false
+  sources:
+    clusters:
+      path: ${oc.env:CLUSTERS_PATH,/share/pierson/matt/UAIR/outputs/topic/docs_topics.parquet}
+      type: parquet
+    articles:
+      path: ${oc.env:ARTICLES_PATH,/share/pierson/matt/UAIR/outputs/classify/classify_relevant.parquet}
+      type: parquet
+  graph:
+    nodes:
+      synthesis:
+        stage: synthesis
+        depends_on: []
+        inputs:
+          clusters: clusters
+          articles: articles
+        outputs:
+          clusters: outputs/synthesis/cluster_synthesis.parquet
+        overrides:
+          runtime.streaming_io: ${runtime.streaming_io}
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 32
+          model.engine_kwargs.max_model_len: 8192
+          model.engine_kwargs.max_num_seqs: 2
+          model.engine_kwargs.gpu_memory_utilization: 0.8
+          model.batch_size: 1
+          model.engine_kwargs.tensor_parallel_size: 2
+          model.engine_kwargs.pipeline_parallel_size: 1
+          model.concurrency: 1
+          sampling_params_synthesis.max_tokens: 2048
+        launcher: g2_slurm_pierson
+        wandb_suffix: synthesis
+
+

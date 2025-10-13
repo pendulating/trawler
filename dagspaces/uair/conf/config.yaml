@@ -5,6 +5,9 @@ defaults:
   - data: inputs
   - prompt: classify
   - prompt@prompt_taxonomy: taxonomy
+  - prompt@prompt_synthesis: synthesis
+  - optional prompt@prompt_decompose: decompose
+  - optional prompt@prompt_decompose_nbl: decompose_nbl_prompt
   - model: vllm_qwen3-30b
   - optional pipeline: cluster_topic
 
@@ -37,7 +40,7 @@ topic:
   # Optional cap to bound memory; null means unlimited
   sample_max_units: null
   # TF-IDF controls for cluster top-term summaries
-  tfidf_stop_words: english   # english | null | custom list via code
+  tfidf_stop_words: dagspaces/uair/conf/stopwords/news_extended.yaml   # english | null | custom list (used if tfidf_stopwords_path not set)
   tfidf_max_df: 0.90          # ignore terms in >90% of units
   tfidf_ngram_max: 2          # up to bigrams for scalability at 386k docs
   doc_terms_k: 10             # number of per-article tf-idf keywords to emit
@@ -94,35 +97,15 @@ sampling_params_taxonomy:
 # Path/config for taxonomy
 taxonomy_json: ${oc.env:TAXONOMY_JSON,/share/pierson/matt/UAIR/dagspaces/uair/conf/taxonomy/weitz.yaml}
 
+# Path/config for topic modeling stopwords (optional; overrides topic.tfidf_stop_words if set)
+tfidf_stopwords_path: ${oc.env:TFIDF_STOPWORDS_PATH,null}
+
 # Verification defaults
 verify:
   method: embed   # off | embed | nli | combo | combo_judge
   top_k: 3
   thresholds: "sim=0.55,ent=0.85,contra=0.05"
   device: ${oc.env:VERIFY_DEVICE,null}
-
-pipeline:
-  output_root: ${runtime.output_root}
-  allow_partial: false
-  sources:
-    articles:
-      path: ${data.parquet_path}
-      type: parquet
-  graph:
-    nodes:
-      topic:
-        stage: topic
-        depends_on: []
-        inputs:
-          dataset: articles
-        outputs:
-          docs: outputs/topic/docs_topics.parquet
-        overrides:
-          runtime.streaming_io: ${runtime.streaming_io}
-          runtime.debug: ${runtime.debug}
-          topic.embed.device: cpu
-        launcher: g2_slurm_cpu
-        wandb_suffix: topic
 
 wandb:
   enabled: true
