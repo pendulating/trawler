@@ -41,12 +41,29 @@ COUNTRY_CODE_MAP = {
 }
 
 
+YEAR_BINS = [
+    "2015-2017",
+    "2018-2019",
+    "2020-2021",
+    "2022-2023",
+    "2024-2025",
+]
+
+
 def create_year_bin(year):
-    """Create 3-year bins starting from 2015."""
-    year = int(year)
-    start_year = ((year - 2015) // 3) * 3 + 2015
-    end_year = start_year + 2
-    return f"{start_year}-{end_year}"
+    """Map a year to one of the specified bins, or return None if outside range."""
+    y = int(year)
+    if 2015 <= y <= 2017:
+        return "2015-2017"
+    if 2018 <= y <= 2019:
+        return "2018-2019"
+    if 2020 <= y <= 2021:
+        return "2020-2021"
+    if 2022 <= y <= 2023:
+        return "2022-2023"
+    if 2024 <= y <= 2025:
+        return "2024-2025"
+    return None
 
 
 def calculate_country_stats(df, min_articles=100):
@@ -55,6 +72,8 @@ def calculate_country_stats(df, min_articles=100):
     
     # Add year bins
     df['year_bin'] = df['year'].apply(create_year_bin)
+    # Drop rows outside our defined bins
+    df = df[df['year_bin'].notna()]
     
     # Filter countries with minimum article count
     country_counts = df['country'].value_counts()
@@ -63,8 +82,8 @@ def calculate_country_stats(df, min_articles=100):
     
     print(f"Processing {len(valid_countries)} countries with at least {min_articles} articles")
     
-    # Get unique year bins
-    year_bins = sorted(df['year_bin'].unique())
+    # Use the fixed year bins (in desired order)
+    year_bins = YEAR_BINS
     
     # Calculate statistics per country and year bin
     stats = []
@@ -83,18 +102,29 @@ def calculate_country_stats(df, min_articles=100):
             'total_articles': len(country_data)
         }
         
-        # Calculate fraction for each year bin
+        # Calculate fraction for each year bin (fill zeros if missing) and period-over-period growth
+        prev_fraction = None
         for year_bin in year_bins:
             bin_data = country_data[country_data['year_bin'] == year_bin]
-            if len(bin_data) > 0:
-                total = len(bin_data)
-                relevant = len(bin_data[bin_data['is_relevant'] == True])
-                fraction = relevant / total
-                # Create safe property name
-                bin_key = year_bin.replace('-', '_')
-                stat_entry[f'ai_fraction_{bin_key}'] = round(fraction, 4)
-                stat_entry[f'total_{bin_key}'] = total
-                stat_entry[f'relevant_{bin_key}'] = relevant
+            total = int(len(bin_data))
+            relevant = int(len(bin_data[bin_data['is_relevant'] == True])) if total > 0 else 0
+            fraction = (relevant / total) if total > 0 else 0.0
+            bin_key = year_bin.replace('-', '_')
+            stat_entry[f'ai_fraction_{bin_key}'] = round(fraction, 4)
+            stat_entry[f'total_{bin_key}'] = total
+            stat_entry[f'relevant_{bin_key}'] = relevant
+
+            # Growth: absolute delta vs previous period; relative growth vs previous fraction
+            if prev_fraction is None:
+                growth_abs = 0.0
+                growth_rel = 0.0
+            else:
+                growth_abs = fraction - prev_fraction
+                growth_rel = (growth_abs / prev_fraction) if prev_fraction > 0 else 0.0
+            stat_entry[f'ai_growth_{bin_key}'] = round(growth_abs, 4)
+            stat_entry[f'ai_growth_pct_{bin_key}'] = round(growth_rel, 4)
+
+            prev_fraction = fraction
         
         stats.append(stat_entry)
     
