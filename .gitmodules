@@ -1,0 +1,3 @@
+[submodule "papers/uair_brief"]
+	path = papers/uair_brief
+	url = git@github.com:pendulating/uair_brief.git
