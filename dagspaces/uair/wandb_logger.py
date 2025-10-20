@@ -728,11 +728,25 @@ class WandbLogger:
             # Fallback: allow explicit pipeline name via env if provided
             pipeline_name = os.environ.get("UAIR_PIPELINE_NAME") or None
 
-        # Build name: [pipeline-]experiment-stage-timestamp
+        # Variant for classify stage (e.g., classification_profile: eu_ai_act)
+        variant = None
+        try:
+            if self.stage == "classify":
+                var = getattr(getattr(self.cfg, "runtime", object()), "classification_profile", None)
+                if var is not None and str(var).strip() != "":
+                    variant = str(var).strip()
+        except Exception:
+            variant = None
+
+        # Build name: [pipeline-]experiment-stage-variant?-timestamp
         parts = []
         if pipeline_name:
             parts.append(pipeline_name)
-        parts.extend([exp_name, self.stage, timestamp])
+        parts.append(exp_name)
+        parts.append(self.stage)
+        if variant:
+            parts.append(variant)
+        parts.append(timestamp)
 
         return "-".join(parts)
     
@@ -1000,6 +1014,52 @@ class WandbLogger:
             except Exception:
                 df_local = df
 
+            # Universally drop internal LLM/mechanics columns before any selection (applies to all stages)
+            def _drop_internal_llm_columns(df_in):
+                try:
+                    internal_cols = {
+                        # vLLM/Ray internals
+                        "generated_text",
+                        "llm_output",
+                        "messages",
+                        "params",
+                        "prompt",
+                        "sampling_params",
+                        "json",
+                        "guided_decoding",
+                        "response_format",
+                        "structured_output",
+                        # usage/token counts often nested
+                        "usage",
+                        "token_counts",
+                    }
+                    # Pattern-based exclusions
+                    pattern_prefixes = [
+                        "eu_ai_raw_json",
+                    ]
+                    pattern_names = {
+                        "llm_json",
+                    }
+                    cols_present = [c for c in internal_cols if c in df_in.columns]
+                    # Add pattern matches
+                    for c in list(df_in.columns):
+                        try:
+                            if c in pattern_names:
+                                cols_present.append(c)
+                                continue
+                            for pref in pattern_prefixes:
+                                if c.startswith(pref):
+                                    cols_present.append(c)
+                                    break
+                        except Exception:
+                            continue
+                    if cols_present:
+                        return df_in.drop(columns=cols_present)
+                    return df_in
+                except Exception:
+                    return df_in
+            df_local = _drop_internal_llm_columns(df_local)
+
             # Select columns
             # For decompose stage, log ALL available columns in inspect_results table,
             # but drop heavy ndarray/list-like columns that cause schema issues.
@@ -1048,17 +1108,30 @@ class WandbLogger:
                     cols = list(df_local.columns)[:12]
                 cols = _filter_heavy_columns(df_local, cols)
 
-            # Exclude internal LLM columns for decompose stages
-            if self.stage in ("decompose", "decompose_nbl"):
-                exclude_internals = {
-                    "generated_text",
-                    "llm_output",
-                    "messages",
-                    "params",
-                    "prompt",
-                    "sampling_params",
-                }
-                cols = [c for c in cols if c not in exclude_internals]
+            # Final safeguard: ensure internal columns are not selected even if present in prefer_cols
+            universal_exclude = {
+                "generated_text",
+                "llm_output",
+                "messages",
+                "params",
+                "prompt",
+                "sampling_params",
+                "json",
+                "guided_decoding",
+                "response_format",
+                "structured_output",
+                "usage",
+                "token_counts",
+            }
+            def _is_universal_excluded(name: str) -> bool:
+                if name in universal_exclude:
+                    return True
+                if name == "llm_json":
+                    return True
+                if name.startswith("eu_ai_raw_json"):
+                    return True
+                return False
+            cols = [c for c in cols if not _is_universal_excluded(c)]
             
             # Sample if needed (always use random sampling, not head())
             max_rows = max_rows or self.wb_config.table_sample_rows

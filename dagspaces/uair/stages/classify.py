@@ -279,6 +279,41 @@ def _serialize_arrow_unfriendly_in_row(row: Dict[str, Any], columns: List[str]) 
                 row[col] = _to_json_str(val)
 
 
+def _sanitize_for_json(value: Any):
+    """Recursively convert value to JSON-serializable builtins.
+
+    - dict -> dict with str keys and sanitized values
+    - list/tuple/set -> list of sanitized values
+    - objects with .tolist() -> use tolist() (e.g., numpy arrays)
+    - other non-serializables -> str(value)
+    """
+    try:
+        if value is None:
+            return None
+        if isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            out = {}
+            for k, v in value.items():
+                try:
+                    key = str(k)
+                except Exception:
+                    key = repr(k)
+                out[key] = _sanitize_for_json(v)
+            return out
+        if isinstance(value, (list, tuple, set)):
+            return [_sanitize_for_json(v) for v in value]
+        tolist = getattr(value, "tolist", None)
+        if callable(tolist):
+            try:
+                return _sanitize_for_json(tolist())
+            except Exception:
+                pass
+        return str(value)
+    except Exception:
+        return None
+
+
 def _detect_num_gpus() -> int:
     """Detect the number of GPUs allocated to this job.
     
@@ -939,6 +974,13 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         ]
         return any(k in s for k in keywords)
     use_llm = bool(getattr(cfg.runtime, "use_llm_classify", False))
+    # Select classification profile (Hydra overrideable): 'relevance' (default), 'eu_ai_act', or 'risks_and_benefits'
+    try:
+        classification_profile = str(getattr(cfg.runtime, "classification_profile", "relevance") or "relevance").strip().lower()
+    except Exception:
+        classification_profile = "relevance"
+    is_eu_profile = (classification_profile == "eu_ai_act")
+    is_risks_benefits_profile = (classification_profile == "risks_and_benefits")
     # Prefilter gating: pre_gating (filter before LLM), post_gating (compute flag only), off
     try:
         prefilter_mode = str(getattr(cfg.runtime, "prefilter_mode", "pre_gating")).strip().lower()
@@ -972,6 +1014,11 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         enable_kw_buf = bool(getattr(cfg.runtime, "keyword_buffering", True))
     except Exception:
         enable_kw_buf = True
+
+    # EU and risks_benefits profiles: disable keyword buffering/gating entirely
+    if is_eu_profile or is_risks_benefits_profile:
+        prefilter_mode = "off"
+        enable_kw_buf = False
     try:
         window_words = int(getattr(cfg.runtime, "keyword_window_words", 100) or 100)
     except Exception:
@@ -1014,25 +1061,68 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         except Exception:
             return True, [], 0
     # Prefer experiments-style prompts when available; otherwise fall back to UAIR prompt
-    try:
-        system_prompt = (
-            getattr(getattr(cfg, "prompts", {}), "relevance_v1", {}).get("system")  # type: ignore
-            if hasattr(cfg, "prompts") else None
-        )
-    except Exception:
-        system_prompt = None
-    if not system_prompt:
-        system_prompt = str(getattr(cfg.prompt, "system_prompt", ""))
+    if is_eu_profile:
+        # EU AI Act classification: try nested prompts.eu_ai_act first; else cfg.prompt.* (Hydra-composed)
+        try:
+            system_prompt = (
+                getattr(getattr(cfg, "prompts", {}), "eu_ai_act", {}).get("system")  # type: ignore
+                if hasattr(cfg, "prompts") else None
+            )
+        except Exception:
+            system_prompt = None
+        if not system_prompt:
+            system_prompt = str(getattr(cfg.prompt, "system_prompt", ""))
 
-    try:
-        user_template = (
-            getattr(getattr(cfg, "prompts", {}), "relevance_v1", {}).get("user_template")  # type: ignore
-            if hasattr(cfg, "prompts") else None
-        )
-    except Exception:
-        user_template = None
-    if not user_template:
-        user_template = str(getattr(cfg.prompt, "prompt_template", ""))
+        try:
+            user_template_eu = (
+                getattr(getattr(cfg, "prompts", {}), "eu_ai_act", {}).get("user_template")  # type: ignore
+                if hasattr(cfg, "prompts") else None
+            )
+        except Exception:
+            user_template_eu = None
+        if not user_template_eu:
+            user_template_eu = str(getattr(cfg.prompt, "prompt_template", ""))
+    elif is_risks_benefits_profile:
+        # Risks and Benefits classification: try nested prompts.risks_and_benefits first; else cfg.prompt.* (Hydra-composed)
+        try:
+            system_prompt = (
+                getattr(getattr(cfg, "prompts", {}), "risks_and_benefits", {}).get("system")  # type: ignore
+                if hasattr(cfg, "prompts") else None
+            )
+        except Exception:
+            system_prompt = None
+        if not system_prompt:
+            system_prompt = str(getattr(cfg.prompt, "system_prompt", ""))
+
+        try:
+            user_template_risks_benefits = (
+                getattr(getattr(cfg, "prompts", {}), "risks_and_benefits", {}).get("user_template")  # type: ignore
+                if hasattr(cfg, "prompts") else None
+            )
+        except Exception:
+            user_template_risks_benefits = None
+        if not user_template_risks_benefits:
+            user_template_risks_benefits = str(getattr(cfg.prompt, "prompt_template", ""))
+    else:
+        try:
+            system_prompt = (
+                getattr(getattr(cfg, "prompts", {}), "relevance_v1", {}).get("system")  # type: ignore
+                if hasattr(cfg, "prompts") else None
+            )
+        except Exception:
+            system_prompt = None
+        if not system_prompt:
+            system_prompt = str(getattr(cfg.prompt, "system_prompt", ""))
+
+        try:
+            user_template = (
+                getattr(getattr(cfg, "prompts", {}), "relevance_v1", {}).get("user_template")  # type: ignore
+                if hasattr(cfg, "prompts") else None
+            )
+        except Exception:
+            user_template = None
+        if not user_template:
+            user_template = str(getattr(cfg.prompt, "prompt_template", ""))
 
     def _format_user(article_text: str, row: Dict[str, Any]) -> str:
         text_val = str((row.get("chunk_text") if row.get("chunk_text") else article_text) or "")
@@ -1055,6 +1145,135 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                 pass
         # Maintain UAIR template compatibility
         return user_template.replace("{{rule_text}}", text_val).replace("{{article_text}}", text_val)
+
+    # Utilities for EU AI Act prompt formatting
+    try:
+        _EU_MISSING_PH = str(getattr(cfg.runtime, "eu_missing_placeholder", "Not known/specified"))
+    except Exception:
+        _EU_MISSING_PH = "Not known/specified"
+
+    def _is_nan_like(v: Any) -> bool:
+        try:
+            # pandas/NumPy NaN/NA checks
+            if v is None:
+                return True
+            if isinstance(v, float):
+                return v != v
+            # pandas NA scalar string repr
+            return str(v).strip().lower() in {"nan", "na", "none"}
+        except Exception:
+            return False
+
+    def _norm_str(val: Any) -> str:
+        try:
+            if _is_nan_like(val):
+                return _EU_MISSING_PH
+            # Flatten common containers
+            if isinstance(val, (list, tuple, set)):
+                vals = [str(x).strip() for x in val if x is not None and str(x).strip() != ""]
+                return ", ".join(vals) if vals else _EU_MISSING_PH
+            s = str(val).strip()
+            return s if s else _EU_MISSING_PH
+        except Exception:
+            return _EU_MISSING_PH
+
+    def _first_present(row: Dict[str, Any], keys: List[str]) -> Any:
+        for k in keys:
+            try:
+                v = row.get(k)
+                if isinstance(v, str) and v.strip() != "":
+                    return v
+                if v not in (None, "") and not isinstance(v, str):
+                    return v
+            except Exception:
+                pass
+        return None
+
+    def _format_user_eu(row: Dict[str, Any]) -> str:
+        # Map decompose outputs to EU fields with graceful fallbacks
+        domain = _norm_str(_first_present(row, [
+            "deployment_domain", "domain", "use_domain"
+        ]))
+        purpose = _norm_str(_first_present(row, [
+            "deployment_purpose", "purpose", "goal", "objective"
+        ]))
+        capability = _norm_str(_first_present(row, [
+            "deployment_capability", "capability", "capabilities", "function", "ability"
+        ]))
+        ai_developer = _norm_str(_first_present(row, [
+            "identity_of_ai_developer", "ai_developer", "developer", "vendor", "builder", "provider", "manufacturer"
+        ]))
+        ai_deployer = _norm_str(_first_present(row, [
+            "identity_of_ai_deployer", "deployer", "operator", "implementer", "user", "agency", "organization_deployer"
+        ]))
+        ai_deployer_location = _norm_str(_first_present(row, [
+            "location_of_ai_deployer", "deployer_location", "operator_location", "location_deployer"
+        ]))
+        ai_subject = _norm_str(_first_present(row, [
+            "identity_of_ai_subject", "ai_subject", "subject", "data_subject", "affected_party", "individual", "group"
+        ]))
+        ai_subject_location = _norm_str(_first_present(row, [
+            "location_of_ai_subject", "subject_location", "location_subject", "where"
+        ]))
+        date_time = _norm_str(_first_present(row, [
+            "date_and_time_of_event", "date___time_of_event", "datetime", "date_time", "date", "time", "event_time", "when"
+        ]))
+        # Attempt to fill extended 9-field template first; fallback to 5-field template; else plain text
+
+        return user_template_eu.format(
+                domain,
+                purpose,
+                capability,
+                ai_developer,
+                ai_deployer,
+                ai_deployer_location,
+                ai_subject,
+                ai_subject_location,
+                date_time,
+            )
+
+    def _format_user_risks_benefits(row: Dict[str, Any]) -> str:
+        # Map decompose outputs to risks_benefits fields (same 9-field structure as EU)
+        domain = _norm_str(_first_present(row, [
+            "deployment_domain", "domain", "use_domain"
+        ]))
+        purpose = _norm_str(_first_present(row, [
+            "deployment_purpose", "purpose", "goal", "objective"
+        ]))
+        capability = _norm_str(_first_present(row, [
+            "deployment_capability", "capability", "capabilities", "function", "ability"
+        ]))
+        ai_developer = _norm_str(_first_present(row, [
+            "identity_of_ai_developer", "ai_developer", "developer", "vendor", "builder", "provider", "manufacturer"
+        ]))
+        ai_deployer = _norm_str(_first_present(row, [
+            "identity_of_ai_deployer", "deployer", "operator", "implementer", "user", "agency", "organization_deployer"
+        ]))
+        ai_deployer_location = _norm_str(_first_present(row, [
+            "location_of_ai_deployer", "deployer_location", "operator_location", "location_deployer"
+        ]))
+        ai_subject = _norm_str(_first_present(row, [
+            "identity_of_ai_subject", "ai_subject", "subject", "data_subject", "affected_party", "individual", "group"
+        ]))
+        ai_subject_location = _norm_str(_first_present(row, [
+            "location_of_ai_subject", "subject_location", "location_subject", "where"
+        ]))
+        date_time = _norm_str(_first_present(row, [
+            "date_and_time_of_event", "date___time_of_event", "datetime", "date_time", "date", "time", "event_time", "when"
+        ]))
+
+        return user_template_risks_benefits.format(
+                domain,
+                purpose,
+                capability,
+                ai_developer,
+                ai_deployer,
+                ai_deployer_location,
+                ai_subject,
+                ai_subject_location,
+                date_time,
+            )
+
 
     # Tokenizer-based trimming helpers
     def _get_tokenizer(model_source: str):
@@ -1115,6 +1334,38 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         except Exception:
             return text
 
+    def _extract_last_json(text: str):
+        """Extract the last JSON object from text, if any.
+
+        Tries direct parse first; otherwise finds brace-delimited snippets and
+        returns the last one that parses as a JSON object.
+        """
+        try:
+            if not isinstance(text, str) or not text.strip():
+                return None
+            s = text
+            try:
+                obj = json.loads(s)
+                if isinstance(obj, dict):
+                    return obj
+            except Exception:
+                pass
+            try:
+                import re as _re
+                snippets = _re.findall(r"\{[\s\S]*\}", s)
+                for snip in reversed(snippets or []):
+                    try:
+                        obj = json.loads(snip)
+                        if isinstance(obj, dict):
+                            return obj
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            return None
+        except Exception:
+            return None
+
     # Constrain GPU mem via vLLM engine args: prefer provided config; otherwise set conservative defaults
     ek = dict(getattr(cfg.model, "engine_kwargs", {}))
     ek.setdefault("max_model_len", 4096)
@@ -1139,6 +1390,8 @@ def run_classification_stage(df: pd.DataFrame, cfg):
     ek.setdefault("dtype", "auto")
     ek.setdefault("kv_cache_dtype", "auto")
     ek = _filter_vllm_engine_kwargs(ek)
+    # Prefer xgrammar backend for stricter JSON Schema enforcement (align with decompose_nbl)
+    ek.setdefault("guided_decoding_backend", "xgrammar")
     # Determine batch_size: explicit config > GPU-aware default > fallback
     try:
         batch_size_cfg = getattr(cfg.model, "batch_size", None)
@@ -1168,20 +1421,92 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         batch_size=int(batch_size),
     )
 
-    # Prefer stage-specific sampling params when present; convert nested DictConfig -> dict
+    # Prefer stage/profile-specific sampling params when present; convert nested DictConfig -> dict
     try:
-        sp_src = getattr(cfg, "sampling_params_classify", getattr(cfg, "sampling_params", {}))
+        if is_eu_profile:
+            sp_src = getattr(cfg, "sampling_params_eu_ai_act", getattr(cfg, "sampling_params_classify", getattr(cfg, "sampling_params", {})))
+        elif is_risks_benefits_profile:
+            sp_src = getattr(cfg, "sampling_params_risks_and_benefits", getattr(cfg, "sampling_params_classify", getattr(cfg, "sampling_params", {})))
+        else:
+            sp_src = getattr(cfg, "sampling_params_classify", getattr(cfg, "sampling_params", {}))
         sampling_params = OmegaConf.to_container(sp_src, resolve=True) if isinstance(sp_src, (dict,)) or hasattr(sp_src, "_get_node") else dict(sp_src)
     except Exception:
         sampling_params = dict(getattr(cfg, "sampling_params", {}))
-    # Borrow from experiments: short label budget; optionally allow rationales
+    # Defaults: EU and risks_benefits need larger output; relevance keeps short YES/NO (or rationales)
     try:
-        if bool(getattr(cfg.runtime, "log_rationales", False)):
-            sampling_params.setdefault("max_tokens", 32)
+        if is_eu_profile:
+            try:
+                eu_default = int(getattr(cfg.runtime, "eu_max_tokens_default", 512) or 512)
+            except Exception:
+                eu_default = 512
+            sampling_params.setdefault("max_tokens", eu_default)
+        elif is_risks_benefits_profile:
+            try:
+                rb_default = int(getattr(cfg.runtime, "risks_benefits_max_tokens_default", 2048) or 2048)
+            except Exception:
+                rb_default = 2048
+            sampling_params.setdefault("max_tokens", rb_default)
         else:
-            sampling_params.setdefault("max_tokens", 8)
+            if bool(getattr(cfg.runtime, "log_rationales", False)):
+                sampling_params.setdefault("max_tokens", 32)
+            else:
+                sampling_params.setdefault("max_tokens", 8)
     except Exception:
         sampling_params.setdefault("max_tokens", 8)
+
+    # JSON schema for EU AI Act structured decoding (ensure valid JSON and constrained label)
+    EU_GUIDED_JSON_SCHEMA = None
+    if is_eu_profile:
+        try:
+            EU_GUIDED_JSON_SCHEMA = {
+                "type": "object",
+                "properties": {
+                    "Description": {"type": "string"},
+                    "Classification": {"enum": ["Prohibited", "High Risk", "Limited or Low Risk"]},
+                    "Relevant Text from the EU AI Act": {"type": "string"},
+                    "Reasoning": {"type": "string"},
+                },
+                "required": ["Description", "Classification", "Relevant Text from the EU AI Act", "Reasoning"],
+                "additional_properties": False,
+            }
+        except Exception:
+            EU_GUIDED_JSON_SCHEMA = None
+
+    # JSON schema for Risks and Benefits structured decoding (complex nested structure)
+    RISKS_BENEFITS_GUIDED_JSON_SCHEMA = None
+    if is_risks_benefits_profile:
+        try:
+            RISKS_BENEFITS_GUIDED_JSON_SCHEMA = {
+                "type": "object",
+                "properties": {
+                    "Description": {"type": "string"},
+                    "Assessment of impact on Human Rights": {
+                        "type": "object",
+                        "properties": {
+                            "Positive Impacts": {"type": "array", "items": {"type": "object"}},
+                            "Negative Impacts": {"type": "array", "items": {"type": "object"}},
+                        },
+                    },
+                    "Assessment of impact on Sustainable Development Goals": {
+                        "type": "object",
+                        "properties": {
+                            "Positive Impacts": {"type": "array", "items": {"type": "object"}},
+                            "Negative Impacts": {"type": "array", "items": {"type": "object"}},
+                        },
+                    },
+                    "Assessment of additional impacts": {
+                        "type": "object",
+                        "properties": {
+                            "Positive Impacts": {"type": "array", "items": {"type": "object"}},
+                            "Negative Impacts": {"type": "array", "items": {"type": "object"}},
+                        },
+                    },
+                },
+                "required": ["Description"],
+                "additional_properties": False,
+            }
+        except Exception:
+            RISKS_BENEFITS_GUIDED_JSON_SCHEMA = None
 
     # Driver-computed conservative char budget for user content (captured into Ray workers)
     try:
@@ -1193,6 +1518,33 @@ def run_classification_stage(df: pd.DataFrame, cfg):
     except Exception:
         max_out = 8
     _approx_user_char_budget = max(2048, (mm_len - max_out - 512) * 4)
+
+    # Columns to drop from final stage outputs (internal Ray/vLLM mechanics)
+    _INTERNAL_DROP_COLS = [
+        "messages",
+        "sampling_params",
+        "usage",
+        "token_counts",
+        "generated_text",
+        "json",
+        "guided_decoding",
+        "response_format",
+        "structured_output",
+        "prompt",
+        "prompt_token_ids",
+        "request_id",
+        "params",
+        "llm_json",
+        "generated_tokens",
+        "num_generated_tokens",
+        "num_input_tokens",
+        "time_taken_llm",
+        "embeddings",
+    ]
+    
+    # Additional columns to drop for risks_and_benefits profile (keep only structured fields)
+    # Note: rb_raw_json is no longer created, so no need to drop it
+    _RISKS_BENEFITS_DROP_COLS = []
 
     def _attach_chunk_text(row: Dict[str, Any]) -> Dict[str, Any]:
         if not enable_kw_buf or kw_regex is None:
@@ -1207,6 +1559,136 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         else:
             row.setdefault("chunk_text", str(text_val or ""))
         return row
+
+    # Normalize NA/blank inputs for EU and risks_benefits fields so ChatTemplate sees consistent strings
+    def _normalize_na_blanks(r: Dict[str, Any]) -> Dict[str, Any]:
+        if not is_eu_profile and not is_risks_benefits_profile:
+            # Ensure article_text/chunk_text are strings at minimum
+            try:
+                r["article_text"] = str(r.get("article_text") or "")
+            except Exception:
+                pass
+            try:
+                if r.get("chunk_text") is not None:
+                    r["chunk_text"] = str(r.get("chunk_text") or "")
+            except Exception:
+                pass
+            return r
+        eu_keys = [
+            "deployment_domain",
+            "deployment_purpose",
+            "deployment_capability",
+            "identity_of_ai_developer",
+            "identity_of_ai_deployer",
+            "location_of_ai_deployer",
+            "identity_of_ai_subject",
+            "location_of_ai_subject",
+            "date_and_time_of_event",
+            "date___time_of_event",
+        ]
+        for k in eu_keys:
+            try:
+                v = r.get(k)
+                s = _norm_str(v)
+                r[k] = s
+            except Exception:
+                try:
+                    r[k] = _EU_MISSING_PH
+                except Exception:
+                    pass
+        # Ensure article_text/chunk_text are strings
+        try:
+            r["article_text"] = str(r.get("article_text") or "")
+        except Exception:
+            pass
+        try:
+            if r.get("chunk_text") is not None:
+                r["chunk_text"] = str(r.get("chunk_text") or "")
+        except Exception:
+            pass
+        return r
+
+    # EU input completeness flags
+    _EU_INPUT_KEYS = [
+        "deployment_domain",
+        "deployment_purpose",
+        "deployment_capability",
+        "identity_of_ai_developer",
+        "identity_of_ai_deployer",
+        "location_of_ai_deployer",
+        "identity_of_ai_subject",
+        "location_of_ai_subject",
+        "date_and_time_of_event",
+        "date___time_of_event",
+    ]
+    # Authoritative count of expected EU input fields (date field may appear under either of two names)
+    _EU_TOTAL_INPUTS = 9
+
+    def _is_valid_eu_value(v: Any) -> bool:
+        try:
+            s = _norm_str(v)
+            return bool(s) and s != _EU_MISSING_PH
+        except Exception:
+            return False
+
+    def _add_eu_vague_flags(r: Dict[str, Any]) -> Dict[str, Any]:
+        if not is_eu_profile and not is_risks_benefits_profile:
+            return r
+        cnt = 0
+        for k in _EU_INPUT_KEYS:
+            try:
+                if _is_valid_eu_value(r.get(k)):
+                    cnt += 1
+            except Exception:
+                continue
+        # If decompose provided a 'missing' column (possibly as a stringified list), use it as a stronger signal
+        # Valid count from 'missing' is TOTAL_INPUTS - len(missing)
+        try:
+            miss_candidates = ("missing", "missing_fields", "eu_missing_fields")
+            missing_list = None
+            for mk in miss_candidates:
+                if mk in r and r.get(mk) is not None:
+                    mv = r.get(mk)
+                    # Already a list/tuple
+                    if isinstance(mv, (list, tuple, set)):
+                        missing_list = list(mv)
+                        break
+                    # Try JSON then AST literal_eval
+                    if isinstance(mv, str):
+                        sv = mv.strip()
+                        if sv:
+                            try:
+                                import json as _json
+                                if sv.startswith("[") or sv.startswith("{"):
+                                    parsed = _json.loads(sv)
+                                else:
+                                    import ast as _ast
+                                    parsed = _ast.literal_eval(sv)
+                            except Exception:
+                                # Fallback: naive comma-split
+                                body = sv.strip().strip("[](){}")
+                                parsed = [x.strip() for x in body.split(",") if x.strip() != ""]
+                            if isinstance(parsed, (list, tuple, set)):
+                                missing_list = list(parsed)
+                                break
+            if missing_list is not None:
+                try:
+                    miss_cnt = int(len(missing_list))
+                except Exception:
+                    miss_cnt = 0
+                # Clamp to [0, _EU_TOTAL_INPUTS]
+                if miss_cnt < 0:
+                    miss_cnt = 0
+                if miss_cnt > _EU_TOTAL_INPUTS:
+                    miss_cnt = _EU_TOTAL_INPUTS
+                cnt_from_missing = max(0, _EU_TOTAL_INPUTS - miss_cnt)
+                # Use the stricter interpretation: take the minimum valid count
+                cnt = min(int(cnt), int(cnt_from_missing))
+        except Exception:
+            pass
+        r["eu_valid_input_count"] = int(cnt)
+        r["too_vague_to_process"] = bool(int(cnt) < 5)
+        return r
 
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
         _maybe_silence_vllm_logs()
@@ -1225,8 +1707,15 @@ def run_classification_stage(df: pd.DataFrame, cfg):
             pass
         if enable_kw_buf and kw_regex is not None:
             row = _attach_chunk_text(dict(row))
+        # Normalize any NA/blank values before building messages
+        row = _normalize_na_blanks(dict(row))
         # Construct user content and perform token-aware trimming to model context
-        user_raw = _format_user(row.get("article_text"), row)
+        if is_eu_profile:
+            user_raw = _format_user_eu(row)
+        elif is_risks_benefits_profile:
+            user_raw = _format_user_risks_benefits(row)
+        else:
+            user_raw = _format_user(row.get("article_text"), row)
         tok_local = _get_tokenizer_cached(str(getattr(cfg.model, "model_source", "")))
         # First, ensure chunk_text itself is trimmed defensively
         try:
@@ -1235,49 +1724,173 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         except Exception:
             pass
         user = _trim_text_for_prompt(user_raw, tok_local, system_prompt)
+        # Sanitize sampling params similar to decompose_nbl; JSON-friendly and stable types
+        sp_local = _sanitize_for_json(dict(sampling_params or {}))
+        if is_eu_profile and EU_GUIDED_JSON_SCHEMA is not None:
+            # Always include guided_decoding with a string value to keep Arrow schema stable across blocks
+            try:
+                schema_json_str = json.dumps(EU_GUIDED_JSON_SCHEMA, ensure_ascii=False)
+            except Exception:
+                schema_json_str = ""
+            sp_local["guided_decoding"] = {"json": str(schema_json_str or "")}
+        elif is_risks_benefits_profile and RISKS_BENEFITS_GUIDED_JSON_SCHEMA is not None:
+            # Always include guided_decoding with a string value to keep Arrow schema stable across blocks
+            try:
+                schema_json_str = json.dumps(RISKS_BENEFITS_GUIDED_JSON_SCHEMA, ensure_ascii=False)
+            except Exception:
+                schema_json_str = ""
+            sp_local["guided_decoding"] = {"json": str(schema_json_str or "")}
         from datetime import datetime as _dt
+        # Drop any conflicting keys from input row to avoid clobbering our constructed fields
+        base = {k: v for k, v in row.items() if k not in {"messages", "sampling_params", "generated_text", "llm_output", "json", "guided_decoding", "response_format", "structured_output"}}
         return {
+            **base,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user},
             ],
-            "sampling_params": sampling_params,
+            "sampling_params": sp_local,
             "ts_start": _dt.now().timestamp(),
-            **row,
         }
 
     def _post(row: Dict[str, Any]) -> Dict[str, Any]:
         from datetime import datetime as _dt
-        text = str(row.get("generated_text") or "").strip().upper()
-        is_rel = text.startswith("YES") or ("YES" in text and "NO" not in text)
         ts_end = _dt.now().timestamp()
         usage = row.get("usage") or row.get("token_counts") or None
-        # Optionally serialize nested columns for Arrow/Parquet compatibility
-        try:
-            serialize_nested = bool(getattr(cfg.runtime, "serialize_nested_json", True))
-        except Exception:
-            serialize_nested = True
-        if serialize_nested:
-            _serialize_arrow_unfriendly_in_row(row, [
-                "messages",
-                "sampling_params",
-                "usage",
-                "token_counts",
-                "matched_keywords",  # List of matched keyword strings
-            ])
-        return {
-            **row,
-            "relevance_answer": row.get("generated_text"),
-            "is_relevant": bool(is_rel),
-            "llm_output": row.get("generated_text"),
-            "classification_mode": "llm_relevance",
-            "latency_s": (float(ts_end) - float(row.get("ts_start", ts_end))),
-            "token_usage_prompt": ((usage or {}).get("prompt_tokens") or (usage or {}).get("input_tokens")),
-            "token_usage_output": ((usage or {}).get("completion_tokens") or (usage or {}).get("output_tokens")),
-            "token_usage_total": ((usage or {}).get("total_tokens")),
-            # Signal a single-row progress marker for downstream logging
-            "_progress_row": 1,
-        }
+        if is_risks_benefits_profile:
+            raw = str(row.get("generated_text") or "").strip()
+            # Robust JSON extraction similar to decompose stage
+            parsed = _extract_last_json(raw)
+            # Extract main fields and immediately serialize to JSON strings to avoid Arrow schema conflicts
+            rb_desc = None
+            rb_human_rights = None
+            rb_sdgs = None
+            rb_additional = None
+            if isinstance(parsed, dict):
+                rb_desc = parsed.get("Description")
+                # Serialize nested structures immediately to JSON strings for Arrow compatibility
+                # Variable-length arrays cause schema conflicts, so we convert to strings
+                try:
+                    hr = parsed.get("Assessment of impact on Human Rights")
+                    rb_human_rights = _to_json_str(hr) if hr is not None else None
+                except Exception:
+                    rb_human_rights = None
+                try:
+                    sdgs = parsed.get("Assessment of impact on Sustainable Development Goals")
+                    rb_sdgs = _to_json_str(sdgs) if sdgs is not None else None
+                except Exception:
+                    rb_sdgs = None
+                try:
+                    additional = parsed.get("Assessment of additional impacts")
+                    rb_additional = _to_json_str(additional) if additional is not None else None
+                except Exception:
+                    rb_additional = None
+            # Serialize other nested columns for Arrow/Parquet compatibility
+            try:
+                serialize_nested = bool(getattr(cfg.runtime, "serialize_nested_json", True))
+            except Exception:
+                serialize_nested = True
+            if serialize_nested:
+                _serialize_arrow_unfriendly_in_row(row, [
+                    "messages",
+                    "sampling_params",
+                    "usage",
+                    "token_counts",
+                    "matched_keywords",
+                ])
+            return {
+                **row,
+                "rb_desc": rb_desc,
+                "rb_human_rights": rb_human_rights,
+                "rb_sdgs": rb_sdgs,
+                "rb_additional": rb_additional,
+                "classification_mode": "risks_and_benefits",
+                "too_vague_to_process": False,  # LLM-processed rows are not too vague
+                "latency_s": (float(ts_end) - float(row.get("ts_start", ts_end))),
+                "token_usage_prompt": ((usage or {}).get("prompt_tokens") or (usage or {}).get("input_tokens")),
+                "token_usage_output": ((usage or {}).get("completion_tokens") or (usage or {}).get("output_tokens")),
+                "token_usage_total": ((usage or {}).get("total_tokens")),
+                "_progress_row": 1,
+            }
+        elif is_eu_profile:
+            raw = str(row.get("generated_text") or "").strip()
+            # Robust JSON extraction similar to decompose stage
+            parsed = _extract_last_json(raw)
+            # Extract fields with robustness to variations
+            eu_desc = None
+            eu_label = None
+            eu_reltext = None
+            eu_reason = None
+            if isinstance(parsed, dict):
+                eu_desc = parsed.get("Description")
+                lab = parsed.get("Classification")
+                if isinstance(lab, list) and lab:
+                    eu_label = lab[0]
+                elif isinstance(lab, str):
+                    eu_label = lab
+                eu_reltext = parsed.get("Relevant Text from the EU AI Act")
+                eu_reason = parsed.get("Reasoning")
+            # Optionally serialize nested columns for Arrow/Parquet compatibility
+            try:
+                serialize_nested = bool(getattr(cfg.runtime, "serialize_nested_json", True))
+            except Exception:
+                serialize_nested = True
+            if serialize_nested:
+                _serialize_arrow_unfriendly_in_row(row, [
+                    "messages",
+                    "sampling_params",
+                    "usage",
+                    "token_counts",
+                    "matched_keywords",
+                    # Keep raw JSON in a JSON-string-friendly column
+                    "eu_ai_raw_json",
+                ])
+            return {
+                **row,
+                "eu_ai_desc": eu_desc,
+                "eu_ai_label": eu_label,
+                "eu_ai_relevant_text": eu_reltext,
+                "eu_ai_reason": eu_reason,
+                "eu_ai_raw_json": parsed,
+                "llm_output": row.get("generated_text"),
+                "classification_mode": "eu_ai_act",
+                "too_vague_to_process": False,  # LLM-processed rows are not too vague
+                "latency_s": (float(ts_end) - float(row.get("ts_start", ts_end))),
+                "token_usage_prompt": ((usage or {}).get("prompt_tokens") or (usage or {}).get("input_tokens")),
+                "token_usage_output": ((usage or {}).get("completion_tokens") or (usage or {}).get("output_tokens")),
+                "token_usage_total": ((usage or {}).get("total_tokens")),
+                "_progress_row": 1,
+            }
+        else:
+            text = str(row.get("generated_text") or "").strip().upper()
+            is_rel = text.startswith("YES") or ("YES" in text and "NO" not in text)
+            # Optionally serialize nested columns for Arrow/Parquet compatibility
+            try:
+                serialize_nested = bool(getattr(cfg.runtime, "serialize_nested_json", True))
+            except Exception:
+                serialize_nested = True
+            if serialize_nested:
+                _serialize_arrow_unfriendly_in_row(row, [
+                    "messages",
+                    "sampling_params",
+                    "usage",
+                    "token_counts",
+                    "matched_keywords",  # List of matched keyword strings
+                ])
+            return {
+                **row,
+                "relevance_answer": row.get("generated_text"),
+                "is_relevant": bool(is_rel),
+                "llm_output": row.get("generated_text"),
+                "classification_mode": "llm_relevance",
+                "too_vague_to_process": False,  # LLM-processed rows are not too vague
+                "latency_s": (float(ts_end) - float(row.get("ts_start", ts_end))),
+                "token_usage_prompt": ((usage or {}).get("prompt_tokens") or (usage or {}).get("input_tokens")),
+                "token_usage_output": ((usage or {}).get("completion_tokens") or (usage or {}).get("output_tokens")),
+                "token_usage_total": ((usage or {}).get("total_tokens")),
+                # Signal a single-row progress marker for downstream logging
+                "_progress_row": 1,
+            }
 
     # Pre-attach chunk_text in a separate map when streaming; apply prefilter gating and trimming
     if is_ray_ds:
@@ -1347,6 +1960,22 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                 ds_all = ds_in.materialize()
                 # Filter to only articles WITH keywords for LLM processing
                 ds_in = ds_all.filter(lambda r: bool(r.get("relevant_keyword", True)))
+        # EU and risks_benefits: compute input completeness flags and split off too-vague rows before LLM
+        ds_vague = None
+        if is_eu_profile or is_risks_benefits_profile:
+            try:
+                ds_in = ds_in.map(_add_eu_vague_flags)
+                # Capture too-vague rows and filter them out from LLM-bound dataset
+                ds_vague = ds_in.filter(lambda r: bool(r.get("too_vague_to_process", False)))
+                ds_in = ds_in.filter(lambda r: not bool(r.get("too_vague_to_process", False)))
+                # Debug: count vague rows
+                try:
+                    vague_count = ds_vague.count()
+                    print(f"[classify] Filtered {vague_count} too-vague rows before LLM processing", flush=True)
+                except Exception:
+                    pass
+            except Exception:
+                ds_vague = None
         # Attach chunk_text
         if enable_kw_buf and kw_regex is not None:
             ds_in = ds_in.map(_attach_chunk_text)
@@ -1360,51 +1989,124 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         ds_in = ds_in.map(_trim_row)
         processor = build_llm_processor(engine_config, preprocess=_pre, postprocess=_post)
         ds_llm_results = processor(ds_in)
+        # Sanitize internal columns at the dataset level
+        try:
+            ds_llm_results = ds_llm_results.drop_columns(_INTERNAL_DROP_COLS)
+        except Exception:
+            pass
+        # Drop risks_benefits specific columns if in that profile
+        if is_risks_benefits_profile:
+            try:
+                ds_llm_results = ds_llm_results.drop_columns(_RISKS_BENEFITS_DROP_COLS)
+            except Exception:
+                pass
         
-        # If we filtered articles, merge LLM results back with filtered articles
-        if ds_all is not None:
+        # Merge back any filtered rows (keyword gating and/or too-vague)
+        print(f"[classify] Checking merge conditions: ds_all={ds_all is not None}, ds_vague={ds_vague is not None}", flush=True)
+        if ds_all is not None or ds_vague is not None:
+            print(f"[classify] Starting merge process...", flush=True)
             try:
                 # Convert to pandas for easier merging
                 df_llm = ds_llm_results.to_pandas()
-                df_all = ds_all.to_pandas()
+                df_all = ds_all.to_pandas() if ds_all is not None else None
                 
-                # Mark filtered articles as not relevant
+                # Mark filtered articles and ensure consistent columns across profiles
                 def _mark_filtered(pdf: pd.DataFrame) -> pd.DataFrame:
                     pdf = pdf.copy()
-                    pdf["is_relevant"] = False
                     pdf["classification_mode"] = "filtered_by_keyword"
-                    # Provide consistent columns for logging
-                    if "relevance_answer" not in pdf.columns:
-                        pdf["relevance_answer"] = None
+                    if is_eu_profile:
+                        # For EU profile, ensure eu_* columns exist with None defaults
+                        for col in ("eu_ai_desc", "eu_ai_label", "eu_ai_relevant_text", "eu_ai_reason", "eu_ai_raw_json"):
+                            if col not in pdf.columns:
+                                pdf[col] = None
+                    elif is_risks_benefits_profile:
+                        # For risks_benefits profile, ensure rb_* columns exist with None defaults
+                        for col in ("rb_desc", "rb_human_rights", "rb_sdgs", "rb_additional"):
+                            if col not in pdf.columns:
+                                pdf[col] = None
+                    else:
+                        pdf["is_relevant"] = False
+                        if "relevance_answer" not in pdf.columns:
+                            pdf["relevance_answer"] = None
                     return pdf
                 
-                # Get article_ids that were processed by LLM
-                processed_ids = set(df_llm["article_id"].unique())
+                result_parts = [df_llm]
+                if df_all is not None:
+                    # Get article_ids that were processed by LLM
+                    processed_ids = set(df_llm["article_id"].unique())
+                    # Find articles that were filtered out by keyword gating
+                    df_filtered = df_all[~df_all["article_id"].isin(processed_ids)].copy()
+                    df_filtered["classification_mode"] = "filtered_by_keyword"
+                    if is_eu_profile:
+                        for col in ("eu_ai_desc", "eu_ai_label", "eu_ai_relevant_text", "eu_ai_reason", "eu_ai_raw_json"):
+                            if col not in df_filtered.columns:
+                                df_filtered[col] = None
+                    elif is_risks_benefits_profile:
+                        for col in ("rb_desc", "rb_human_rights", "rb_sdgs", "rb_additional"):
+                            if col not in df_filtered.columns:
+                                df_filtered[col] = None
+                    else:
+                        df_filtered["is_relevant"] = False
+                        if "relevance_answer" not in df_filtered.columns:
+                            df_filtered["relevance_answer"] = None
+                    # Serialize matched_keywords to JSON for Arrow/Parquet compatibility
+                    if "matched_keywords" in df_filtered.columns:
+                        df_filtered["matched_keywords"] = df_filtered["matched_keywords"].apply(_to_json_str)
+                    result_parts.append(df_filtered)
+                if ds_vague is not None and (is_eu_profile or is_risks_benefits_profile):
+                    df_vague = ds_vague.to_pandas().copy()
+                    print(f"[classify] Merging back {len(df_vague)} too-vague rows to output", flush=True)
+                    df_vague["classification_mode"] = "too_vague_to_process"
+                    df_vague["too_vague_to_process"] = True  # Mark these rows as too vague
+                    if is_eu_profile:
+                        for col in ("eu_ai_desc", "eu_ai_label", "eu_ai_relevant_text", "eu_ai_reason", "eu_ai_raw_json"):
+                            if col not in df_vague.columns:
+                                df_vague[col] = None
+                    elif is_risks_benefits_profile:
+                        for col in ("rb_desc", "rb_human_rights", "rb_sdgs", "rb_additional"):
+                            if col not in df_vague.columns:
+                                df_vague[col] = None
+                    result_parts.append(df_vague)
+                else:
+                    print(f"[classify] No too-vague rows to merge (ds_vague is None: {ds_vague is None})", flush=True)
+                # Merge: LLM results + any filtered sets
+                result_df = pd.concat(result_parts, ignore_index=True)
+                # Ensure too_vague_to_process column exists for all rows (default False)
+                if "too_vague_to_process" not in result_df.columns:
+                    result_df["too_vague_to_process"] = False
+                else:
+                    result_df["too_vague_to_process"] = result_df["too_vague_to_process"].fillna(False)
+                # Drop internal columns before returning
+                try:
+                    result_df = result_df.drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
+                except Exception:
+                    pass
+                # Drop risks_benefits specific columns if in that profile
+                if is_risks_benefits_profile:
+                    try:
+                        result_df = result_df.drop(columns=_RISKS_BENEFITS_DROP_COLS, errors="ignore")
+                    except Exception:
+                        pass
                 
-                # Find articles that were filtered out
-                df_filtered = df_all[~df_all["article_id"].isin(processed_ids)].copy()
-                df_filtered["is_relevant"] = False
-                df_filtered["classification_mode"] = "filtered_by_keyword"
-                if "relevance_answer" not in df_filtered.columns:
-                    df_filtered["relevance_answer"] = None
-                
-                # Serialize matched_keywords to JSON for Arrow/Parquet compatibility
-                if "matched_keywords" in df_filtered.columns:
-                    df_filtered["matched_keywords"] = df_filtered["matched_keywords"].apply(_to_json_str)
-                
-                # Merge: LLM results + filtered articles
-                result_df = pd.concat([df_llm, df_filtered], ignore_index=True)
-                
-                print(f"[classify] Merged results: {len(df_llm)} LLM-processed + {len(df_filtered)} filtered = {len(result_df)} total", flush=True)
+                try:
+                    num_kw = len(df_filtered) if 'df_filtered' in locals() else 0
+                except Exception:
+                    num_kw = 0
+                try:
+                    num_vague = len(df_vague) if 'df_vague' in locals() else 0
+                except Exception:
+                    num_vague = 0
+                print(f"[classify] Merged results: {len(df_llm)} LLM-processed + {num_kw} keyword-filtered + {num_vague} too-vague = {len(result_df)} total", flush=True)
                 
                 return result_df
             except Exception as e:
-                print(f"Warning: Failed to merge filtered articles back into results: {e}", flush=True)
+                print(f"[classify] ERROR: Failed to merge filtered articles back into results: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
                 # Fall back to just LLM results
                 return ds_llm_results
         
+        print(f"[classify] No merge needed, returning LLM results directly", flush=True)
         return ds_llm_results
 
     # Pandas path: build Ray Dataset directly and push prefilter/trim into maps
@@ -1433,6 +2135,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
     # Apply keyword flag + pre-gating and trimming in Ray maps (same as streaming path)
     ds_in = ds
     ds_all = None  # Track ALL articles (including filtered ones)
+    ds_vague = None  # Track too-vague EU rows
     
     if prefilter_mode in ("pre_gating", "post_gating"):
         # Add keyword information: binary flag, matched keywords list, and match count
@@ -1452,6 +2155,20 @@ def run_classification_stage(df: pd.DataFrame, cfg):
             ds_all = ds_in.materialize()
             # Filter to only articles WITH keywords for LLM processing
             ds_in = ds_all.filter(lambda r: bool(r.get("relevant_keyword", True)))
+    # EU and risks_benefits: compute input completeness flags and split off too-vague rows before LLM
+    if is_eu_profile or is_risks_benefits_profile:
+        try:
+            ds_in = ds_in.map(_add_eu_vague_flags)
+            ds_vague = ds_in.filter(lambda r: bool(r.get("too_vague_to_process", False)))
+            ds_in = ds_in.filter(lambda r: not bool(r.get("too_vague_to_process", False)))
+            # Debug: count vague rows
+            try:
+                vague_count = ds_vague.count()
+                print(f"[classify] Filtered {vague_count} too-vague rows before LLM processing", flush=True)
+            except Exception:
+                pass
+        except Exception:
+            ds_vague = None
     if enable_kw_buf and kw_regex is not None:
         ds_in = ds_in.map(_attach_chunk_text)
     sys_text = system_prompt
@@ -1465,34 +2182,99 @@ def run_classification_stage(df: pd.DataFrame, cfg):
     processor = build_llm_processor(engine_config, preprocess=_pre, postprocess=_post)
     # Avoid an extra materialize; converting to pandas will trigger execution.
     out_df = processor(ds_in).to_pandas()
+    # Drop internal columns prior to any merging
+    try:
+        out_df = out_df.drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
+    except Exception:
+        pass
+    # Drop risks_benefits specific columns if in that profile
+    if is_risks_benefits_profile:
+        try:
+            out_df = out_df.drop(columns=_RISKS_BENEFITS_DROP_COLS, errors="ignore")
+        except Exception:
+            pass
     
     # If we filtered articles, merge LLM results back with filtered articles
-    if ds_all is not None:
+    print(f"[classify] Checking merge conditions: ds_all={ds_all is not None}, ds_vague={ds_vague is not None}", flush=True)
+    if ds_all is not None or (ds_vague is not None and (is_eu_profile or is_risks_benefits_profile)):
+        print(f"[classify] Starting merge process...", flush=True)
         try:
             df_llm = out_df
-            df_all = ds_all.to_pandas()
+            df_all = ds_all.to_pandas() if ds_all is not None else None
             
-            # Get article_ids that were processed by LLM
-            processed_ids = set(df_llm["article_id"].unique())
+            result_parts = [df_llm]
+            if df_all is not None:
+                # Get article_ids that were processed by LLM
+                processed_ids = set(df_llm["article_id"].unique())
+                # Find articles that were filtered out by keyword gating
+                df_filtered = df_all[~df_all["article_id"].isin(processed_ids)].copy()
+                df_filtered["classification_mode"] = "filtered_by_keyword"
+                if is_eu_profile:
+                    for col in ("eu_ai_desc", "eu_ai_label", "eu_ai_relevant_text", "eu_ai_reason", "eu_ai_raw_json"):
+                        if col not in df_filtered.columns:
+                            df_filtered[col] = None
+                elif is_risks_benefits_profile:
+                    for col in ("rb_desc", "rb_human_rights", "rb_sdgs", "rb_additional", "rb_raw_json"):
+                        if col not in df_filtered.columns:
+                            df_filtered[col] = None
+                else:
+                    df_filtered["is_relevant"] = False
+                    if "relevance_answer" not in df_filtered.columns:
+                        df_filtered["relevance_answer"] = None
+                # Serialize matched_keywords to JSON for Arrow/Parquet compatibility
+                if "matched_keywords" in df_filtered.columns:
+                    df_filtered["matched_keywords"] = df_filtered["matched_keywords"].apply(_to_json_str)
+                result_parts.append(df_filtered)
+            if ds_vague is not None and (is_eu_profile or is_risks_benefits_profile):
+                df_vague = ds_vague.to_pandas().copy()
+                print(f"[classify] Merging back {len(df_vague)} too-vague rows to output", flush=True)
+                df_vague["classification_mode"] = "too_vague_to_process"
+                df_vague["too_vague_to_process"] = True  # Mark these rows as too vague
+                if is_eu_profile:
+                    for col in ("eu_ai_desc", "eu_ai_label", "eu_ai_relevant_text", "eu_ai_reason", "eu_ai_raw_json"):
+                        if col not in df_vague.columns:
+                            df_vague[col] = None
+                elif is_risks_benefits_profile:
+                    for col in ("rb_desc", "rb_human_rights", "rb_sdgs", "rb_additional"):
+                        if col not in df_vague.columns:
+                            df_vague[col] = None
+                result_parts.append(df_vague)
+            else:
+                print(f"[classify] No too-vague rows to merge (ds_vague is None: {ds_vague is None})", flush=True)
+            # Merge: LLM results + any filtered sets
+            out_df = pd.concat(result_parts, ignore_index=True)
+            # Ensure too_vague_to_process column exists for all rows (default False)
+            if "too_vague_to_process" not in out_df.columns:
+                out_df["too_vague_to_process"] = False
+            else:
+                out_df["too_vague_to_process"] = out_df["too_vague_to_process"].fillna(False)
+            try:
+                out_df = out_df.drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
+            except Exception:
+                pass
+            # Drop risks_benefits specific columns if in that profile
+            if is_risks_benefits_profile:
+                try:
+                    out_df = out_df.drop(columns=_RISKS_BENEFITS_DROP_COLS, errors="ignore")
+                except Exception:
+                    pass
             
-            # Find articles that were filtered out
-            df_filtered = df_all[~df_all["article_id"].isin(processed_ids)].copy()
-            df_filtered["is_relevant"] = False
-            df_filtered["classification_mode"] = "filtered_by_keyword"
-            
-            # Serialize matched_keywords to JSON for Arrow/Parquet compatibility
-            if "matched_keywords" in df_filtered.columns:
-                df_filtered["matched_keywords"] = df_filtered["matched_keywords"].apply(_to_json_str)
-            
-            # Merge: LLM results + filtered articles
-            out_df = pd.concat([df_llm, df_filtered], ignore_index=True)
-            
-            print(f"[classify] Merged results: {len(df_llm)} LLM-processed + {len(df_filtered)} filtered = {len(out_df)} total", flush=True)
+            try:
+                num_kw = len(df_filtered) if 'df_filtered' in locals() else 0
+            except Exception:
+                num_kw = 0
+            try:
+                num_vague = len(df_vague) if 'df_vague' in locals() else 0
+            except Exception:
+                num_vague = 0
+            print(f"[classify] Merged results: {len(df_llm)} LLM-processed + {num_kw} keyword-filtered + {num_vague} too-vague = {len(out_df)} total", flush=True)
         except Exception as e:
-            print(f"Warning: Failed to merge filtered articles back into results: {e}", flush=True)
+            print(f"[classify] ERROR: Failed to merge filtered articles back into results: {e}", flush=True)
             import traceback
             traceback.print_exc()
             # Fall back to just LLM results
+    else:
+        print(f"[classify] No merge needed, returning LLM results directly", flush=True)
     
     # Stage-scoped logging is handled by the orchestrator
     return out_df

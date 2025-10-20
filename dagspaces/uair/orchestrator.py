@@ -305,6 +305,9 @@ class ClassificationRunner(StageRunner):
         
         # Save outputs to disk
         if isinstance(out, pd.DataFrame):
+            # Save generic results if requested (profile-agnostic)
+            if "results" in context.output_paths:
+                out.to_parquet(context.output_paths["results"], index=False)
             # Save "all" output (all classified articles)
             if "all" in context.output_paths:
                 out.to_parquet(context.output_paths["all"], index=False)
@@ -317,8 +320,36 @@ class ClassificationRunner(StageRunner):
         # Log results table and keyword statistics to wandb
         if isinstance(out, pd.DataFrame) and context.logger:
             try:
-                # Include keyword columns and classification mode if available
-                prefer_cols = ["article_id", "is_relevant", "classification_mode", "relevant_keyword", "matched_keywords", "keyword_match_count", "article_text", "article_path", "country", "year"]
+                # Include profile-specific columns when present
+                if any(c in out.columns for c in ("eu_ai_label", "eu_ai_desc", "eu_ai_relevant_text", "eu_ai_reason")):
+                    prefer_cols = [
+                        "article_id",
+                        "too_vague_to_process",
+                        "eu_valid_input_count",
+                        "eu_ai_label",
+                        "eu_ai_desc",
+                        "eu_ai_relevant_text",
+                        "eu_ai_reason",
+                        "classification_mode",
+                        "article_path",
+                        "country",
+                        "year",
+                    ]
+                else:
+                    prefer_cols = [
+                        "article_id",
+                        "too_vague_to_process",
+                        "eu_valid_input_count",
+                        "is_relevant",
+                        "classification_mode",
+                        "relevant_keyword",
+                        "matched_keywords",
+                        "keyword_match_count",
+                        "article_text",
+                        "article_path",
+                        "country",
+                        "year",
+                    ]
                 # Filter to only columns that exist
                 prefer_cols = [c for c in prefer_cols if c in out.columns]
                 context.logger.log_table(out, "classify/results", prefer_cols=prefer_cols, panel_group="inspect_results")
