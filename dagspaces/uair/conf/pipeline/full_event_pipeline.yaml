@@ -23,7 +23,7 @@ runtime:
   sample_n: null  # Set to small number for testing (e.g. 1000)
 
 pipeline:
-  output_root: ${runtime.output_root}
+  output_root: ${hydra:run.dir}/full_event_pipeline
   allow_partial: false
   
   sources:
@@ -60,82 +60,112 @@ pipeline:
           model.batch_size: 16
         launcher: g2_slurm_pierson
         wandb_suffix: classify
-      
+
       # ============================================================
-      # Stage 2: Event Detection - Cluster articles into events
+      # Stage 2: Decompose to NBL tuples
       # ============================================================
-      topic:
-        stage: topic
+      decompose_nbl:
+        stage: decompose_nbl
         depends_on:
           - classify
         inputs:
-          dataset: classify.relevant  # Only process relevant articles
+          dataset: classify.relevant
         outputs:
-          docs: outputs/topic/event_clusters.parquet
+          docs: outputs/decompose_nbl/tuples.parquet
+        overrides:
+          runtime.streaming_io: false
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 64
+          runtime.use_llm_decompose: true
+          runtime.guided_decoding_decompose: true
+          model.engine_kwargs.gpu_memory_utilization: 0.8
+          model.engine_kwargs.max_model_len: 20480
+          model.engine_kwargs.max_num_seqs: 1
+          model.batch_size: 1
+          sampling_params_decompose_nbl.max_tokens: 2048
+        launcher: g2_slurm_pierson
+        wandb_suffix: decompose_nbl
+
+      # ============================================================
+      # Stage 3: Verify NBL tuples
+      # ============================================================
+      verify_nbl:
+        stage: verify_nbl
+        depends_on:
+          - decompose_nbl
+        inputs:
+          dataset: decompose_nbl.docs
+        outputs:
+          results: outputs/verify_nbl/verify_nbl_results.parquet
+          docs: outputs/verify_nbl/docs_verification.parquet
         overrides:
           runtime.streaming_io: ${runtime.streaming_io}
           runtime.debug: ${runtime.debug}
           runtime.job_memory_gb: 64
-          
-          # Event detection parameters (tuned for narrative events)
-          # Small clusters capture individual events
-          topic.hdbscan.min_cluster_size: 2
-          topic.hdbscan.min_samples: 1
-          topic.hdbscan.cluster_selection_epsilon: 0.03  # Group similar events
-          topic.hdbscan.cluster_selection_method: eom
-          
-          # UMAP parameters for event separation
-          topic.reduce.n_neighbors: 15
-          topic.reduce.min_dist: 0.0
-          topic.reduce.n_components: 25
-          
-          # Embedding settings
-          topic.embed.matryoshka_dim: 384
-          topic.embed.device: cuda
-          topic.embed.batch_size: 128
-          
-          # Use GPU acceleration if available
-          topic.gpu.use_rapids: true
-          
-          # Comprehensive stopword filtering
-          topic.tfidf_stop_words: dagspaces/uair/conf/stopwords/comprehensive.yaml
+          verify.method: combo
+          verify.top_k: 5
+          verify.thresholds: "sim=0.55,ent=0.85,contra=0.05"
+          verify.embed_model_name: /share/pierson/matt/zoo/models/intfloat_e5_base
+          verify.nli_model_name: /share/pierson/matt/zoo/models/mdeberta_v3_base_xnli_multilingual_nli_2mil7
+          verify.windowing.enabled: null
+          verify.windowing.window_size: 5
+          verify.windowing.stride: 2
         launcher: g2_slurm_pierson
-        wandb_suffix: events
-      
+        wandb_suffix: verify_nbl
+
       # ============================================================
-      # Stage 3: Synthesis - Generate insights per event
+      # Stage 4: EU AI Act classification (gated by core_tuple_verified)
       # ============================================================
-      synthesis:
-        stage: synthesis
+      classify_eu_act:
+        stage: classify_eu_act
         depends_on:
-          - topic
+          - verify_nbl
         inputs:
-          clusters: topic.docs        # Event assignments from topic stage
-          articles: classify.relevant # Original articles with full text
+          dataset: verify_nbl.results
         outputs:
-          clusters: outputs/synthesis/event_synthesis.parquet
+          results: outputs/classify_eu_ai_act/classify_eu_ai_act_results.parquet
         overrides:
-          runtime.streaming_io: ${runtime.streaming_io}
+          runtime.streaming_io: false
           runtime.debug: ${runtime.debug}
-          runtime.job_memory_gb: 48
-          
-          # vLLM settings for synthesis
-          model.engine_kwargs.max_model_len: 8192
+          runtime.job_memory_gb: 64
+          runtime.use_llm_classify: true
+          runtime.classification_profile: eu_ai_act
+          runtime.prefilter_mode: off
+          runtime.keyword_buffering: false
+          model.engine_kwargs.max_model_len: 16384
           model.engine_kwargs.max_num_seqs: 4
           model.engine_kwargs.gpu_memory_utilization: 0.8
-          model.batch_size: 16  # Process multiple clusters in parallel
-          
-          # Synthesis strategy and filtering
-          synthesis.strategy: hierarchical_map_reduce
-          synthesis.max_articles_per_cluster: 64   # Limit for large events
-          synthesis.min_cluster_size: 3            # Only synthesize events with 3+ articles
-          synthesis.min_topic_prob: 0.3            # Confidence threshold
-          synthesis.top_k_articles: 10             # Use top 10 articles per event
-          
-          # Output tokens for synthesis
-          sampling_params_synthesis.max_tokens: 2048
+          model.batch_size: 4
+          sampling_params_eu_ai_act.max_tokens: 4096
         launcher: g2_slurm_pierson
-        wandb_suffix: synthesis
+        wandb_suffix: eu_act
+
+      # ============================================================
+      # Stage 5: Risks and Benefits classification
+      # ============================================================
+      classify_risk_and_benefits:
+        stage: classify_risk_and_benefits
+        depends_on:
+          - classify_eu_act
+        inputs:
+          dataset: verify_nbl.results
+        outputs:
+          results: outputs/classify_risk_benefits/classify_risk_benefits_results.parquet
+        overrides:
+          runtime.streaming_io: false
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 64
+          runtime.use_llm_classify: true
+          runtime.classification_profile: risks_and_benefits
+          runtime.prefilter_mode: off
+          runtime.keyword_buffering: false
+          model.engine_kwargs.max_model_len: 16384
+          model.engine_kwargs.max_num_seqs: 4
+          model.engine_kwargs.gpu_memory_utilization: 0.8
+          model.batch_size: 4
+          sampling_params_risks_and_benefits.max_tokens: 4096
+        launcher: g2_slurm_pierson
+        wandb_suffix: risk_benefits
 
 # ================================================================
 # Expected workflow results:

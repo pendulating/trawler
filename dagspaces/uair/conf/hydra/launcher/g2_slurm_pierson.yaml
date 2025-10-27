@@ -1,7 +1,7 @@
 # Uses Hydra Submitit Slurm launcher
 _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
 submitit_folder: ${hydra.sweep.dir}/.submitit/%j
-timeout_min: 2880
+timeout_min: 14400
 nodes: 1
 tasks_per_node: 1
 cpus_per_task: 8
@@ -17,6 +17,9 @@ setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
   - source /share/pierson/matt/UAIR/.venv/bin/activate
+  - export PYTHONUNBUFFERED=1
+  - export PYTHONPATH=/share/pierson/matt/UAIR:$PYTHONPATH
+  - export UAIR_VERIFY_DEBUG=1
   - echo "=== GPU sanity (pre-job) ==="
   - echo "HOST=$(hostname) DATE=$(date)"
   - echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES SLURM_JOB_GPUS=$SLURM_JOB_GPUS SLURM_STEP_GPUS=$SLURM_STEP_GPUS SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"

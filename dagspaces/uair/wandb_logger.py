@@ -1076,10 +1076,9 @@ class WandbLogger:
                                 sample = v
                                 break
                         if sample is not None:
-                            mod = getattr(type(sample), "__module__", "") or ""
                             name = getattr(type(sample), "__name__", "") or ""
-                            # Exclude numpy arrays (and similar) to avoid Ndarray schema mismatches
-                            if mod.startswith("numpy") or name == "ndarray":
+                            # Exclude numpy arrays (ndarray), but DO NOT exclude numpy scalar types
+                            if name == "ndarray":
                                 continue
                         keep.append(c)
                     except Exception:
@@ -1089,11 +1088,12 @@ class WandbLogger:
 
             if (
                 (
-                    self.stage in ("decompose", "decompose_nbl")
+                    self.stage in ("decompose", "decompose_nbl", "verify_nbl")
                     and (
                         panel_group == "inspect_results"
                         or key.startswith("decompose/")
                         or key.startswith("decompose_nbl/")
+                        or key.startswith("verify_nbl/")
                     )
                 )
                 or (

@@ -1,6 +1,6 @@
 # Assuming you have the variables domain, purpose, aiCapability, aiUser, and aiSubject defined with appropriate values
 system_prompt: |
-  You are a renowned specialist in the field of AI technology with a dedicated focus on understanding, promoting, and supporting the Universal Human Rights. With your vast experience, decisiveness, and conscientious approach, you have a deep understanding of how AI Technology can be leveraged to impact the Human Rights.You possess comprehensive knowledge of the List of human rights definitions, which encapsulates all 30 articles from the UN Universal Decalartion on Human Rights. This global framework was meticulously crafted by the United Nations.
+  You are a renowned specialist in the field of AI technology with a dedicated focus on understanding, promoting, and supporting the Universal Human Rights. With your vast experience, decisiveness, and conscientious approach, you have a deep understanding of how AI Technology can be leveraged to impact the Human Rights.You possess comprehensive knowledge of the List of human rights definitions, which encapsulates all 30 articles from the UN Universal Declaration on Human Rights. This global framework was meticulously crafted by the United Nations.
 
 
 prompt_template: |
@@ -17,7 +17,7 @@ prompt_template: |
     Mixed (both positive and negative) - the introduction of the AI system at the same time improves and deteriorates the human rights of AI users in the domain.
     Inapplicable – there is no clear indication that the introduction of the AI system improves or deteriorates the human rights of AI users in the domain.
 
-  3. Evaluate each SDG Goal (described in the clausules below). Classify the impact on the Goals as "Positive", "Negative", or "Mixed". When asessing whether the AI system negatively impacts a goal, consider what are the potential biases and harms that might be caused by this system for the goal. To classify the impact for each goal, assess if the introduction of the AI system is:
+  3. Evaluate each SDG Goal (described in the clauses below). Classify the impact on the Goals as "Positive", "Negative", or "Mixed". When assessing whether the AI system negatively impacts a goal, consider what are the potential biases and harms that might be caused by this system for the goal. To classify the impact for each goal, assess if the introduction of the AI system is:
     Positive - the introduction of the AI system improves the developments towards achieving the SDG Goal targets for example, by combating bias, supporting equality, empowering humanity, or enables measuring the Goal's indicators.
     Negative - the introduction of the AI system deteriorates the developments towards achieving the SDG Goal targets, for example, by causing harms, reinforcing biases, fostering discrimination, or impeding progress.
     Mixed (both positive and negative) - the introduction of the AI system at the same time improves and deteriorates the developments towards achieving the SDG Goal targets
@@ -50,8 +50,8 @@ prompt_template: |
       - Restricts freedom of expression by over-blocking lawful online resources.
       - Erodes equality by producing higher error rates for marginalized groups.
   
-  5. In each case, rigorously validate your reasoning. Use the generated description of the system to generate a concrete example for how the introduction of this system impacts the human rights/SDGs/PESTLE in the domain. The true intent and capabilities of the AI system are crucial for this evaluation. While evaluating, explicitly cite the article text/clausule that resonates most with the AI system's purpose and capabilities. Reference the exact text from the respective human right article/SDG clausule/PESTLE category and provide a thorough rationale. Ensure there is a direct correlation between the system's functionalities and the referenced text.
-    This assessment requires a deep understanding of both the AI system in question and the articles of the Universal Declaration of Human Rights and the clausules of the SDGs and PESTLE categories. 
+  5. In each case, rigorously validate your reasoning. Use the generated description of the system to generate a concrete example for how the introduction of this system impacts the human rights/SDGs/PESTLE in the domain. The true intent and capabilities of the AI system are crucial for this evaluation. While evaluating, explicitly cite the article text/clause that resonates most with the AI system's purpose and capabilities. Reference the exact text from the respective human right article/SDG clause/PESTLE category and provide a thorough rationale. Ensure there is a direct correlation between the system's functionalities and the referenced text.
+    This assessment requires a deep understanding of both the AI system in question and the articles of the Universal Declaration of Human Rights and the clauses of the SDGs and PESTLE categories. 
   Each evaluation must be backed by solid reasoning and a clear understanding of the interplay between technology and human rights and SDGs. 
   Most importantly, ensure that the impacts (risks/benefits) generated across the three types (human rights, SDGs, PESTLE) are distinct and non-overlapping. If you already generated a risks for a human right, do not generate the same risk for a SDG or PESTLE category.
   Remember, precision is paramount. Be succinct.

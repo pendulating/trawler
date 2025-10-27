@@ -36,15 +36,13 @@ pipeline:
           runtime.prefilter_mode: off
           runtime.keyword_buffering: false
           # Risks and benefits needs larger context for full UDHR + SDGs + PESTLE content
-          model.engine_kwargs.max_model_len: 32768
+          model.engine_kwargs.max_model_len: 24576
           model.engine_kwargs.max_num_seqs: 4
           model.engine_kwargs.gpu_memory_utilization: 0.8
-          model.batch_size: 4
+          model.batch_size: 32
           # Risks and benefits produces complex nested JSON, needs more output tokens
           sampling_params_risks_and_benefits.max_tokens: 8192
           sampling_params_risks_and_benefits.temperature: 0
-
-
         launcher: g2_slurm_pierson
         wandb_suffix: classify_risks_and_benefits
 
