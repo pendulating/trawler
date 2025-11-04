@@ -1,0 +1,46 @@
+# @package _global_
+# Standalone execution for the "classify_eu_act" stage from full_event_pipeline.
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/full_event_pipeline/classify_eu_act
+  allow_partial: true
+
+  sources:
+    verify_results:
+      # Override EU_ACT_INPUT_PATH or data.parquet_path with verify_nbl output containing core_tuple_verified.
+      path: ${oc.env:EU_ACT_INPUT_PATH,${data.parquet_path}}
+      type: parquet
+
+  graph:
+    nodes:
+      classify_eu_act:
+        stage: classify_eu_act
+        depends_on: []
+        inputs:
+          dataset: verify_results
+        outputs:
+          results: outputs/classify_eu_ai_act/classify_eu_ai_act_results.parquet
+        overrides:
+          runtime.streaming_io: false
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 64
+          runtime.use_llm_classify: true
+          runtime.classification_profile: eu_ai_act
+          runtime.prefilter_mode: off
+          runtime.keyword_buffering: false
+          model.engine_kwargs.max_model_len: 16384
+          model.engine_kwargs.max_num_seqs: 4
+          model.engine_kwargs.gpu_memory_utilization: 0.8
+          model.batch_size: 4
+          sampling_params_eu_ai_act.max_tokens: 4096
+          sampling_params_eu_ai_act.temperature: 0
+        launcher: g2_slurm_pierson
+        wandb_suffix: eu_act
+

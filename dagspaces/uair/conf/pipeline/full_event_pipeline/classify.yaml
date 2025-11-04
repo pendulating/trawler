@@ -1,0 +1,45 @@
+# @package _global_
+# Standalone execution for the "classify" stage from full_event_pipeline.
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/full_event_pipeline/classify
+  allow_partial: true
+
+  sources:
+    articles:
+      # Provide with ARTICLES_PATH or data.parquet_path when invoking CLI.
+      path: ${oc.env:ARTICLES_PATH,${data.parquet_path}}
+      type: parquet
+
+  graph:
+    nodes:
+      classify:
+        stage: classify
+        depends_on: []
+        inputs:
+          dataset: articles
+        outputs:
+          all: outputs/classify/classify_all.parquet
+          relevant: outputs/classify/classify_relevant.parquet
+        overrides:
+          runtime.rows_per_block: ${runtime.rows_per_block}
+          runtime.streaming_io: ${runtime.streaming_io}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.debug: ${runtime.debug}
+          runtime.use_llm_classify: ${runtime.use_llm_classify}
+          runtime.job_memory_gb: 48
+          model.engine_kwargs.gpu_memory_utilization: 0.8
+          model.engine_kwargs.max_model_len: 8192
+          model.engine_kwargs.max_num_seqs: 8
+          model.engine_kwargs.enable_prefix_caching: false
+          model.batch_size: 16
+        launcher: g2_slurm_pierson
+        wandb_suffix: classify
+

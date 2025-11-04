@@ -46,17 +46,40 @@ def _maybe_silence_vllm_logs() -> None:
         pass
 
 
+def _parse_cpus_on_node(val: str) -> int:
+    """Parse SLURM_CPUS_ON_NODE value which can be in various formats."""
+    try:
+        v = val.strip()
+        if "(x" in v and v.endswith(")"):
+            import re as _re
+            m = _re.match(r"^(\d+)\(x(\d+)\)$", v)
+            if m:
+                return max(1, int(m.group(1)) * int(m.group(2)))
+        if "," in v:
+            acc = 0
+            for p in v.split(","):
+                acc += int(p)
+            return max(1, acc)
+        return max(1, int(v))
+    except Exception:
+        return -1
+
+
 def _ensure_ray_init(cfg) -> None:
-    """Initialize Ray with appropriate memory settings."""
+    """Initialize Ray with SLURM-aware CPU limits."""
     try:
         import ray  # type: ignore
         if not ray.is_initialized():
-            # Reuse Ray init logic from other stages
+            # Detect SLURM CPU allocation
             cpus_alloc = None
             try:
                 cpt = os.environ.get("SLURM_CPUS_PER_TASK")
                 if cpt is not None and str(cpt).strip() != "":
                     cpus_alloc = int(cpt)
+                else:
+                    con = os.environ.get("SLURM_CPUS_ON_NODE")
+                    if con is not None and str(con).strip() != "":
+                        cpus_alloc = _parse_cpus_on_node(con)
             except Exception:
                 cpus_alloc = None
             
@@ -80,6 +103,13 @@ def _ensure_ray_init(cfg) -> None:
                     ray.init(log_to_driver=True)
                 except Exception:
                     pass
+            # Constrain Ray Data CPU limits to SLURM allocation when available
+            try:
+                if cpus_alloc is not None and int(cpus_alloc) > 0:
+                    ctx = ray.data.DataContext.get_current()
+                    ctx.execution_options.resource_limits = ctx.execution_options.resource_limits.copy(cpu=int(cpus_alloc))
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -609,6 +639,15 @@ def run_synthesis_stage(df, cfg, logger=None, articles_df=None):
         ek = dict(getattr(cfg.model, "engine_kwargs", {}))
         ek.setdefault("max_model_len", 4096)
         ek.setdefault("gpu_memory_utilization", 0.85)
+        tp_env = os.environ.get("UAIR_TENSOR_PARALLEL_SIZE")
+        if "tensor_parallel_size" not in ek and tp_env:
+            try:
+                tp_val = max(1, int(tp_env))
+                ek["tensor_parallel_size"] = tp_val
+                if not os.environ.get("RULE_TUPLES_SILENT"):
+                    print(f"Using tensor_parallel_size={tp_val} from UAIR_TENSOR_PARALLEL_SIZE")
+            except Exception:
+                pass
         if "tensor_parallel_size" not in ek:
             try:
                 ek["tensor_parallel_size"] = _detect_num_gpus()

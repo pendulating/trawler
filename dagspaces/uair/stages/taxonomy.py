@@ -428,6 +428,15 @@ def run_taxonomy_stage(df, cfg):
     ek.setdefault("max_model_len", 4096)
     ek.setdefault("max_num_seqs", 4)
     ek.setdefault("gpu_memory_utilization", 0.7)
+    tp_env = os.environ.get("UAIR_TENSOR_PARALLEL_SIZE")
+    if "tensor_parallel_size" not in ek and tp_env:
+        try:
+            tp_val = max(1, int(tp_env))
+            ek["tensor_parallel_size"] = tp_val
+            if not os.environ.get("RULE_TUPLES_SILENT"):
+                print(f"Using tensor_parallel_size={tp_val} from UAIR_TENSOR_PARALLEL_SIZE")
+        except Exception:
+            pass
     # Auto-detect tensor_parallel_size from allocated GPUs if not explicitly set
     if "tensor_parallel_size" not in ek:
         try:

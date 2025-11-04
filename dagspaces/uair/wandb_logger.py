@@ -531,6 +531,36 @@ def collect_compute_metadata(cfg=None) -> Dict[str, Any]:
         gpu_details = _collect_gpu_details()
         if gpu_details:
             metadata["compute.gpus"] = gpu_details
+
+    # Capture current CUDA device mapping and any sanitizer output
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cuda_visible:
+        metadata["compute.cuda_visible_devices"] = [d.strip() for d in cuda_visible.split(",") if d.strip()]
+
+    dropped = os.environ.get("UAIR_SANITIZED_DROPPED_GPUS")
+    original = os.environ.get("UAIR_GPU_SANITIZE_ORIGINAL")
+    reason = os.environ.get("UAIR_GPU_SANITIZE_REASON")
+    ts = os.environ.get("UAIR_GPU_SANITIZE_TS")
+    sanitize_meta: Dict[str, Any] = {}
+    if original:
+        sanitize_meta["original"] = [d.strip() for d in original.split(",") if d.strip()]
+    if dropped:
+        sanitize_meta["dropped"] = [d.strip() for d in dropped.split(",") if d.strip()]
+    if reason:
+        sanitize_meta["reason"] = reason
+    if ts:
+        try:
+            sanitize_meta["timestamp"] = int(ts)
+        except Exception:
+            sanitize_meta["timestamp"] = ts
+    tp_env = os.environ.get("UAIR_TENSOR_PARALLEL_SIZE")
+    if tp_env:
+        try:
+            sanitize_meta.setdefault("tensor_parallel_size", int(tp_env))
+        except Exception:
+            sanitize_meta.setdefault("tensor_parallel_size", tp_env)
+    if sanitize_meta:
+        metadata["compute.gpu_sanitize"] = sanitize_meta
     
     # Memory info
     mem_gb = _detect_memory_gb()
@@ -1097,7 +1127,11 @@ class WandbLogger:
                     )
                 )
                 or (
-                    self.stage == "classify"
+                    self.stage in {
+                        "classify",
+                        "classify_eu_act",
+                        "classify_risk_and_benefits",
+                    }
                     and (panel_group == "inspect_results" or key.startswith("classify/"))
                 )
             ):

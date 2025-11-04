@@ -1,0 +1,43 @@
+# @package _global_
+# Standalone execution for the "decompose_nbl" stage from full_event_pipeline.
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/full_event_pipeline/decompose_nbl
+  allow_partial: true
+
+  sources:
+    classify_relevant:
+      # Override DECOMPOSE_INPUT_PATH or data.parquet_path to point at classify outputs.
+      path: ${oc.env:DECOMPOSE_INPUT_PATH,${data.parquet_path}}
+      type: parquet
+
+  graph:
+    nodes:
+      decompose_nbl:
+        stage: decompose_nbl
+        depends_on: []
+        inputs:
+          dataset: classify_relevant
+        outputs:
+          docs: outputs/decompose_nbl/tuples.parquet
+        overrides:
+          runtime.streaming_io: false
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 64
+          runtime.use_llm_decompose: true
+          runtime.guided_decoding_decompose: true
+          model.engine_kwargs.gpu_memory_utilization: 0.9
+          model.engine_kwargs.max_model_len: 20480
+          model.engine_kwargs.max_num_seqs: 4
+          model.batch_size: 4
+          sampling_params_decompose_nbl.max_tokens: 2048
+        launcher: g2_slurm_pierson
+        wandb_suffix: decompose_nbl
+

@@ -1,7 +1,9 @@
 from typing import Any, Dict, List
+from dataclasses import MISSING
 import re
 from bisect import bisect_right
 import pandas as pd
+import numpy as np
 import os
 import logging
 import json
@@ -13,6 +15,8 @@ try:
     _RAY_OK = True
 except Exception:
     _RAY_OK = False
+
+from vllm.sampling_params import SamplingParams  # type: ignore
 
 _VLLM_LOGS_SILENCED = False
 
@@ -312,6 +316,158 @@ def _sanitize_for_json(value: Any):
         return str(value)
     except Exception:
         return None
+
+
+_BOOLISH_SUFFIXES = ("_verified",)
+_BOOLISH_EXACT = {
+    "core_tuple_verified",
+    "doc_any_component_verified",
+    "ver_tuples_any_verified",
+    "ver_tuple_overall_pass",
+    "relevant_keyword",
+    "too_vague_to_process",
+    "is_relevant",
+}
+
+_NONSCALAR_PRESERVE = {
+    "messages",
+    "sampling_params",
+    "guided_decoding",
+    "response_format",
+    "structured_output",
+}
+
+
+def _coerce_bool_like(value: Any) -> bool:
+    try:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        try:
+            if pd.isna(value):
+                return False
+        except Exception:
+            pass
+        if isinstance(value, (np.bool_,)):
+            return bool(value)
+        if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+            try:
+                return _coerce_bool_like(value.item())
+            except Exception:
+                pass
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return bool(int(value))
+        if isinstance(value, str):
+            lv = value.strip().lower()
+            if lv in {"", "none", "null", "nan"}:
+                return False
+            if lv in {"true", "1", "yes", "y", "t"}:
+                return True
+            if lv in {"false", "0", "no", "n", "f"}:
+                return False
+        return bool(value)
+    except Exception:
+        return False
+
+
+def _coerce_boolish_row(r: Dict[str, Any]) -> Dict[str, Any]:
+    for key in list(r.keys()):
+        if key in _BOOLISH_EXACT or key.endswith(_BOOLISH_SUFFIXES):
+            try:
+                r[key] = _coerce_bool_like(r.get(key))
+            except Exception:
+                r[key] = False
+        else:
+            val = r.get(key)
+            if key in _NONSCALAR_PRESERVE:
+                continue
+            modified = False
+            if isinstance(val, np.ndarray):
+                try:
+                    val = val.tolist()
+                    modified = True
+                except Exception:
+                    pass
+            elif hasattr(val, "tolist") and not isinstance(val, (str, bytes)):
+                try:
+                    candidate = val.tolist()
+                    if isinstance(candidate, (dict, list, tuple, set)):
+                        val = candidate
+                        modified = True
+                except Exception:
+                    pass
+            if isinstance(val, (dict, list, tuple, set)) or modified:
+                try:
+                    r[key] = _to_json_str(val)
+                except Exception:
+                    r[key] = None
+    return r
+
+
+def _coerce_boolish_df(pdf: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(pdf, pd.DataFrame):
+        return pdf
+    cols = list(pdf.columns)
+    for col in cols:
+        if col in _BOOLISH_EXACT or col.endswith(_BOOLISH_SUFFIXES):
+            try:
+                pdf[col] = pdf[col].apply(_coerce_bool_like)
+            except Exception:
+                try:
+                    pdf[col] = pdf[col].fillna(False).astype(bool)
+                except Exception:
+                    pass
+        else:
+            if col in _NONSCALAR_PRESERVE:
+                continue
+            try:
+                sample = None
+                for v in pdf[col].values:
+                    if v is None:
+                        continue
+                    if isinstance(v, float) and pd.isna(v):
+                        continue
+                    sample = v
+                    break
+            except Exception:
+                sample = None
+            needs_convert = False
+            if isinstance(sample, np.ndarray):
+                needs_convert = True
+            elif hasattr(sample, "tolist") and not isinstance(sample, (str, bytes)):
+                try:
+                    candidate = sample.tolist()
+                    if isinstance(candidate, (dict, list, tuple, set)):
+                        sample = candidate
+                        needs_convert = True
+                except Exception:
+                    pass
+            if isinstance(sample, (dict, list, tuple, set)) or needs_convert:
+                try:
+                    def _coerce_val(v):
+                        if v is None:
+                            return None
+                        if isinstance(v, np.ndarray):
+                            try:
+                                v = v.tolist()
+                            except Exception:
+                                pass
+                        elif hasattr(v, "tolist") and not isinstance(v, (str, bytes)):
+                            try:
+                                candidate = v.tolist()
+                                if isinstance(candidate, (dict, list, tuple, set)):
+                                    v = candidate
+                            except Exception:
+                                pass
+                        if isinstance(v, (dict, list, tuple, set)):
+                            return _to_json_str(v)
+                        return v
+
+                    pdf[col] = pdf[col].apply(_coerce_val)
+                except Exception:
+                    pass
+    return pdf
 
 
 def _detect_num_gpus() -> int:
@@ -962,6 +1118,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                 out.loc[mask_missing, "article_id"] = out.loc[mask_missing].apply(_gen_id_row, axis=1)
         except Exception:
             pass
+        out = _coerce_boolish_df(out)
     def _heuristic(text: Any) -> bool:
         s = str(text or "").lower()
         if not s:
@@ -1371,6 +1528,15 @@ def run_classification_stage(df: pd.DataFrame, cfg):
     ek.setdefault("max_model_len", 4096)
     ek.setdefault("max_num_seqs", 16)
     ek.setdefault("gpu_memory_utilization", 0.85)
+    tp_env = os.environ.get("UAIR_TENSOR_PARALLEL_SIZE")
+    if "tensor_parallel_size" not in ek and tp_env:
+        try:
+            tp_val = max(1, int(tp_env))
+            ek["tensor_parallel_size"] = tp_val
+            if not os.environ.get("RULE_TUPLES_SILENT"):
+                print(f"Using tensor_parallel_size={tp_val} from UAIR_TENSOR_PARALLEL_SIZE")
+        except Exception:
+            pass
     # Auto-detect tensor_parallel_size from allocated GPUs if not explicitly set
     if "tensor_parallel_size" not in ek:
         try:
@@ -1573,7 +1739,8 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                     r["chunk_text"] = str(r.get("chunk_text") or "")
             except Exception:
                 pass
-            return r
+            return _coerce_boolish_row(r)
+
         eu_keys = [
             "deployment_domain",
             "deployment_purpose",
@@ -1606,7 +1773,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                 r["chunk_text"] = str(r.get("chunk_text") or "")
         except Exception:
             pass
-        return r
+        return _coerce_boolish_row(r)
 
     # EU input completeness flags
     _EU_INPUT_KEYS = [
@@ -1690,6 +1857,92 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         r["too_vague_to_process"] = bool(int(cnt) < 5)
         return r
 
+    # Stable baseline for sampling params to avoid Arrow struct field drift across batches
+    _SAMPLING_DEFAULTS: Dict[str, Any] = {
+        # Core generation controls
+        "max_tokens": 8,               # int
+        "temperature": 1.0,            # float
+        "top_p": 1.0,                  # float
+        "top_k": -1,                   # int (-1 disables)
+        "min_p": 0.0,                  # float
+        # Penalties
+        "presence_penalty": 0.0,       # float
+        "frequency_penalty": 0.0,      # float
+        "repetition_penalty": 1.0,     # float
+        "length_penalty": 1.0,         # float (beam search)
+        # Decoding strategy
+        "use_beam_search": False,      # bool
+        "num_beams": 1,                # int
+        "early_stopping": False,       # bool
+        # Output formatting/logprobs
+        "detokenize": True,            # bool
+        "logprobs": 0,                 # int
+        # Multi-sample
+        "n": 1,                        # int
+        "best_of": 1,                  # int
+        # Stopping conditions
+        "stop": [],                    # list[str]
+        "stop_token_ids": [],          # list[int]
+        # EOS handling
+        "ignore_eos_token": False,     # bool
+    }
+
+    def _filter_vllm_sampling_params(sp: Dict[str, Any]) -> Dict[str, Any]:
+        """Filter sampling params to only those supported by installed vLLM.
+
+        Uses introspection of vllm.SamplingParams signature; if that fails,
+        conservatively drops known problematic/optional keys.
+        """
+        try:
+            import inspect as _inspect
+            import vllm as _v
+            try:
+                sig = _inspect.signature(_v.SamplingParams.__init__)
+                accepted = {k for k in sig.parameters.keys() if k != "self"}
+            except Exception:
+                accepted = None
+            if accepted:
+                filtered = {k: v for k, v in sp.items() if k in accepted}
+                # Debug print of dropped keys (best-effort)
+                try:
+                    dropped = [k for k in sp.keys() if k not in accepted]
+                    if dropped and not os.environ.get("RULE_TUPLES_SILENT"):
+                        print(f"Filtering unsupported vLLM sampling params: {dropped}")
+                except Exception:
+                    pass
+                return filtered
+        except Exception:
+            pass
+        # Conservative fallback: drop keys commonly missing in older vLLM
+        sp2 = dict(sp)
+        for k in (
+            "early_stopping",
+            "length_penalty",
+            "guided_decoding",
+            "response_format",
+            "structured_output",
+        ):
+            sp2.pop(k, None)
+        return sp2
+
+    # Ensure sampling_params have a stable schema across rows to avoid Arrow concat issues
+    def _stabilize_sampling_params(sp: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            out = dict(_SAMPLING_DEFAULTS)
+            out.update(sp or {})
+            stop_val = out.get("stop")
+            if stop_val is None:
+                out["stop"] = []
+            elif not isinstance(stop_val, list):
+                out["stop"] = [str(stop_val)]
+            for key, value in out.items():
+                if isinstance(_SAMPLING_DEFAULTS.get(key), bool) and value is None:
+                    out[key] = bool(_SAMPLING_DEFAULTS.get(key))
+            # Finally, drop any keys not supported by the installed vLLM
+            return _filter_vllm_sampling_params(out)
+        except Exception:
+            return dict(sp or {})
+
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
         _maybe_silence_vllm_logs()
         # Ensure article_id is present on every row
@@ -1724,7 +1977,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         except Exception:
             pass
         user = _trim_text_for_prompt(user_raw, tok_local, system_prompt)
-        # Sanitize sampling params similar to decompose_nbl; JSON-friendly and stable types
+        # Sanitize sampling params; then stabilize to a fixed-key schema
         sp_local = _sanitize_for_json(dict(sampling_params or {}))
         if is_eu_profile and EU_GUIDED_JSON_SCHEMA is not None:
             # Always include guided_decoding with a string value to keep Arrow schema stable across blocks
@@ -1740,6 +1993,8 @@ def run_classification_stage(df: pd.DataFrame, cfg):
             except Exception:
                 schema_json_str = ""
             sp_local["guided_decoding"] = {"json": str(schema_json_str or "")}
+        # Stabilize schema to avoid Arrow concat errors across batches
+        sp_local = _stabilize_sampling_params(sp_local)
         from datetime import datetime as _dt
         # Drop any conflicting keys from input row to avoid clobbering our constructed fields
         base = {k: v for k, v in row.items() if k not in {"messages", "sampling_params", "generated_text", "llm_output", "json", "guided_decoding", "response_format", "structured_output"}}
@@ -1797,6 +2052,11 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                     "usage",
                     "token_counts",
                     "matched_keywords",
+                    # Include potential engine outputs that may appear as structs
+                    "json",
+                    "structured_output",
+                    "guided_decoding",
+                    "response_format",
                 ])
             return {
                 **row,
@@ -1842,16 +2102,24 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                     "usage",
                     "token_counts",
                     "matched_keywords",
-                    # Keep raw JSON in a JSON-string-friendly column
-                    "eu_ai_raw_json",
+                    # Include potential engine outputs that may appear as structs
+                    "json",
+                    "structured_output",
+                    "guided_decoding",
+                    "response_format",
                 ])
+            # Serialize raw parsed JSON explicitly to string to avoid struct schema drift
+            try:
+                eu_ai_raw_json_str = _to_json_str(parsed)
+            except Exception:
+                eu_ai_raw_json_str = None
             return {
                 **row,
                 "eu_ai_desc": eu_desc,
                 "eu_ai_label": eu_label,
                 "eu_ai_relevant_text": eu_reltext,
                 "eu_ai_reason": eu_reason,
-                "eu_ai_raw_json": parsed,
+                "eu_ai_raw_json": eu_ai_raw_json_str,
                 "llm_output": row.get("generated_text"),
                 "classification_mode": "eu_ai_act",
                 "too_vague_to_process": False,  # LLM-processed rows are not too vague
@@ -1876,6 +2144,11 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                     "usage",
                     "token_counts",
                     "matched_keywords",  # List of matched keyword strings
+                    # Include potential engine outputs that may appear as structs
+                    "json",
+                    "structured_output",
+                    "guided_decoding",
+                    "response_format",
                 ])
             return {
                 **row,
@@ -1883,7 +2156,6 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                 "is_relevant": bool(is_rel),
                 "llm_output": row.get("generated_text"),
                 "classification_mode": "llm_relevance",
-                "too_vague_to_process": False,  # LLM-processed rows are not too vague
                 "latency_s": (float(ts_end) - float(row.get("ts_start", ts_end))),
                 "token_usage_prompt": ((usage or {}).get("prompt_tokens") or (usage or {}).get("input_tokens")),
                 "token_usage_output": ((usage or {}).get("completion_tokens") or (usage or {}).get("output_tokens")),
@@ -1912,6 +2184,14 @@ def run_classification_stage(df: pd.DataFrame, cfg):
             return r
         try:
             ds_in = ds_in.map(_ensure_article_id_map)
+        except Exception:
+            pass
+
+        def _coerce_boolish_map(r: Dict[str, Any]) -> Dict[str, Any]:
+            return _coerce_boolish_row(dict(r))
+
+        try:
+            ds_in = ds_in.map(_coerce_boolish_map)
         except Exception:
             pass
 
@@ -1990,19 +2270,61 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         processor = build_llm_processor(engine_config, preprocess=_pre, postprocess=_post)
         ds_llm_results = processor(ds_in)
         # Sanitize internal columns at the dataset level
+        # Only drop columns that actually exist in the dataset
         try:
-            ds_llm_results = ds_llm_results.drop_columns(_INTERNAL_DROP_COLS)
-        except Exception:
-            pass
+            # Get schema to check which columns exist
+            schema = ds_llm_results.schema()
+            if hasattr(schema, 'names'):
+                existing_cols = schema.names
+            else:
+                # Fallback: try to get from first batch
+                try:
+                    first_batch = next(iter(ds_llm_results.iter_batches(batch_size=1)))
+                    existing_cols = first_batch.column_names if hasattr(first_batch, 'column_names') else []
+                except Exception:
+                    existing_cols = []
+            # Filter to only columns that exist
+            cols_to_drop = [col for col in _INTERNAL_DROP_COLS if col in existing_cols]
+            if cols_to_drop:
+                ds_llm_results = ds_llm_results.drop_columns(cols_to_drop)
+        except Exception as e:
+            print(f"[classify] Warning: Failed to drop internal columns: {e}", flush=True)
         # Drop risks_benefits specific columns if in that profile
         if is_risks_benefits_profile:
             try:
-                ds_llm_results = ds_llm_results.drop_columns(_RISKS_BENEFITS_DROP_COLS)
-            except Exception:
-                pass
+                # Get schema to check which columns exist
+                schema = ds_llm_results.schema()
+                if hasattr(schema, 'names'):
+                    existing_cols = schema.names
+                else:
+                    try:
+                        first_batch = next(iter(ds_llm_results.iter_batches(batch_size=1)))
+                        existing_cols = first_batch.column_names if hasattr(first_batch, 'column_names') else []
+                    except Exception:
+                        existing_cols = []
+                # Filter to only columns that exist
+                cols_to_drop = [col for col in _RISKS_BENEFITS_DROP_COLS if col in existing_cols]
+                if cols_to_drop:
+                    ds_llm_results = ds_llm_results.drop_columns(cols_to_drop)
+            except Exception as e:
+                print(f"[classify] Warning: Failed to drop risks_benefits columns: {e}", flush=True)
         
-        # Merge back any filtered rows (keyword gating and/or too-vague)
-        print(f"[classify] Checking merge conditions: ds_all={ds_all is not None}, ds_vague={ds_vague is not None}", flush=True)
+        skip_merge_filtered = bool(getattr(cfg.runtime, "skip_merge_filtered", False))
+        print(
+            f"[classify] Checking merge conditions: ds_all={ds_all is not None}, ds_vague={ds_vague is not None}, skip_merge_filtered={skip_merge_filtered}",
+            flush=True,
+        )
+        if skip_merge_filtered:
+            df_llm = ds_llm_results.to_pandas().drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
+            if is_risks_benefits_profile:
+                df_llm = df_llm.drop(columns=_RISKS_BENEFITS_DROP_COLS, errors="ignore")
+            if is_eu_profile or is_risks_benefits_profile:
+                if "too_vague_to_process" not in df_llm.columns:
+                    df_llm["too_vague_to_process"] = False
+                else:
+                    df_llm["too_vague_to_process"] = df_llm["too_vague_to_process"].fillna(False)
+            print(f"[classify] skip_merge_filtered enabled; returning {len(df_llm)} rows without merging filtered/vague", flush=True)
+            return df_llm
         if ds_all is not None or ds_vague is not None:
             print(f"[classify] Starting merge process...", flush=True)
             try:
@@ -2030,26 +2352,22 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                             pdf["relevance_answer"] = None
                     return pdf
                 
-                result_parts = [df_llm]
+                result_parts = [
+                    _normalize_profile_columns(df_llm, is_eu_profile, is_risks_benefits_profile)
+                ]
                 if df_all is not None:
-                    # Get article_ids that were processed by LLM
                     processed_ids = set(df_llm["article_id"].unique())
-                    # Find articles that were filtered out by keyword gating
-                    df_filtered = df_all[~df_all["article_id"].isin(processed_ids)].copy()
+                    # Exclude too-vague IDs from keyword-filtered to avoid duplication when merging back
+                    vague_ids: set[str] = set()
+                    try:
+                        if 'df_vague' in locals() and isinstance(df_vague, pd.DataFrame) and "article_id" in df_vague.columns:
+                            vague_ids = set(df_vague["article_id"].unique())
+                    except Exception:
+                        vague_ids = set()
+                    excluded_ids = processed_ids.union(vague_ids)
+                    df_filtered = df_all[~df_all["article_id"].isin(list(excluded_ids))].copy()
                     df_filtered["classification_mode"] = "filtered_by_keyword"
-                    if is_eu_profile:
-                        for col in ("eu_ai_desc", "eu_ai_label", "eu_ai_relevant_text", "eu_ai_reason", "eu_ai_raw_json"):
-                            if col not in df_filtered.columns:
-                                df_filtered[col] = None
-                    elif is_risks_benefits_profile:
-                        for col in ("rb_desc", "rb_human_rights", "rb_sdgs", "rb_additional"):
-                            if col not in df_filtered.columns:
-                                df_filtered[col] = None
-                    else:
-                        df_filtered["is_relevant"] = False
-                        if "relevance_answer" not in df_filtered.columns:
-                            df_filtered["relevance_answer"] = None
-                    # Serialize matched_keywords to JSON for Arrow/Parquet compatibility
+                    df_filtered = _normalize_profile_columns(df_filtered, is_eu_profile, is_risks_benefits_profile)
                     if "matched_keywords" in df_filtered.columns:
                         df_filtered["matched_keywords"] = df_filtered["matched_keywords"].apply(_to_json_str)
                     result_parts.append(df_filtered)
@@ -2057,25 +2375,18 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                     df_vague = ds_vague.to_pandas().copy()
                     print(f"[classify] Merging back {len(df_vague)} too-vague rows to output", flush=True)
                     df_vague["classification_mode"] = "too_vague_to_process"
-                    df_vague["too_vague_to_process"] = True  # Mark these rows as too vague
-                    if is_eu_profile:
-                        for col in ("eu_ai_desc", "eu_ai_label", "eu_ai_relevant_text", "eu_ai_reason", "eu_ai_raw_json"):
-                            if col not in df_vague.columns:
-                                df_vague[col] = None
-                    elif is_risks_benefits_profile:
-                        for col in ("rb_desc", "rb_human_rights", "rb_sdgs", "rb_additional"):
-                            if col not in df_vague.columns:
-                                df_vague[col] = None
+                    df_vague["too_vague_to_process"] = True
+                    df_vague = _normalize_profile_columns(df_vague, is_eu_profile, is_risks_benefits_profile)
                     result_parts.append(df_vague)
                 else:
                     print(f"[classify] No too-vague rows to merge (ds_vague is None: {ds_vague is None})", flush=True)
-                # Merge: LLM results + any filtered sets
-                result_df = pd.concat(result_parts, ignore_index=True)
-                # Ensure too_vague_to_process column exists for all rows (default False)
-                if "too_vague_to_process" not in result_df.columns:
-                    result_df["too_vague_to_process"] = False
-                else:
-                    result_df["too_vague_to_process"] = result_df["too_vague_to_process"].fillna(False)
+                result_df = _merge_result_parts(result_parts)
+                # Only ensure too_vague column for EU/RB profiles
+                if is_eu_profile or is_risks_benefits_profile:
+                    if "too_vague_to_process" not in result_df.columns:
+                        result_df["too_vague_to_process"] = False
+                    else:
+                        result_df["too_vague_to_process"] = result_df["too_vague_to_process"].fillna(False)
                 # Drop internal columns before returning
                 try:
                     result_df = result_df.drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
@@ -2202,26 +2513,22 @@ def run_classification_stage(df: pd.DataFrame, cfg):
             df_llm = out_df
             df_all = ds_all.to_pandas() if ds_all is not None else None
             
-            result_parts = [df_llm]
+            result_parts = [
+                _normalize_profile_columns(df_llm, is_eu_profile, is_risks_benefits_profile)
+            ]
             if df_all is not None:
-                # Get article_ids that were processed by LLM
                 processed_ids = set(df_llm["article_id"].unique())
-                # Find articles that were filtered out by keyword gating
-                df_filtered = df_all[~df_all["article_id"].isin(processed_ids)].copy()
+                # Exclude too-vague IDs from keyword-filtered to avoid duplication when merging back
+                vague_ids: set[str] = set()
+                try:
+                    if 'df_vague' in locals() and isinstance(df_vague, pd.DataFrame) and "article_id" in df_vague.columns:
+                        vague_ids = set(df_vague["article_id"].unique())
+                except Exception:
+                    vague_ids = set()
+                excluded_ids = processed_ids.union(vague_ids)
+                df_filtered = df_all[~df_all["article_id"].isin(list(excluded_ids))].copy()
                 df_filtered["classification_mode"] = "filtered_by_keyword"
-                if is_eu_profile:
-                    for col in ("eu_ai_desc", "eu_ai_label", "eu_ai_relevant_text", "eu_ai_reason", "eu_ai_raw_json"):
-                        if col not in df_filtered.columns:
-                            df_filtered[col] = None
-                elif is_risks_benefits_profile:
-                    for col in ("rb_desc", "rb_human_rights", "rb_sdgs", "rb_additional", "rb_raw_json"):
-                        if col not in df_filtered.columns:
-                            df_filtered[col] = None
-                else:
-                    df_filtered["is_relevant"] = False
-                    if "relevance_answer" not in df_filtered.columns:
-                        df_filtered["relevance_answer"] = None
-                # Serialize matched_keywords to JSON for Arrow/Parquet compatibility
+                df_filtered = _normalize_profile_columns(df_filtered, is_eu_profile, is_risks_benefits_profile)
                 if "matched_keywords" in df_filtered.columns:
                     df_filtered["matched_keywords"] = df_filtered["matched_keywords"].apply(_to_json_str)
                 result_parts.append(df_filtered)
@@ -2229,25 +2536,18 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                 df_vague = ds_vague.to_pandas().copy()
                 print(f"[classify] Merging back {len(df_vague)} too-vague rows to output", flush=True)
                 df_vague["classification_mode"] = "too_vague_to_process"
-                df_vague["too_vague_to_process"] = True  # Mark these rows as too vague
-                if is_eu_profile:
-                    for col in ("eu_ai_desc", "eu_ai_label", "eu_ai_relevant_text", "eu_ai_reason", "eu_ai_raw_json"):
-                        if col not in df_vague.columns:
-                            df_vague[col] = None
-                elif is_risks_benefits_profile:
-                    for col in ("rb_desc", "rb_human_rights", "rb_sdgs", "rb_additional"):
-                        if col not in df_vague.columns:
-                            df_vague[col] = None
+                df_vague["too_vague_to_process"] = True
+                df_vague = _normalize_profile_columns(df_vague, is_eu_profile, is_risks_benefits_profile)
                 result_parts.append(df_vague)
             else:
                 print(f"[classify] No too-vague rows to merge (ds_vague is None: {ds_vague is None})", flush=True)
-            # Merge: LLM results + any filtered sets
-            out_df = pd.concat(result_parts, ignore_index=True)
-            # Ensure too_vague_to_process column exists for all rows (default False)
-            if "too_vague_to_process" not in out_df.columns:
-                out_df["too_vague_to_process"] = False
-            else:
-                out_df["too_vague_to_process"] = out_df["too_vague_to_process"].fillna(False)
+            out_df = _merge_result_parts(result_parts)
+            # Only ensure too_vague column for EU/RB profiles
+            if is_eu_profile or is_risks_benefits_profile:
+                if "too_vague_to_process" not in out_df.columns:
+                    out_df["too_vague_to_process"] = False
+                else:
+                    out_df["too_vague_to_process"] = out_df["too_vague_to_process"].fillna(False)
             try:
                 out_df = out_df.drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
             except Exception:
@@ -2278,5 +2578,88 @@ def run_classification_stage(df: pd.DataFrame, cfg):
     
     # Stage-scoped logging is handled by the orchestrator
     return out_df
+
+def _normalize_profile_columns(df: pd.DataFrame, is_eu_profile: bool, is_risks_benefits_profile: bool) -> pd.DataFrame:
+    df = df.copy()
+    if is_eu_profile:
+        defaults = {
+            "eu_ai_desc": None,
+            "eu_ai_label": None,
+            "eu_ai_relevant_text": None,
+            "eu_ai_reason": None,
+            "eu_ai_raw_json": None,
+            "too_vague_to_process": False,
+            "classification_mode": "filtered_by_keyword",
+        }
+    elif is_risks_benefits_profile:
+        defaults = {
+            "rb_desc": None,
+            "rb_human_rights": None,
+            "rb_sdgs": None,
+            "rb_additional": None,
+            "too_vague_to_process": False,
+            "classification_mode": "filtered_by_keyword",
+        }
+    else:
+        defaults = {
+            "is_relevant": False,
+            "relevance_answer": None,
+            "classification_mode": "filtered_by_keyword",
+        }
+    for col, default in defaults.items():
+        if col not in df.columns:
+            df[col] = default
+        elif isinstance(default, bool):
+            df[col] = df[col].fillna(default).astype(bool)
+        else:
+            # Only fill when default is not None; pandas fillna(None) raises
+            if default is not None:
+                df[col] = df[col].fillna(default)
+    if is_risks_benefits_profile:
+        for col in ("rb_human_rights", "rb_sdgs", "rb_additional"):
+            if col in df.columns:
+                df[col] = df[col].apply(lambda v: _to_json_str(v) if not isinstance(v, str) else v)
+    return df
+
+
+def _merge_result_parts(parts: List[pd.DataFrame]) -> pd.DataFrame:
+    """Safely merge heterogeneous DataFrame parts without relying on pd.concat.
+
+    Ray/pandas interoperability can yield mixes of numpy-backed and Arrow-backed
+    blocks. In those cases, pd.concat may raise dimensionality errors when the
+    underlying array managers disagree on ndim. Converting each part to records
+    ensures uniform row-wise structures before rebuilding the final DataFrame.
+    """
+
+    records: List[Dict[str, Any]] = []
+    column_order: List[str] = []
+
+    for part in parts:
+        if part is None:
+            continue
+
+        if isinstance(part, pd.Series):
+            part_df = part.to_frame().T
+        elif not isinstance(part, pd.DataFrame):
+            try:
+                part_df = pd.DataFrame(part)
+            except Exception:
+                part_df = pd.DataFrame([part])
+        else:
+            part_df = part
+
+        for col in part_df.columns:
+            if col not in column_order:
+                column_order.append(col)
+
+        records.extend(part_df.to_dict(orient="records"))
+
+    if not records:
+        return pd.DataFrame(columns=column_order)
+
+    merged = pd.DataFrame.from_records(records)
+    if column_order:
+        merged = merged.reindex(columns=column_order)
+    return merged
 
 

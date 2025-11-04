@@ -1,0 +1,45 @@
+# @package _global_
+# Standalone execution for the "verify_nbl" stage from full_event_pipeline.
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/full_event_pipeline/verify_nbl
+  allow_partial: true
+
+  sources:
+    decompose_results:
+      # Override VERIFY_NBL_INPUT_PATH or data.parquet_path to point at decompose outputs.
+      path: ${oc.env:VERIFY_NBL_INPUT_PATH,${data.parquet_path}}
+      type: parquet
+
+  graph:
+    nodes:
+      verify_nbl:
+        stage: verify_nbl
+        depends_on: []
+        inputs:
+          dataset: decompose_results
+        outputs:
+          results: outputs/verify_nbl/verify_nbl_results.parquet
+          docs: outputs/verify_nbl/docs_verification.parquet
+        overrides:
+          runtime.streaming_io: ${runtime.streaming_io}
+          runtime.debug: ${runtime.debug}
+          runtime.job_memory_gb: 64
+          verify.method: combo
+          verify.top_k: 5
+          verify.thresholds: "sim=0.55,ent=0.85,contra=0.05"
+          verify.embed_model_name: /share/pierson/matt/zoo/models/intfloat_e5_base
+          verify.nli_model_name: /share/pierson/matt/zoo/models/mdeberta_v3_base_xnli_multilingual_nli_2mil7
+          verify.windowing.enabled: null
+          verify.windowing.window_size: 5
+          verify.windowing.stride: 2
+        launcher: g2_slurm_pierson
+        wandb_suffix: verify_nbl
+

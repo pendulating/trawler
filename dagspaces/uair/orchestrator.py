@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
@@ -19,6 +21,9 @@ from .config_schema import (
     resolve_output_root,
 )
 from .stages.classify import run_classification_stage
+from .stages.classify_relevance import run_classification_relevance
+from .stages.classify_eu_act import run_classification_eu_act
+from .stages.classify_risks_benefits import run_classification_risks_benefits
 from .stages.decompose import run_decomposition_stage
 from .stages.decompose_nbl import run_decomposition_stage_nbl
 from .stages.taxonomy import run_taxonomy_stage
@@ -44,6 +49,168 @@ except Exception:
     _SUBMITIT_AVAILABLE = False
 
 
+_STREAMING_COMPATIBLE_STAGES = {"classify", "taxonomy", "verification"}
+
+
+def _probe_single_gpu(device: str) -> bool:
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = device
+    code = (
+        "import sys\n"
+        "try:\n"
+        "    import torch\n"
+        "except Exception:\n"
+        "    sys.exit(1)\n"
+        "available = torch.cuda.is_available()\n"
+        "count = torch.cuda.device_count() if available else 0\n"
+        "if not (available and count >= 1):\n"
+        "    sys.exit(1)\n"
+        "try:\n"
+        "    torch.cuda.set_device(0)\n"
+        "    x = torch.randn((8, 8), device='cuda')\n"
+        "    y = torch.randn((8, 8), device='cuda')\n"
+        "    _ = torch.mm(x, y)\n"
+        "    torch.cuda.synchronize()\n"
+        "except Exception:\n"
+        "    sys.exit(2)\n"
+        "sys.exit(0)\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable or "python", "-c", code],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _update_slurm_gpu_envs(valid_devices: List[str]) -> None:
+    count = len(valid_devices)
+    if count <= 0:
+        return
+    gpu_list = ",".join(valid_devices)
+    for var in ("SLURM_JOB_GPUS", "SLURM_STEP_GPUS", "SLURM_GPUS_ON_NODE"):
+        val = os.environ.get(var)
+        if not val:
+            continue
+        if "," in val:
+            os.environ[var] = gpu_list
+        elif ":" in val:
+            prefix = val.split(":", 1)[0]
+            os.environ[var] = f"{prefix}:{count}"
+        else:
+            try:
+                int(val)
+                os.environ[var] = str(count)
+            except Exception:
+                os.environ[var] = gpu_list
+    for var in ("SLURM_GPUS_PER_NODE", "SLURM_GPUS_PER_TASK"):
+        val = os.environ.get(var)
+        if not val:
+            continue
+        if ":" in val:
+            prefix = val.split(":", 1)[0]
+            os.environ[var] = f"{prefix}:{count}"
+        else:
+            try:
+                current = int(val)
+                os.environ[var] = str(min(count, current))
+            except Exception:
+                os.environ[var] = str(count)
+
+
+def _adjust_tensor_parallel_env(valid_count: int) -> None:
+    tp_env = os.environ.get("UAIR_TENSOR_PARALLEL_SIZE")
+    if not tp_env:
+        return
+    try:
+        tp_val = max(1, int(tp_env))
+        if valid_count > 0 and tp_val > valid_count:
+            os.environ["UAIR_TENSOR_PARALLEL_SIZE"] = str(valid_count)
+    except Exception:
+        pass
+
+
+def _log_gpu_environment(reason: str) -> None:
+    try:
+        cuda_visible = [d.strip() for d in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if d.strip()]
+        dropped = [d.strip() for d in os.environ.get("UAIR_SANITIZED_DROPPED_GPUS", "").split(",") if d.strip()]
+        original = [d.strip() for d in os.environ.get("UAIR_GPU_SANITIZE_ORIGINAL", "").split(",") if d.strip()]
+        payload: Dict[str, Any] = {
+            "reason": reason,
+            "cuda_visible_devices": cuda_visible,
+        }
+        if original:
+            payload["sanitized_original"] = original
+        if dropped:
+            payload["sanitized_dropped"] = dropped
+        tp_env = os.environ.get("UAIR_TENSOR_PARALLEL_SIZE")
+        if tp_env:
+            try:
+                payload["tensor_parallel_size"] = int(tp_env)
+            except Exception:
+                payload["tensor_parallel_size"] = tp_env
+        _print_status({"gpu_env": payload})
+    except Exception:
+        pass
+
+
+def _sanitize_cuda_visible_devices(reason: str = "") -> None:
+    if os.environ.get("UAIR_SKIP_GPU_SANITIZE"):
+        return
+    current = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if not current:
+        return
+    devices = [d.strip() for d in current.split(",") if d.strip()]
+    if len(devices) <= 1:
+        return
+    normalized = ",".join(devices)
+    valid: List[str] = []
+    invalid: List[str] = []
+    for dev in devices:
+        if _probe_single_gpu(dev):
+            valid.append(dev)
+        else:
+            invalid.append(dev)
+    if not invalid:
+        return
+    if not valid:
+        # If everything failed, do not modify CUDA_VISIBLE_DEVICES but log once
+        os.environ["UAIR_GPU_SANITIZE_REASON"] = reason or "stage_start"
+        os.environ["UAIR_GPU_SANITIZE_TS"] = str(int(time.time()))
+        os.environ.pop("UAIR_GPU_SANITIZE_ORIGINAL", None)
+        os.environ.pop("UAIR_SANITIZED_DROPPED_GPUS", None)
+        _print_status({
+            "gpu_sanitize": {
+                "reason": reason or "stage_start",
+                "original": normalized,
+                "error": "all_devices_failed",
+            }
+        })
+        return
+    new_devices = ",".join(valid)
+    os.environ["CUDA_VISIBLE_DEVICES"] = new_devices
+    os.environ["UAIR_SANITIZED_DROPPED_GPUS"] = ",".join(invalid)
+    os.environ["UAIR_GPU_SANITIZE_REASON"] = reason or "stage_start"
+    os.environ["UAIR_GPU_SANITIZE_TS"] = str(int(time.time()))
+    os.environ["UAIR_GPU_SANITIZE_ORIGINAL"] = normalized
+    _update_slurm_gpu_envs(valid)
+    _adjust_tensor_parallel_env(len(valid))
+    _print_status({
+        "gpu_sanitize": {
+            "reason": reason or "stage_start",
+            "original": normalized,
+            "sanitized": new_devices,
+            "dropped": ",".join(invalid),
+        }
+    })
+    _log_gpu_environment(reason or "stage_start")
+
+
 @dataclass
 class StageExecutionContext:
     cfg: DictConfig
@@ -59,6 +226,112 @@ class StageExecutionContext:
 class StageResult:
     outputs: Dict[str, str]
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+def _convert_to_pandas_if_needed(out: Any) -> pd.DataFrame:
+    """Convert Ray Dataset to pandas DataFrame if needed."""
+    if hasattr(out, "to_pandas"):
+        return out.to_pandas()
+    return out
+
+
+def _save_stage_outputs(out: pd.DataFrame, output_paths: Dict[str, str]) -> None:
+    """Save DataFrame outputs to disk."""
+    if isinstance(out, pd.DataFrame):
+        for output_name, output_path in output_paths.items():
+            out.to_parquet(output_path, index=False)
+
+
+def _safe_log_table(
+    logger: Optional['WandbLogger'],
+    df: pd.DataFrame,
+    key: str,
+    prefer_cols: Optional[List[str]] = None,
+    panel_group: str = "inspect_results"
+) -> None:
+    """Safely log DataFrame to wandb."""
+    if logger and isinstance(df, pd.DataFrame):
+        try:
+            logger.log_table(df, key, prefer_cols=prefer_cols, panel_group=panel_group)
+        except Exception as e:
+            print(f"Warning: Failed to log {key} to wandb: {e}", flush=True)
+
+
+def _compute_doc_level_verification(
+    out: pd.DataFrame,
+    results_path: Optional[str]
+) -> Optional[pd.DataFrame]:
+    """Compute document-level verification aggregation from row-level results.
+    
+    Returns:
+        DataFrame with columns: article_id, doc_any_component_verified, core_tuple_verified
+        or None if computation fails
+    """
+    import pandas as _pd
+    
+    # Preferred: read docs_verification written by stage implementation (if present)
+    docs_df = None
+    try:
+        if results_path:
+            out_dir = os.path.dirname(results_path)
+            cand_file = os.path.join(out_dir, "docs_verification.parquet")
+            cand_dir = os.path.join(out_dir, "docs_verification")
+            if os.path.exists(cand_file):
+                docs_df = _pd.read_parquet(cand_file)
+            elif os.path.isdir(cand_dir):
+                docs_df = _pd.read_parquet(cand_dir)
+    except Exception:
+        docs_df = None
+    
+    # Fallback: compute simple doc-level view from the results DataFrame
+    if docs_df is None and "article_id" in out.columns:
+        try:
+            def _reduce(df_in: _pd.DataFrame) -> _pd.DataFrame:
+                if df_in.empty:
+                    return _pd.DataFrame([])
+                any_tuple = bool(df_in.get("ver_tuples_any_verified", _pd.Series([], dtype=bool)).any())
+                # core tuple verified: require per-field verified flags
+                core_ok = True
+                for f in ("deployment_domain", "deployment_purpose", "deployment_capability"):
+                    col = f"ver_tuple_{f}_verified"
+                    if col in df_in.columns:
+                        try:
+                            v_any = bool(df_in[col].astype(bool).any())
+                        except Exception:
+                            v_any = False
+                        core_ok = core_ok and v_any
+                    else:
+                        core_ok = False
+                return _pd.DataFrame([
+                    {
+                        "article_id": df_in.get("article_id", _pd.Series([None])).iloc[0],
+                        "doc_any_component_verified": any_tuple,
+                        "core_tuple_verified": bool(core_ok),
+                    }
+                ])
+            docs_df = out.groupby("article_id", dropna=False).apply(_reduce).reset_index(drop=True)
+        except Exception:
+            docs_df = None
+    
+    return docs_df
+
+
+def _inject_prompt_from_file(cfg: DictConfig, prompt_filename: str) -> None:
+    """Inject prompt from YAML file into cfg.prompt."""
+    try:
+        base_dir = os.path.dirname(__file__)
+        prompt_path = os.path.join(base_dir, "conf", "prompt", prompt_filename)
+        if os.path.exists(prompt_path):
+            prompt_cfg = OmegaConf.load(prompt_path)
+            ensure_section(cfg, "prompt")
+            sys_p = prompt_cfg.get("system_prompt")
+            usr_p = prompt_cfg.get("prompt_template")
+            if sys_p:
+                OmegaConf.update(cfg, "prompt.system_prompt", sys_p, merge=True)
+            if usr_p:
+                OmegaConf.update(cfg, "prompt.prompt_template", usr_p, merge=True)
+    except Exception:
+        pass  # Non-critical, stage may have defaults
 
 
 class StageRunner:
@@ -170,18 +443,6 @@ def _load_parquet_dataset(parquet_path: str, columns: Mapping[str, str], debug: 
             except Exception:
                 pass
 
-    legacy_cols = [
-        "name",
-        "public_description",
-        "subscribers",
-        "rule_text",
-        "rule_index",
-        "total_rules_count",
-    ]
-    drop_now = [col for col in legacy_cols if col in df.columns]
-    if drop_now:
-        df = df.drop(columns=drop_now)
-
     if debug and isinstance(sample_n, int) and sample_n > 0:
         try:
             n = min(int(sample_n), int(len(df)))
@@ -199,22 +460,242 @@ def _load_parquet_dataset(parquet_path: str, columns: Mapping[str, str], debug: 
     return df
 
 
+def _parse_cpus_on_node(val: str) -> int:
+    """Parse SLURM_CPUS_ON_NODE value which can be in various formats."""
+    try:
+        v = val.strip()
+        if "(x" in v and v.endswith(")"):
+            import re as _re
+            m = _re.match(r"^(\d+)\(x(\d+)\)$", v)
+            if m:
+                return max(1, int(m.group(1)) * int(m.group(2)))
+        if "," in v:
+            acc = 0
+            for p in v.split(","):
+                acc += int(p)
+            return max(1, acc)
+        return max(1, int(v))
+    except Exception:
+        return -1
+
+
+def _ensure_ray_init_with_cpu_limits(cfg: DictConfig) -> None:
+    """Initialize Ray with SLURM-aware CPU limits for orchestrator use."""
+    if not _RAY_AVAILABLE or ray.is_initialized():
+        return
+    
+    # Detect SLURM CPU allocation
+    cpus_alloc = None
+    try:
+        cpt = os.environ.get("SLURM_CPUS_PER_TASK")
+        if cpt is not None and str(cpt).strip() != "":
+            cpus_alloc = int(cpt)
+        else:
+            con = os.environ.get("SLURM_CPUS_ON_NODE")
+            if con is not None and str(con).strip() != "":
+                cpus_alloc = _parse_cpus_on_node(con)
+    except Exception:
+        cpus_alloc = None
+    
+    # Get memory configuration
+    try:
+        job_mem_gb = int(getattr(cfg.runtime, "job_memory_gb", 64) or 64)
+    except Exception:
+        job_mem_gb = 64
+    
+    try:
+        obj_store_bytes = int(max(1, job_mem_gb) * (1024 ** 3) * 0.90)
+    except Exception:
+        obj_store_bytes = int(64 * (1024 ** 3) * 0.90)
+    
+    namespace = os.environ.get("RAY_NAMESPACE") or os.environ.get("WANDB_GROUP") or "uair"
+    
+    # Try full initialization, fallback to basic if that fails
+    try:
+        init_kwargs = {"log_to_driver": True, "object_store_memory": obj_store_bytes, "namespace": str(namespace)}
+        if cpus_alloc is not None and int(cpus_alloc) > 0:
+            init_kwargs["num_cpus"] = int(cpus_alloc)
+        ray.init(**init_kwargs)
+    except Exception:
+        # Fallback: basic initialization
+        init_kwargs = {"log_to_driver": True}
+        if cpus_alloc is not None and int(cpus_alloc) > 0:
+            init_kwargs["num_cpus"] = int(cpus_alloc)
+        ray.init(**init_kwargs)
+    
+    # Note: Ray Data CPU limits will be set in _prepare_streaming_dataset with proper parallelism
+    # Don't override here to allow for higher concurrency than raw CPU count
+
+
+def _log_parquet_metadata(dataset_path: str) -> tuple[Optional[int], Optional[int], Optional[float]]:
+    """Log parquet metadata for debugging. Returns metadata tuple for compatibility."""
+    try:
+        import pyarrow.parquet as pq
+        pf = pq.ParquetFile(dataset_path)
+        metadata = pf.metadata
+        num_row_groups = metadata.num_row_groups
+        
+        row_group_sizes = []
+        for i in range(num_row_groups):
+            rg = metadata.row_group(i)
+            total_bytes = rg.total_byte_size
+            row_group_sizes.append(total_bytes)
+        
+        if not row_group_sizes:
+            return None, None, None
+        
+        max_size = max(row_group_sizes)
+        avg_size = sum(row_group_sizes) / len(row_group_sizes)
+        max_rg_size_mb = max_size / (1024 ** 2)
+        avg_rg_size_mb = avg_size / (1024 ** 2)
+        
+        print(f"[_prepare_streaming_dataset] Parquet metadata: {num_row_groups} row groups, "
+              f"max {max_rg_size_mb:.1f} MB, avg {avg_rg_size_mb:.1f} MB per row group", flush=True)
+        
+        return num_row_groups, max_size, avg_size
+    except Exception:
+        return None, None, None
+
+
+def _calculate_target_blocks(
+    num_row_groups: Optional[int],
+    max_rg_size_bytes: Optional[int],
+    size_bytes: Optional[int],
+    cfg: DictConfig
+) -> int:
+    """Calculate target number of blocks for repartitioning based on file size and row group structure."""
+    target_block_size_bytes = 64 * 1024 * 1024  # 64MB decompressed target (reduced from 128MB)
+    
+    # If we have row group metadata, use it for better estimation
+    if num_row_groups is not None and max_rg_size_bytes is not None:
+        max_rg_size_mb = max_rg_size_bytes / (1024 ** 2)
+        
+        # If row groups are too large (>128MB compressed), split aggressively
+        # Reduced threshold from 256MB to 128MB for more aggressive splitting
+        if max_rg_size_mb > 128:
+            # Estimate decompressed size (conservative: assume 3x expansion)
+            estimated_decompressed_mb = max_rg_size_mb * 3
+            # Target: split each large row group into multiple blocks (64MB target)
+            blocks_per_row_group = max(12, int(estimated_decompressed_mb / 64))  # More blocks per row group
+            target_blocks = max(150, num_row_groups * blocks_per_row_group)  # Increased minimum
+            target_blocks = min(target_blocks, 600)  # Increased cap to 600 blocks
+            print(f"[_prepare_streaming_dataset] Large row groups detected. Splitting into {target_blocks} blocks "
+                  f"({blocks_per_row_group} blocks per row group)", flush=True)
+            return target_blocks
+    
+    # Standard calculation based on file size
+    # Use smaller target block size (64MB instead of 128MB) for more aggressive splitting
+    target_block_size_bytes = 64 * 1024 * 1024  # 64MB decompressed target
+    if size_bytes and size_bytes > 0:
+        size_gb = size_bytes / float(1024 ** 3)
+        estimated_decompressed_bytes = size_bytes * 3  # Assume 3x expansion
+        target_blocks = max(100, int(estimated_decompressed_bytes / target_block_size_bytes))
+        target_blocks = min(max(100, target_blocks), 300)  # Increased max to 300 for more blocks
+        estimated_block_size_mb = estimated_decompressed_bytes / target_blocks / (1024**2)
+        print(f"[_prepare_streaming_dataset] Dataset: {size_gb:.2f} GB compressed, estimated {estimated_decompressed_bytes/(1024**3):.2f} GB decompressed, targeting {target_blocks} blocks (~{estimated_block_size_mb:.1f} MB per block)", flush=True)
+        return target_blocks
+    
+    # Fallback: use CPU-based defaults
+    try:
+        cpus_alloc = None
+        cpt = os.environ.get("SLURM_CPUS_PER_TASK")
+        if cpt is not None and str(cpt).strip() != "":
+            cpus_alloc = int(cpt)
+        else:
+            con = os.environ.get("SLURM_CPUS_ON_NODE")
+            if con is not None and str(con).strip() != "":
+                cpus_alloc = _parse_cpus_on_node(con)
+        target_blocks = max(100, (cpus_alloc if cpus_alloc and cpus_alloc > 0 else 8) * 15)
+        return min(target_blocks, 200)
+    except Exception:
+        return 100  # Safe default
+
+
 def _prepare_streaming_dataset(dataset_path: str, columns: Mapping[str, str], cfg: DictConfig, stage: str) -> tuple[Optional[Any], bool]:
     if not _RAY_AVAILABLE:
         return None, False
-    streaming_allowed = stage in {"classify", "taxonomy", "verification"}
-    if not streaming_allowed:
+    if stage not in _STREAMING_COMPATIBLE_STAGES:
         return None, False
     try:
         if not os.path.isabs(dataset_path):
             dataset_path = os.path.abspath(dataset_path)
+        # Ensure Ray is initialized with CPU limits BEFORE reading parquet
+        _ensure_ray_init_with_cpu_limits(cfg)
         if not ray.is_initialized():
+            # Fallback initialization if the above didn't work
             namespace = os.environ.get("RAY_NAMESPACE") or os.environ.get("WANDB_GROUP") or "uair"
             try:
                 ray.init(log_to_driver=True, namespace=str(namespace))
             except Exception:
                 ray.init(log_to_driver=True)
+        
+        # Configure Ray Data to use smaller block sizes and explicit memory limits
+        # This prevents creating huge 13+GB blocks that cause OOM issues
+        try:
+            ctx = ray.data.DataContext.get_current()
+            # Set VERY conservative block sizes to keep memory bounded (1MB min, 64MB max)
+            # Reduced from 128MB to 64MB to be even more aggressive about splitting
+            ctx.target_min_block_size = 1 * 1024 * 1024  # 1MB
+            ctx.target_max_block_size = 64 * 1024 * 1024  # 64MB (reduced from 128MB)
+            ctx.execution_options.verbose_progress = False
+            
+            # Set explicit memory limits for Ray Data tasks
+            # This is critical - Ray needs to know how much memory each task needs
+            try:
+                # Limit concurrent tasks to reduce peak memory usage
+                # Use 1/4 of available CPUs or 4, whichever is smaller
+                cpus_alloc = None
+                try:
+                    cpt = os.environ.get("SLURM_CPUS_PER_TASK")
+                    if cpt is not None and str(cpt).strip() != "":
+                        cpus_alloc = int(cpt)
+                    else:
+                        con = os.environ.get("SLURM_CPUS_ON_NODE")
+                        if con is not None and str(con).strip() != "":
+                            cpus_alloc = _parse_cpus_on_node(con)
+                except Exception:
+                    cpus_alloc = None
+                
+                # Limit parallelism to reduce concurrent memory usage
+                # Each task needs ~5GB (one per row group), so limit concurrent tasks
+                # Use up to 16 concurrent tasks for optimal throughput
+                # Allow more tasks than CPUs since they can be I/O bound
+                if cpus_alloc is not None and cpus_alloc > 0:
+                    max_concurrent_tasks = min(cpus_alloc * 2, 16)  # Allow 2x CPUs up to 16
+                else:
+                    max_concurrent_tasks = 16  # Default to 16 if CPU count unknown
+                
+                # Set memory per task to 5GB (one task per row group)
+                # This tells Ray to allocate 5GB memory per task
+                ctx.execution_options.resource_limits = ctx.execution_options.resource_limits.copy(
+                    cpu=max_concurrent_tasks,
+                    memory=5 * 1024 * 1024 * 1024  # 5GB per task
+                )
+                
+                print(f"[_prepare_streaming_dataset] Configured Ray Data: max_concurrent_tasks={max_concurrent_tasks}, memory_per_task=5GB", flush=True)
+            except Exception as e:
+                print(f"[_prepare_streaming_dataset] Warning: Failed to set Ray Data memory limits: {e}", flush=True)
+            
+            # Enable dynamic block splitting - Ray will automatically split blocks that exceed max size
+            try:
+                import ray.data.context as ray_data_ctx
+                # Set factor for dynamic block splitting (default is 1.5)
+                # Lower values = more aggressive splitting
+                ray_data_ctx.MAX_SAFE_BLOCK_SIZE_FACTOR = 1.1  # Split blocks that exceed 1.1x max size (more aggressive)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        
+        # Log parquet metadata for debugging
+        num_row_groups, max_rg_size_bytes, avg_rg_size_bytes = _log_parquet_metadata(dataset_path)
+        
+        # Read parquet file(s) - Ray creates one block per row group
+        # With proper row grouping (small row groups from us_agg.py), this creates many manageable blocks
+        # No repartitioning needed - rely on the natural partitioning from row groups
+        print(f"[_prepare_streaming_dataset] Reading parquet with {num_row_groups or 'unknown'} row groups (no repartitioning)", flush=True)
         ds = ray.data.read_parquet(dataset_path)
+        
         col_map = {
             columns.get("article_text", "article_text"): "article_text",
             columns.get("article_path", "article_path"): "article_path",
@@ -231,6 +712,7 @@ def _prepare_streaming_dataset(dataset_path: str, columns: Mapping[str, str], cf
             return out
 
         try:
+            # Note: Memory limits are set via DataContext.execution_options.resource_limits above
             ds = ds.map(_ensure_canon)
         except Exception:
             pass
@@ -246,15 +728,75 @@ def _prepare_streaming_dataset(dataset_path: str, columns: Mapping[str, str], cf
         return None, False
 
 
+def _estimate_dataset_size_bytes(path: str) -> Optional[int]:
+    if not path:
+        return None
+    try:
+        if os.path.isfile(path):
+            return os.path.getsize(path)
+        if os.path.isdir(path):
+            total = 0
+            for root, _, files in os.walk(path):
+                for name in files:
+                    try:
+                        total += os.path.getsize(os.path.join(root, name))
+                    except OSError:
+                        continue
+            return total
+    except OSError:
+        return None
+    return None
+
+
 def prepare_stage_input(cfg: DictConfig, dataset_path: str, stage: str) -> tuple[Optional[pd.DataFrame], Optional[Any], bool]:
     debug = bool(getattr(cfg.runtime, "debug", False))
     sample_n = getattr(cfg.runtime, "sample_n", None)
     columns = dict(getattr(cfg.data, "columns", {})) if getattr(cfg, "data", None) else {}
-    streaming_enabled = bool(getattr(cfg.runtime, "streaming_io", False))
+    runtime_cfg = getattr(cfg, "runtime", None)
+
+    if dataset_path and not os.path.isabs(dataset_path):
+        dataset_path = os.path.abspath(dataset_path)
+
+    streaming_enabled = bool(getattr(runtime_cfg, "streaming_io", False)) if runtime_cfg is not None else False
+    auto_stream_attempted = False
+
+    if stage in _STREAMING_COMPATIBLE_STAGES and not streaming_enabled:
+        auto_streaming_enabled = True if runtime_cfg is None else bool(getattr(runtime_cfg, "auto_streaming_io", True))
+        raw_threshold = 1.0 if runtime_cfg is None else getattr(runtime_cfg, "auto_streaming_min_file_gb", 1.0)
+        threshold_gb: Optional[float]
+        try:
+            threshold_candidate = float(raw_threshold)
+            threshold_gb = threshold_candidate if threshold_candidate > 0 else None
+        except Exception:
+            threshold_gb = None
+
+        if auto_streaming_enabled and threshold_gb is not None:
+            size_bytes = _estimate_dataset_size_bytes(dataset_path)
+            if size_bytes is not None:
+                size_gb = size_bytes / float(1024 ** 3)
+                if size_gb >= threshold_gb:
+                    streaming_enabled = True
+                    auto_stream_attempted = True
+                    print(
+                        f"[prepare_stage_input] Auto-enabled streaming IO for stage '{stage}' on dataset '{dataset_path}' (size {size_gb:.2f} GB >= threshold {threshold_gb:.2f} GB)",
+                        flush=True,
+                    )
+            else:
+                print(
+                    f"[prepare_stage_input] Unable to determine dataset size for '{dataset_path}'; continuing without auto streaming",
+                    flush=True,
+                )
+
     ds = None
     use_streaming = False
     if streaming_enabled:
         ds, use_streaming = _prepare_streaming_dataset(dataset_path, columns, cfg, stage)
+        if auto_stream_attempted and not use_streaming:
+            print(
+                f"[prepare_stage_input] Streaming IO requested for stage '{stage}' but Ray streaming is unavailable; falling back to pandas load",
+                flush=True,
+            )
+
     df = None
     if not use_streaming:
         df = _load_parquet_dataset(dataset_path, columns, debug=debug, sample_n=sample_n)
@@ -291,11 +833,10 @@ class ClassificationRunner(StageRunner):
             pass
         df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
         in_obj = ds if use_streaming and ds is not None else df
-        out = run_classification_stage(in_obj, cfg)
+        # Relevance-only implementation (isolated from EU/RB behavior)
+        out = run_classification_relevance(in_obj, cfg)
         
-        # Convert Ray Dataset to pandas if needed
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
+        out = _convert_to_pandas_if_needed(out)
         
         # Calculate row count
         row_count = None
@@ -309,7 +850,7 @@ class ClassificationRunner(StageRunner):
             except Exception:
                 pass
         
-        # Save outputs to disk
+        # Save outputs to disk (ClassificationRunner has custom output logic)
         if isinstance(out, pd.DataFrame):
             # Scrub any stray too_vague_to_process for base relevance stage
             try:
@@ -323,7 +864,6 @@ class ClassificationRunner(StageRunner):
             # Save "all" output (all classified articles)
             if "all" in context.output_paths:
                 out.to_parquet(context.output_paths["all"], index=False)
-            
             # Save "relevant" output (only relevant articles)
             if "relevant" in context.output_paths and "is_relevant" in out.columns:
                 relevant_df = out[out["is_relevant"] == True].copy()
@@ -364,7 +904,7 @@ class ClassificationRunner(StageRunner):
                     ]
                 # Filter to only columns that exist
                 prefer_cols = [c for c in prefer_cols if c in out.columns]
-                context.logger.log_table(out, "classify/results", prefer_cols=prefer_cols, panel_group="inspect_results")
+                _safe_log_table(context.logger, out, "classify/results", prefer_cols=prefer_cols, panel_group="inspect_results")
                 
                 # Log keyword filtering statistics
                 if "relevant_keyword" in out.columns:
@@ -440,22 +980,12 @@ class TaxonomyRunner(StageRunner):
         in_obj = ds if use_streaming and ds is not None else df
         out = run_taxonomy_stage(in_obj, cfg)
         
-        # Convert to pandas if needed
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
-        
-        # Save outputs to disk
-        if isinstance(out, pd.DataFrame):
-            for output_name, output_path in context.output_paths.items():
-                out.to_parquet(output_path, index=False)
+        out = _convert_to_pandas_if_needed(out)
+        _save_stage_outputs(out, context.output_paths)
         
         # Log results table to wandb (in inspect_results panel group)
-        if isinstance(out, pd.DataFrame) and context.logger:
-            try:
-                prefer_cols = ["article_id", "chunk_id", "taxonomy_json", "chunk_text", "article_path"]
-                context.logger.log_table(out, "taxonomy/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-            except Exception as e:
-                print(f"Warning: Failed to log taxonomy results table to wandb: {e}", flush=True)
+        prefer_cols = ["article_id", "chunk_id", "taxonomy_json", "chunk_text", "article_path"]
+        _safe_log_table(context.logger, out, "taxonomy/results", prefer_cols=prefer_cols, panel_group="inspect_results")
         
         metadata: Dict[str, Any] = {
             "rows": len(out) if isinstance(out, pd.DataFrame) else None,
@@ -481,22 +1011,12 @@ class DecomposeRunner(StageRunner):
         in_obj = ds if use_streaming and ds is not None else df
         out = run_decomposition_stage(in_obj, cfg)
         
-        # Convert to pandas if needed
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
-        
-        # Save outputs to disk
-        if isinstance(out, pd.DataFrame):
-            for output_name, output_path in context.output_paths.items():
-                out.to_parquet(output_path, index=False)
+        out = _convert_to_pandas_if_needed(out)
+        _save_stage_outputs(out, context.output_paths)
         
         # Log results table to wandb (in inspect_results panel group)
-        if isinstance(out, pd.DataFrame) and context.logger:
-            try:
-                prefer_cols = ["article_id", "chunk_id", "chunk_text", "article_path"]
-                context.logger.log_table(out, "decompose/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-            except Exception as e:
-                print(f"Warning: Failed to log decompose results table to wandb: {e}", flush=True)
+        prefer_cols = ["article_id", "chunk_id", "chunk_text", "article_path"]
+        _safe_log_table(context.logger, out, "decompose/results", prefer_cols=prefer_cols, panel_group="inspect_results")
         
         metadata: Dict[str, Any] = {
             "rows": len(out) if isinstance(out, pd.DataFrame) else None,
@@ -522,22 +1042,12 @@ class DecomposeNBLRunner(StageRunner):
         in_obj = ds if use_streaming and ds is not None else df
         out = run_decomposition_stage_nbl(in_obj, cfg)
         
-        # Convert to pandas if needed
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
-        
-        # Save outputs to disk
-        if isinstance(out, pd.DataFrame):
-            for output_name, output_path in context.output_paths.items():
-                out.to_parquet(output_path, index=False)
+        out = _convert_to_pandas_if_needed(out)
+        _save_stage_outputs(out, context.output_paths)
         
         # Log results table to wandb (in inspect_results panel group)
-        if isinstance(out, pd.DataFrame) and context.logger:
-            try:
-                prefer_cols = ["article_id", "chunk_id", "chunk_text", "article_path"]
-                context.logger.log_table(out, "decompose_nbl/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-            except Exception as e:
-                print(f"Warning: Failed to log decompose_nbl results table to wandb: {e}", flush=True)
+        prefer_cols = ["article_id", "chunk_id", "chunk_text", "article_path"]
+        _safe_log_table(context.logger, out, "decompose_nbl/results", prefer_cols=prefer_cols, panel_group="inspect_results")
         
         metadata: Dict[str, Any] = {
             "rows": len(out) if isinstance(out, pd.DataFrame) else None,
@@ -572,50 +1082,19 @@ class TopicRunner(StageRunner):
             raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
         resolved_path = self._resolve_topic_path(dataset_path)
         
-        # Debug: Check what's being loaded
-        print(f"[TopicRunner] Input path: {dataset_path}", flush=True)
-        print(f"[TopicRunner] Resolved path: {resolved_path}", flush=True)
-        if os.path.exists(resolved_path):
-            import pandas as pd
-            try:
-                df_check = pd.read_parquet(resolved_path)
-                print(f"[TopicRunner] File has {len(df_check)} rows", flush=True)
-                print(f"[TopicRunner] Columns: {list(df_check.columns)}", flush=True)
-            except Exception as e:
-                print(f"[TopicRunner] Could not read file for debugging: {e}", flush=True)
-        else:
-            print(f"[TopicRunner] WARNING: File does not exist!", flush=True)
-        
         cfg = context.cfg
         OmegaConf.update(cfg, "data.parquet_path", resolved_path, merge=True)
         df, ds, use_streaming = prepare_stage_input(cfg, resolved_path, self.stage_name)
         in_obj = ds if use_streaming and ds is not None else df
         
-        # Debug: Check what prepare_stage_input returned
-        if df is not None:
-            print(f"[TopicRunner] DataFrame loaded with {len(df)} rows", flush=True)
-        elif ds is not None:
-            print(f"[TopicRunner] Ray Dataset loaded (streaming)", flush=True)
-        
         out = run_topic_stage(in_obj, cfg, logger=context.logger)
-        
-        # Convert to pandas if needed
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
-        
-        # Save outputs to disk
-        if isinstance(out, pd.DataFrame):
-            for output_name, output_path in context.output_paths.items():
-                out.to_parquet(output_path, index=False)
+        out = _convert_to_pandas_if_needed(out)
+        _save_stage_outputs(out, context.output_paths)
         
         # Log results table and plots to wandb
         if isinstance(out, pd.DataFrame) and context.logger:
-            try:
-                # Log results table (in inspect_results panel group)
-                prefer_cols = ["unit_id", "topic_id", "topic_prob", "topic_top_terms", "article_keywords", "plot_x", "plot_y"]
-                context.logger.log_table(out, "topic/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-            except Exception as e:
-                print(f"Warning: Failed to log topic results table to wandb: {e}", flush=True)
+            prefer_cols = ["unit_id", "topic_id", "topic_prob", "topic_top_terms", "article_keywords", "plot_x", "plot_y"]
+            _safe_log_table(context.logger, out, "topic/results", prefer_cols=prefer_cols, panel_group="inspect_results")
             
             try:
                 # Log plotly visualization
@@ -648,22 +1127,12 @@ class VerificationRunner(StageRunner):
         in_obj = ds if use_streaming and ds is not None else df
         out = run_verification_stage(in_obj, cfg)
         
-        # Convert to pandas if needed
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
-        
-        # Save outputs to disk
-        if isinstance(out, pd.DataFrame):
-            for output_name, output_path in context.output_paths.items():
-                out.to_parquet(output_path, index=False)
+        out = _convert_to_pandas_if_needed(out)
+        _save_stage_outputs(out, context.output_paths)
         
         # Log results table to wandb (in inspect_results panel group)
-        if isinstance(out, pd.DataFrame) and context.logger:
-            try:
-                prefer_cols = ["article_id", "chunk_id", "chunk_text", "verification_result", "article_path"]
-                context.logger.log_table(out, "verification/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-            except Exception as e:
-                print(f"Warning: Failed to log verification results table to wandb: {e}", flush=True)
+        prefer_cols = ["article_id", "chunk_id", "chunk_text", "verification_result", "article_path"]
+        _safe_log_table(context.logger, out, "verification/results", prefer_cols=prefer_cols, panel_group="inspect_results")
         
         metadata: Dict[str, Any] = {
             "rows": len(out) if isinstance(out, pd.DataFrame) else None,
@@ -689,65 +1158,20 @@ class VerificationNBLRunner(StageRunner):
         in_obj = ds if use_streaming and ds is not None else df
         out = run_verification_stage_nbl(in_obj, cfg)
         
-        # Convert to pandas if needed
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
+        out = _convert_to_pandas_if_needed(out)
         
         # Prepare optional doc-level aggregation and merge core flags into row-level output
         docs_df = None
         if isinstance(out, pd.DataFrame):
-            try:
-                import pandas as _pd  # local import to avoid top-level dependency coupling
-                # Preferred: read docs_verification written by stage implementation (if present)
+            results_path = context.output_paths.get("results")
+            docs_df = _compute_doc_level_verification(out, results_path)
+            
+            # Merge core flags into row-level frame for downstream gating
+            if docs_df is not None and "article_id" in out.columns and "article_id" in docs_df.columns:
                 try:
-                    results_path = context.output_paths.get("results")
-                    if results_path:
-                        out_dir = os.path.dirname(results_path)
-                        cand_file = os.path.join(out_dir, "docs_verification.parquet")
-                        cand_dir = os.path.join(out_dir, "docs_verification")
-                        if os.path.exists(cand_file):
-                            docs_df = _pd.read_parquet(cand_file)
-                        elif os.path.isdir(cand_dir):
-                            docs_df = _pd.read_parquet(cand_dir)
+                    out = out.merge(docs_df[["article_id", "core_tuple_verified"]], on="article_id", how="left")
                 except Exception:
-                    docs_df = None
-                # Fallback: compute simple doc-level view from the results DataFrame
-                if docs_df is None and "article_id" in out.columns:
-                    try:
-                        def _reduce(df_in: _pd.DataFrame) -> _pd.DataFrame:
-                            if df_in.empty:
-                                return _pd.DataFrame([])
-                            any_tuple = bool(df_in.get("ver_tuples_any_verified", _pd.Series([], dtype=bool)).any())
-                            # core tuple verified: require per-field verified flags
-                            core_ok = True
-                            for f in ("deployment_domain", "deployment_purpose", "deployment_capability"):
-                                col = f"ver_tuple_{f}_verified"
-                                if col in df_in.columns:
-                                    try:
-                                        v_any = bool(df_in[col].astype(bool).any())
-                                    except Exception:
-                                        v_any = False
-                                    core_ok = core_ok and v_any
-                                else:
-                                    core_ok = False
-                            return _pd.DataFrame([
-                                {
-                                    "article_id": df_in.get("article_id", _pd.Series([None])).iloc[0],
-                                    "doc_any_component_verified": any_tuple,
-                                    "core_tuple_verified": bool(core_ok),
-                                }
-                            ])
-                        docs_df = out.groupby("article_id", dropna=False).apply(_reduce).reset_index(drop=True)
-                    except Exception:
-                        docs_df = None
-                # Merge core flags into row-level frame for downstream gating
-                if docs_df is not None and "article_id" in out.columns and "article_id" in docs_df.columns:
-                    try:
-                        out = out.merge(docs_df[["article_id", "core_tuple_verified"]], on="article_id", how="left")
-                    except Exception:
-                        pass
-            except Exception:
-                docs_df = None
+                    pass
 
         # Save outputs to disk
         if isinstance(out, pd.DataFrame):
@@ -768,25 +1192,18 @@ class VerificationNBLRunner(StageRunner):
                     out.to_parquet(output_path, index=False)
         
         # Log verify_nbl results table with all columns (logger handles filtering of heavy/internal)
-        if isinstance(out, pd.DataFrame) and context.logger:
+        _safe_log_table(context.logger, out, "verify_nbl/results", prefer_cols=None, panel_group="inspect_results")
+        
+        # Log document-level aggregation in inspect_results; build from memory if needed
+        if docs_df is None and isinstance(out, pd.DataFrame) and "article_id" in out.columns:
             try:
-                context.logger.log_table(out, "verify_nbl/results", prefer_cols=None, panel_group="inspect_results")
-            except Exception as e:
-                print(f"Warning: Failed to log verify_nbl results table to wandb: {e}", flush=True)
-            # Log document-level aggregation in inspect_results; build from memory if needed
-            try:
-                # docs_df may have been computed above; if not, try to synthesize a minimal one
-                if 'docs_df' not in locals() or docs_df is None:
-                    try:
-                        import pandas as _pd
-                        if "article_id" in out.columns:
-                            docs_df = out[["article_id", "core_tuple_verified"]].drop_duplicates()
-                    except Exception:
-                        docs_df = None
-                if docs_df is not None and len(docs_df):
-                    context.logger.log_table(docs_df, "verify_nbl/docs", prefer_cols=None, panel_group="inspect_results")
-            except Exception as e:
-                print(f"Warning: verify_nbl docs logging encountered an error: {e}", flush=True)
+                import pandas as _pd
+                docs_df = out[["article_id", "core_tuple_verified"]].drop_duplicates()
+            except Exception:
+                docs_df = None
+        
+        if docs_df is not None and len(docs_df):
+            _safe_log_table(context.logger, docs_df, "verify_nbl/docs", prefer_cols=None, panel_group="inspect_results")
 
             # Plot run-level verification rates by input and doc-level
             try:
@@ -949,22 +1366,12 @@ class SynthesisRunner(StageRunner):
         # Pass both to synthesis stage
         out = run_synthesis_stage(df_clusters, cfg, logger=context.logger, articles_df=df_articles)
         
-        # Convert to pandas if needed
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
-        
-        # Save outputs to disk
-        if isinstance(out, pd.DataFrame):
-            for output_name, output_path in context.output_paths.items():
-                out.to_parquet(output_path, index=False)
+        out = _convert_to_pandas_if_needed(out)
+        _save_stage_outputs(out, context.output_paths)
         
         # Log results table to wandb (in inspect_results panel group)
-        if isinstance(out, pd.DataFrame) and context.logger:
-            try:
-                prefer_cols = ["cluster_id", "num_articles", "primary_risk_type", "risk_confidence", "synthesis_summary"]
-                context.logger.log_table(out, "synthesis/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-            except Exception as e:
-                print(f"Warning: Failed to log synthesis results table to wandb: {e}", flush=True)
+        prefer_cols = ["cluster_id", "num_articles", "primary_risk_type", "risk_confidence", "synthesis_summary"]
+        _safe_log_table(context.logger, out, "synthesis/results", prefer_cols=prefer_cols, panel_group="inspect_results")
         
         metadata: Dict[str, Any] = {
             "rows": len(out) if isinstance(out, pd.DataFrame) else None,
@@ -986,25 +1393,7 @@ class ClassificationEUActRunner(StageRunner):
             raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
         cfg = context.cfg
         OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
-        # Inject EU AI Act prompt into cfg.prompt for this stage only
-        try:
-            base_dir = os.path.dirname(__file__)
-            prompt_path = os.path.join(base_dir, "conf", "prompt", "eu_ai_act_classification.yaml")
-            if os.path.exists(prompt_path):
-                eu_prompt_cfg = OmegaConf.load(prompt_path)
-                try:
-                    sys_p = eu_prompt_cfg.get("system_prompt")
-                    usr_p = eu_prompt_cfg.get("prompt_template")
-                except Exception:
-                    sys_p = None
-                    usr_p = None
-                ensure_section(cfg, "prompt")
-                if sys_p:
-                    OmegaConf.update(cfg, "prompt.system_prompt", sys_p, merge=True)
-                if usr_p:
-                    OmegaConf.update(cfg, "prompt.prompt_template", usr_p, merge=True)
-        except Exception:
-            pass
+        # Note: Prompt injection is handled internally by run_classification_eu_act
         # Always load as pandas for gating; streaming not supported for this custom stage
         df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
         in_df = df if df is not None else (ds.to_pandas() if hasattr(ds, "to_pandas") else None)
@@ -1032,45 +1421,41 @@ class ClassificationEUActRunner(StageRunner):
             pass
 
         # Run classification with EU AI Act profile (assumed set via overrides)
-        out = run_classification_stage(gated_df, cfg)
+        # EU-only classification (prompt injected inside wrapper)
+        out = run_classification_eu_act(gated_df, cfg)
 
-        # Convert Ray Dataset to pandas if needed
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
-
+        out = _convert_to_pandas_if_needed(out)
+        
         # Save outputs to disk
-        if isinstance(out, pd.DataFrame):
-            if "results" in context.output_paths:
-                out.to_parquet(context.output_paths["results"], index=False)
+        if isinstance(out, pd.DataFrame) and "results" in context.output_paths:
+            out.to_parquet(context.output_paths["results"], index=False)
 
         # Log results
-        if isinstance(out, pd.DataFrame) and context.logger:
+        prefer_cols = [
+            c for c in [
+                "article_id",
+                "eu_ai_label",
+                "eu_ai_desc",
+                "eu_ai_relevant_text",
+                "eu_ai_reason",
+                "classification_mode",
+                "article_path",
+                "country",
+                "year",
+            ] if c in out.columns
+        ]
+        _safe_log_table(context.logger, out, "classify_eu_act/results", prefer_cols=prefer_cols, panel_group="inspect_results")
+        
+        # Log simple counts
+        if context.logger:
             try:
-                prefer_cols = [
-                    c for c in [
-                        "article_id",
-                        "eu_ai_label",
-                        "eu_ai_desc",
-                        "eu_ai_relevant_text",
-                        "eu_ai_reason",
-                        "classification_mode",
-                        "article_path",
-                        "country",
-                        "year",
-                    ] if c in out.columns
-                ]
-                context.logger.log_table(out, "classify_eu_act/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-                # Simple counts
-                try:
-                    context.logger.log_metrics({
-                        "classify_eu_act/input_rows": int(total_rows or 0),
-                        "classify_eu_act/gated_rows": int(len(gated_df)),
-                        "classify_eu_act/output_rows": int(len(out)),
-                    })
-                except Exception:
-                    pass
-            except Exception as e:
-                print(f"Warning: Failed to log classify_eu_act results to wandb: {e}", flush=True)
+                context.logger.log_metrics({
+                    "classify_eu_act/input_rows": int(total_rows or 0),
+                    "classify_eu_act/gated_rows": int(len(gated_df)),
+                    "classify_eu_act/output_rows": int(len(out)),
+                })
+            except Exception:
+                pass
 
         metadata: Dict[str, Any] = {
             "rows": len(out) if isinstance(out, pd.DataFrame) else None,
@@ -1098,62 +1483,48 @@ class ClassificationRisksBenefitsRunner(StageRunner):
             OmegaConf.update(cfg, "runtime.use_llm_classify", True, merge=True)
         except Exception:
             pass
-        # Inject risks & benefits prompt into cfg.prompt for this stage only
-        try:
-            base_dir = os.path.dirname(__file__)
-            prompt_path = os.path.join(base_dir, "conf", "prompt", "classify_risks_and_benefits.yaml")
-            if os.path.exists(prompt_path):
-                rb_prompt_cfg = OmegaConf.load(prompt_path)
-                try:
-                    sys_p = rb_prompt_cfg.get("system_prompt")
-                    usr_p = rb_prompt_cfg.get("prompt_template")
-                except Exception:
-                    sys_p = None
-                    usr_p = None
-                ensure_section(cfg, "prompt")
-                if sys_p:
-                    OmegaConf.update(cfg, "prompt.system_prompt", sys_p, merge=True)
-                if usr_p:
-                    OmegaConf.update(cfg, "prompt.prompt_template", usr_p, merge=True)
-        except Exception:
-            pass
+        # Note: Prompt injection is handled internally by run_classification_risks_benefits
         df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
         in_df = df if df is not None else (ds.to_pandas() if hasattr(ds, "to_pandas") else None)
         if in_df is None:
             raise RuntimeError("Failed to load input dataset for classify_risk_and_benefits")
+        # Gate by core_tuple_verified == True to mirror EU AI Act classification requirements
+        try:
+            if "core_tuple_verified" in in_df.columns:
+                mask = in_df["core_tuple_verified"].fillna(False).astype(bool)
+            else:
+                mask = pd.Series([False] * len(in_df))
+            gated_df = in_df[mask].copy()
+        except Exception:
+            gated_df = in_df.iloc[0:0].copy()
+        in_df = gated_df
         # Prefer one row per article to avoid duplicate classifications
         try:
             if "article_id" in in_df.columns and len(in_df):
                 in_df = in_df.sort_values(by=["article_id"]).drop_duplicates(subset=["article_id"], keep="first")
         except Exception:
             pass
-        out = run_classification_stage(in_df, cfg)
+        # Risks & Benefits classification (prompt injected inside wrapper)
+        out = run_classification_risks_benefits(in_df, cfg)
 
-        # Convert Ray Dataset to pandas if needed
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
-
+        out = _convert_to_pandas_if_needed(out)
+        
         # Save outputs to disk
-        if isinstance(out, pd.DataFrame):
-            if "results" in context.output_paths:
-                out.to_parquet(context.output_paths["results"], index=False)
+        if isinstance(out, pd.DataFrame) and "results" in context.output_paths:
+            out.to_parquet(context.output_paths["results"], index=False)
 
         # Log results
-        if isinstance(out, pd.DataFrame) and context.logger:
-            try:
-                prefer_cols = [
-                    c for c in [
-                        "article_id",
-                        "risks_benefits_json",
-                        "classification_mode",
-                        "article_path",
-                        "country",
-                        "year",
-                    ] if c in out.columns
-                ]
-                context.logger.log_table(out, "classify_risk_and_benefits/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-            except Exception as e:
-                print(f"Warning: Failed to log classify_risk_and_benefits results to wandb: {e}", flush=True)
+        prefer_cols = [
+            c for c in [
+                "article_id",
+                "risks_benefits_json",
+                "classification_mode",
+                "article_path",
+                "country",
+                "year",
+            ] if c in out.columns
+        ]
+        _safe_log_table(context.logger, out, "classify_risk_and_benefits/results", prefer_cols=prefer_cols, panel_group="inspect_results")
 
         metadata: Dict[str, Any] = {
             "rows": len(out) if isinstance(out, pd.DataFrame) else None,
@@ -1296,6 +1667,9 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
         wandb_suffix=node_dict.get("wandb_suffix"),
     )
     
+    _sanitize_cuda_visible_devices(reason=f"job:{node.key}")
+    _log_gpu_environment(reason=f"job:{node.key}")
+
     context = StageExecutionContext(
         cfg=cfg,
         node=node,
@@ -1516,6 +1890,8 @@ def run_experiment(cfg: DictConfig) -> None:
                     # Run locally in the current process
                     _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})
                     try:
+                        _sanitize_cuda_visible_devices(reason=f"node:{node.key}")
+                        _log_gpu_environment(reason=f"node:{node.key}")
                         result = runner.run(context)
                     except Exception as exc:
                         _print_status({"node": node.key, "stage": node.stage, "status": "failed", "error": str(exc)})

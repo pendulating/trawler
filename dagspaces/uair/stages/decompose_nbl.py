@@ -241,6 +241,71 @@ def _inline_json_schema_refs(schema: Dict[str, Any]) -> Dict[str, Any]:
         return schema
 
 
+def _parse_cpus_on_node(val: str) -> int:
+    """Parse SLURM_CPUS_ON_NODE value which can be in various formats."""
+    try:
+        v = val.strip()
+        if "(x" in v and v.endswith(")"):
+            import re as _re
+            m = _re.match(r"^(\d+)\(x(\d+)\)$", v)
+            if m:
+                return max(1, int(m.group(1)) * int(m.group(2)))
+        if "," in v:
+            acc = 0
+            for p in v.split(","):
+                acc += int(p)
+            return max(1, acc)
+        return max(1, int(v))
+    except Exception:
+        return -1
+
+
+def _ensure_ray_init(cfg) -> None:
+    """Initialize Ray with SLURM-aware CPU limits."""
+    try:
+        import ray  # type: ignore
+        if not ray.is_initialized():
+            # Detect SLURM CPU allocation
+            cpus_alloc = None
+            try:
+                cpt = os.environ.get("SLURM_CPUS_PER_TASK")
+                if cpt is not None and str(cpt).strip() != "":
+                    cpus_alloc = int(cpt)
+                else:
+                    con = os.environ.get("SLURM_CPUS_ON_NODE")
+                    if con is not None and str(con).strip() != "":
+                        cpus_alloc = _parse_cpus_on_node(con)
+            except Exception:
+                cpus_alloc = None
+            try:
+                job_mem_gb = int(getattr(cfg.runtime, "job_memory_gb", 64) or 64)
+            except Exception:
+                job_mem_gb = 64
+            try:
+                obj_store_bytes = int(max(1, job_mem_gb) * (1024 ** 3) * 0.90)
+            except Exception:
+                obj_store_bytes = int(64 * (1024 ** 3) * 0.90)
+            try:
+                if cpus_alloc is not None and int(cpus_alloc) > 0:
+                    ray.init(log_to_driver=True, object_store_memory=obj_store_bytes, num_cpus=int(cpus_alloc))
+                else:
+                    ray.init(log_to_driver=True, object_store_memory=obj_store_bytes)
+            except Exception:
+                try:
+                    ray.init(log_to_driver=True)
+                except Exception:
+                    pass
+            # Constrain Ray Data CPU limits to SLURM allocation when available
+            try:
+                if cpus_alloc is not None and int(cpus_alloc) > 0:
+                    ctx = ray.data.DataContext.get_current()
+                    ctx.execution_options.resource_limits = ctx.execution_options.resource_limits.copy(cpu=int(cpus_alloc))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _detect_num_gpus() -> int:
     """Detect the number of GPUs allocated to this job.
     
@@ -478,6 +543,9 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
     Uses the longer prompt in prompt/decompose_nbl_prompt.yaml and extracts an
     expanded schema, including deployment space, harms list.
     """
+    # Ensure Ray is initialized with SLURM-aware CPU limits
+    _ensure_ray_init(cfg)
+    
     base_cols = [
         "deployment_domain",
         "deployment_purpose",
@@ -571,6 +639,15 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
     ek.setdefault("max_model_len", 8192)
     ek.setdefault("max_num_seqs", 1)
     ek.setdefault("gpu_memory_utilization", 0.8)
+    tp_env = os.environ.get("UAIR_TENSOR_PARALLEL_SIZE")
+    if "tensor_parallel_size" not in ek and tp_env:
+        try:
+            tp_val = max(1, int(tp_env))
+            ek["tensor_parallel_size"] = tp_val
+            if not os.environ.get("RULE_TUPLES_SILENT"):
+                print(f"Using tensor_parallel_size={tp_val} from UAIR_TENSOR_PARALLEL_SIZE")
+        except Exception:
+            pass
     # Auto-detect tensor_parallel_size from allocated GPUs if not explicitly set
     if "tensor_parallel_size" not in ek:
         try:

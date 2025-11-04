@@ -28,7 +28,7 @@ pipeline:
   
   sources:
     articles:
-      path: ${oc.env:ARTICLES_PATH,${data.parquet_path}}
+      path: /share/pierson/matt/UAIR/data/us/all_articles.parquet
       type: parquet
   
   graph:
@@ -50,7 +50,7 @@ pipeline:
           runtime.sample_n: ${runtime.sample_n}
           runtime.debug: ${runtime.debug}
           runtime.use_llm_classify: ${runtime.use_llm_classify}
-          runtime.job_memory_gb: 48
+          runtime.job_memory_gb: 256
           
           # Model config for 2xGPU setup
           model.engine_kwargs.gpu_memory_utilization: 0.8
@@ -58,7 +58,7 @@ pipeline:
           model.engine_kwargs.max_num_seqs: 8
           model.engine_kwargs.enable_prefix_caching: false
           model.batch_size: 16
-        launcher: g2_slurm_pierson_3x
+        launcher: g2_slurm_pierson
         wandb_suffix: classify
 
       # ============================================================
@@ -75,7 +75,7 @@ pipeline:
         overrides:
           runtime.streaming_io: false
           runtime.debug: ${runtime.debug}
-          runtime.job_memory_gb: 64
+          runtime.job_memory_gb: 256
           runtime.use_llm_decompose: true
           runtime.guided_decoding_decompose: true
           model.engine_kwargs.gpu_memory_utilization: 0.9
@@ -83,7 +83,7 @@ pipeline:
           model.engine_kwargs.max_num_seqs: 4
           model.batch_size: 4
           sampling_params_decompose_nbl.max_tokens: 2048
-        launcher: g2_slurm_pierson_3x
+        launcher: g2_slurm_pierson
         wandb_suffix: decompose_nbl
 
       # ============================================================
@@ -101,7 +101,7 @@ pipeline:
         overrides:
           runtime.streaming_io: ${runtime.streaming_io}
           runtime.debug: ${runtime.debug}
-          runtime.job_memory_gb: 64
+          runtime.job_memory_gb: 256
           verify.method: combo
           verify.top_k: 5
           verify.thresholds: "sim=0.55,ent=0.85,contra=0.05"
@@ -110,7 +110,7 @@ pipeline:
           verify.windowing.enabled: null
           verify.windowing.window_size: 5
           verify.windowing.stride: 2
-        launcher: g2_slurm_pierson_3x
+        launcher: g2_slurm_pierson
         wandb_suffix: verify_nbl
 
       # ============================================================
@@ -127,7 +127,7 @@ pipeline:
         overrides:
           runtime.streaming_io: false
           runtime.debug: ${runtime.debug}
-          runtime.job_memory_gb: 64
+          runtime.job_memory_gb: 256
           runtime.use_llm_classify: true
           runtime.classification_profile: eu_ai_act
           runtime.prefilter_mode: off
@@ -138,7 +138,7 @@ pipeline:
           model.batch_size: 4
           sampling_params_eu_ai_act.max_tokens: 4096
           sampling_params_eu_ai_act.temperature: 0
-        launcher: g2_slurm_pierson_3x
+        launcher: g2_slurm_pierson
         wandb_suffix: eu_act
 
       # ============================================================
@@ -155,7 +155,7 @@ pipeline:
         overrides:
           runtime.streaming_io: false
           runtime.debug: ${runtime.debug}
-          runtime.job_memory_gb: 64
+          runtime.job_memory_gb: 256
           runtime.serialize_nested_json: true
           runtime.use_llm_classify: true
           runtime.classification_profile: risks_and_benefits
@@ -169,7 +169,7 @@ pipeline:
           sampling_params_risks_and_benefits.max_tokens: 4096
           sampling_params_risks_and_benefits.temperature: 0
           runtime.sample_rb_v1: true
-        launcher: g2_slurm_pierson_3x
+        launcher: g2_slurm_pierson
         wandb_suffix: risk_benefits
 
 # ================================================================
