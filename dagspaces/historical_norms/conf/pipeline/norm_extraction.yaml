@@ -1,0 +1,86 @@
+# @package _global_
+# Historical Norms Extraction Pipeline: Gutenberg -> Reasoning -> IG 2.0 Extraction
+#
+# Workflow:
+#   1. Fetch texts from Project Gutenberg based on IDs
+#   2. Perform semantic reasoning on text chunks using Qwen 2.5 72B
+#   3. Extract structured IG 2.0 norms via constrained decoding
+#
+# Usage:
+#   python -m dagspaces.historical_norms.cli -m \
+#     pipeline=norm_extraction \
+#     data.gutenberg_ids=[1342,11,84]
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/norm_extraction
+  allow_partial: false
+  
+  sources:
+    gutenberg_config:
+      # Pride and Prejudice (Gutenberg ID 1342) - full book
+      path: ${oc.env:GUTENBERG_CONFIG,dagspaces/historical_norms/conf/data/pride_and_prejudice.yaml}
+      type: yaml
+
+  graph:
+    nodes:
+      # ============================================================
+      # Stage 1: Fetch and Chunk
+      # ============================================================
+      fetch:
+        stage: fetch_gutenberg
+        depends_on: []
+        inputs: 
+          config: gutenberg_config
+        outputs:
+          dataset: outputs/fetch/chunks.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+        launcher: g2_slurm_cpu
+        wandb_suffix: fetch
+
+      # ============================================================
+      # Stage 2: Normative Reasoning
+      # ============================================================
+      reasoning:
+        stage: norm_reasoning
+        depends_on: [fetch]
+        inputs:
+          dataset: fetch.dataset
+        outputs:
+          dataset: outputs/reasoning/reasoning.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          model.engine_kwargs.tensor_parallel_size: 2
+          model.engine_kwargs.gpu_memory_utilization: 0.9
+          model.batch_size: 8
+        launcher: g2_slurm_pierson_4x
+        wandb_suffix: reasoning
+
+      # ============================================================
+      # Stage 3: IG 2.0 Extraction
+      # ============================================================
+      extraction:
+        stage: norm_extraction
+        depends_on: [reasoning]
+        inputs:
+          dataset: reasoning.dataset
+        outputs:
+          dataset: outputs/extraction/structured_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          model.engine_kwargs.tensor_parallel_size: 2
+          model.engine_kwargs.gpu_memory_utilization: 0.9
+          model.batch_size: 8
+        launcher: g2_slurm_pierson_4x
+        wandb_suffix: extraction

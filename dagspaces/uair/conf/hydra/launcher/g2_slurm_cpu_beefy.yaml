@@ -8,7 +8,7 @@ cpus_per_task: 8
 mem_gb: 64
 partition: pierson
 array_parallelism: 1
-name: UAIR
+name: uair
 additional_parameters:
   gres: "none"
   wckey: ""

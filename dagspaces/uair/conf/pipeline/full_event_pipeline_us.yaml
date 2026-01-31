@@ -28,7 +28,7 @@ pipeline:
   
   sources:
     articles:
-      path: /share/pierson/matt/UAIR/data/us/all_articles.parquet
+      path: /share/pierson/matt/UAIR/data/us/all_articles_extracted.parquet
       type: parquet
   
   graph:
@@ -37,7 +37,7 @@ pipeline:
       # Stage 1: Classification - Filter relevant articles
       # ============================================================
       classify:
-        stage: classify
+        stage: classify_relevance
         depends_on: []
         inputs:
           dataset: articles
@@ -49,7 +49,7 @@ pipeline:
           runtime.streaming_io: false
           runtime.sample_n: ${runtime.sample_n}
           runtime.debug: ${runtime.debug}
-          runtime.use_llm_classify: ${runtime.use_llm_classify}
+          runtime.use_llm_classify: true
           runtime.job_memory_gb: 256
           
           # Model config for 2xGPU setup
@@ -128,8 +128,6 @@ pipeline:
           runtime.streaming_io: false
           runtime.debug: ${runtime.debug}
           runtime.job_memory_gb: 256
-          runtime.use_llm_classify: true
-          runtime.classification_profile: eu_ai_act
           runtime.prefilter_mode: off
           runtime.keyword_buffering: false
           model.engine_kwargs.max_model_len: 16384
@@ -157,8 +155,6 @@ pipeline:
           runtime.debug: ${runtime.debug}
           runtime.job_memory_gb: 256
           runtime.serialize_nested_json: true
-          runtime.use_llm_classify: true
-          runtime.classification_profile: risks_and_benefits
           runtime.prefilter_mode: off
           runtime.keyword_buffering: false
           runtime.skip_merge_filtered: false

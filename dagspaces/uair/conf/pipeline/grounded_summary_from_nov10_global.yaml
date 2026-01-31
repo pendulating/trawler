@@ -1,0 +1,72 @@
+# @package _global_
+# Generate grounded article summaries for the Nov 10 workshop (global slice).
+#
+# Workflow:
+#   1. Load precomputed classify_eu_act results (global articles).
+#   2. Join in tuple decomposition and verification metadata.
+#   3. Run the grounded-summary stage to produce structured briefs.
+#
+# Usage:
+#   python -m dagspaces.uair.run_pipeline \
+#     pipeline=grounded_summary_from_nov10_global \
+#     runtime.output_root=/path/to/output \
+#     model.model_source=meta-llama/Llama-3.1-70B-Instruct \
+#     hydra.run.dir=/path/to/logs
+#   # Optionally override inputs:
+#   #   GLOBAL_CLASSIFY_EU_ACT_PATH=/my/classify.parquet \
+#   #   GLOBAL_DECOMPOSE_NBL_PATH=/my/tuples.parquet \
+#   #   GLOBAL_VERIFY_NBL_PATH=/my/verify.parquet \
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+  - override /model: vllm_qwen3-30b
+  - override /prompt: grounded_summary
+
+runtime:
+  debug: false
+  sample_n: null
+  streaming_io: false
+  job_memory_gb: 24
+
+pipeline:
+  output_root: ${runtime.output_root}
+  allow_partial: false
+
+  sources:
+    classification:
+      path: ${oc.env:GLOBAL_CLASSIFY_EU_ACT_PATH,/share/pierson/matt/UAIR/outputs/for_nov10workshop_global_results/classify_eu_ai_act/classify_eu_ai_act_results.parquet}
+      type: parquet
+    decompose:
+      path: ${oc.env:GLOBAL_DECOMPOSE_NBL_PATH,/share/pierson/matt/UAIR/outputs/for_nov10workshop_global_results/decompose_nbl/tuples.parquet}
+      type: parquet
+    verification:
+      path: ${oc.env:GLOBAL_VERIFY_NBL_PATH,/share/pierson/matt/UAIR/outputs/for_nov10workshop_global_results/verify_nbl/verify_nbl_results.parquet}
+      type: parquet
+
+  graph:
+    nodes:
+      grounded_summary:
+        stage: grounded_summary
+        depends_on: []
+        inputs:
+          classification: classification
+          decompose: decompose
+          verification: verification
+        outputs:
+          summaries: outputs/grounded_summary/grounded_summary.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.streaming_io: ${runtime.streaming_io}
+          runtime.job_memory_gb: ${runtime.job_memory_gb}
+          model.engine_kwargs.max_model_len: 6144
+          model.engine_kwargs.max_num_seqs: 2
+          model.engine_kwargs.gpu_memory_utilization: 0.85
+          model.batch_size: 2
+          model.concurrency: 1
+          sampling_params_grounded_summary.max_tokens: 768
+          sampling_params_grounded_summary.temperature: 0.2
+          sampling_params_grounded_summary.top_p: 0.9
+          sampling_params_grounded_summary.seed: 777
+        launcher: g2_slurm_pierson
+        wandb_suffix: grounded_summary
+

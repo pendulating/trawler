@@ -1,14 +1,102 @@
-from typing import Any, Dict, List
-from dataclasses import MISSING
-import re
-from bisect import bisect_right
-import pandas as pd
-import numpy as np
-import os
-import logging
-import json
-from omegaconf import OmegaConf
+"""
+Classification stage module - DEPRECATED.
 
+This module contains the legacy implementation of the classification stage.
+It is maintained for internal reference only.
+
+DEPRECATION NOTICE:
+    This module is deprecated. Use profile-specific modules instead:
+    - classify_relevance: Relevance classification
+    - classify_eu_act: EU AI Act classification  
+    - classify_risks_benefits: Risks and Benefits classification
+    
+    The legacy run_classification_stage() function will be removed in a future version.
+    Profile-specific modules call run_classification_core() directly.
+    
+    NOTE: _run_classification_stage_impl is kept as an internal reference only.
+    It is not part of the public API and should not be used by external code.
+"""
+
+import warnings
+from typing import Any, Dict, List, Set
+
+# Import shared utilities for backward compatibility
+from .classify_shared import (
+    BASE_INPUT_COLUMNS,
+    EU_INPUT_KEYS,
+    EU_OUTPUT_COLUMNS,
+    EU_PROFILE_FLAG_COLUMNS,
+    RELEVANCE_OUTPUT_COLUMNS,
+    RESULT_BASE_COLUMNS,
+    RISKS_BENEFITS_OUTPUT_COLUMNS,
+    get_allowed_result_columns,
+    get_required_input_columns,
+    prune_result_columns,
+)
+
+# Deprecation warning flag
+_DEPRECATION_WARNING_SHOWN = False
+
+import pandas as pd
+
+# Public API exports
+__all__ = [
+    "run_classification_stage",
+    "run_classification_core",
+    "get_required_input_columns",
+    "get_allowed_result_columns",
+    "BASE_INPUT_COLUMNS",
+    "EU_INPUT_KEYS",
+    "EU_OUTPUT_COLUMNS",
+    "EU_PROFILE_FLAG_COLUMNS",
+    "RELEVANCE_OUTPUT_COLUMNS",
+    "RESULT_BASE_COLUMNS",
+    "RISKS_BENEFITS_OUTPUT_COLUMNS",
+]
+
+
+def run_classification_stage(df: pd.DataFrame, cfg) -> Any:
+    """
+    DEPRECATED: Classification stage function.
+    
+    This function is deprecated. Use profile-specific runners instead:
+    - ClassificationRelevanceRunner for relevance classification
+    - ClassificationEUActRunner for EU AI Act classification
+    - ClassificationRisksBenefitsRunner for risks and benefits classification
+    """
+    global _DEPRECATION_WARNING_SHOWN
+    if not _DEPRECATION_WARNING_SHOWN:
+        warnings.warn(
+            "classify.run_classification_stage is deprecated. "
+            "Use profile-specific runners (ClassificationRelevanceRunner, "
+            "ClassificationEUActRunner, ClassificationRisksBenefitsRunner) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        _DEPRECATION_WARNING_SHOWN = True
+    
+    # Determine profile and call appropriate function directly
+    try:
+        classification_profile = str(
+            getattr(cfg.runtime, "classification_profile", "relevance") or "relevance"
+        ).strip().lower()
+    except Exception:
+        classification_profile = "relevance"
+    
+    if classification_profile == "eu_ai_act":
+        from .classify_eu_act import run_classification_eu_act
+        return run_classification_eu_act(df, cfg)
+    elif classification_profile == "risks_and_benefits":
+        from .classify_risks_benefits import run_classification_risks_benefits
+        return run_classification_risks_benefits(df, cfg)
+    else:
+        from .classify_relevance import run_classification_relevance
+        return run_classification_relevance(df, cfg)
+
+# Column definitions and utility functions have been moved to classify_shared.py
+# These are re-exported above for convenience
+
+# Import legacy implementation dependencies
 try:
     import ray  # noqa: F401
     from ray.data.llm import build_llm_processor, vLLMEngineProcessorConfig  # type: ignore
@@ -16,36 +104,97 @@ try:
 except Exception:
     _RAY_OK = False
 
-from vllm.sampling_params import SamplingParams  # type: ignore
+from vllm.sampling_params import SamplingParams, GuidedDecodingParams  # type: ignore
+import re
+from bisect import bisect_right
+import numpy as np
+import os
+import logging
+import json
+from omegaconf import OmegaConf
 
+# Import shared utilities
+from .classify_shared import (
+    _maybe_silence_vllm_logs as maybe_silence_vllm_logs,
+    _read_int_file as read_int_file,
+    _detect_cgroup_mem_limit_bytes as detect_cgroup_mem_limit_bytes,
+    _parse_int as parse_int,
+    _parse_cpus_on_node as parse_cpus_on_node,
+    _detect_slurm_job_mem_bytes as detect_slurm_job_mem_bytes,
+    _effective_total_memory_bytes as effective_total_memory_bytes,
+    _ensure_ray_init as ensure_ray_init,
+    _to_json_str as to_json_str,
+    _serialize_arrow_unfriendly_in_row as serialize_arrow_unfriendly_in_row,
+    _sanitize_for_json as sanitize_for_json,
+    _coerce_bool_like as coerce_bool_like,
+    _coerce_boolish_row as coerce_boolish_row,
+    _coerce_boolish_df as coerce_boolish_df,
+    _detect_num_gpus as detect_num_gpus,
+    _detect_gpu_type as detect_gpu_type,
+    _apply_gpu_aware_batch_settings as apply_gpu_aware_batch_settings,
+    _filter_vllm_engine_kwargs as filter_vllm_engine_kwargs,
+    _build_relevant_regex as build_relevant_regex,
+    _generate_relevant_blocks as generate_relevant_blocks,
+    _normalize_profile_columns as normalize_profile_columns,
+    _merge_result_parts as merge_result_parts,
+    _prune_result_columns as prune_result_columns,
+)
+
+# Legacy aliases for backward compatibility
 _VLLM_LOGS_SILENCED = False
+_DEBUG_GUIDED_LOG = {"pre": 0, "fail": 0}
 
-def _maybe_silence_vllm_logs() -> None:
-    global _VLLM_LOGS_SILENCED
-    if _VLLM_LOGS_SILENCED:
-        return
-    try:
-        # Throttle INFO logs to every N messages; always allow WARNING+
-        from dagspaces.uair.logging_filters import PatternModuloFilter  # local import for worker
-        lg = logging.getLogger("vllm")
-        try:
-            n = int(os.environ.get("UAIR_VLLM_LOG_EVERY", "10") or "10")
-        except Exception:
-            n = 10
-        lg.setLevel(logging.INFO)
-        # Attach once
-        try:
-            existing_filters = getattr(lg, "filters", [])
-            if not any(getattr(f, "__class__", object).__name__ == "PatternModuloFilter" for f in existing_filters):
-                lg.addFilter(PatternModuloFilter(mod=n, pattern="Elapsed time for batch"))
-        except Exception:
-            pass
-        # If explicit silence requested, escalate to ERROR
-        if os.environ.get("RULE_TUPLES_SILENT"):
-            lg.setLevel(logging.ERROR)
-        _VLLM_LOGS_SILENCED = True
-    except Exception:
-        pass
+# Import shared utilities - use actual function names from classify_shared
+from .classify_shared import (
+    maybe_silence_vllm_logs,
+    read_int_file,
+    detect_cgroup_mem_limit_bytes,
+    parse_int,
+    parse_cpus_on_node,
+    detect_slurm_job_mem_bytes,
+    effective_total_memory_bytes,
+    ensure_ray_init,
+    to_json_str,
+    serialize_arrow_unfriendly_in_row,
+    sanitize_for_json,
+    coerce_bool_like,
+    coerce_boolish_row,
+    coerce_boolish_df,
+    detect_num_gpus,
+    detect_gpu_type,
+    apply_gpu_aware_batch_settings,
+    filter_vllm_engine_kwargs,
+    build_relevant_regex,
+    generate_relevant_blocks,
+    normalize_profile_columns,
+    merge_result_parts,
+    prune_result_columns,
+)
+
+# Create aliases with _ prefix for legacy code compatibility
+_maybe_silence_vllm_logs = maybe_silence_vllm_logs
+_read_int_file = read_int_file
+_detect_cgroup_mem_limit_bytes = detect_cgroup_mem_limit_bytes
+_parse_int = parse_int
+_parse_cpus_on_node = parse_cpus_on_node
+_detect_slurm_job_mem_bytes = detect_slurm_job_mem_bytes
+_effective_total_memory_bytes = effective_total_memory_bytes
+_ensure_ray_init = ensure_ray_init
+_to_json_str = to_json_str
+_serialize_arrow_unfriendly_in_row = serialize_arrow_unfriendly_in_row
+_sanitize_for_json = sanitize_for_json
+_coerce_bool_like = coerce_bool_like
+_coerce_boolish_row = coerce_boolish_row
+_coerce_boolish_df = coerce_boolish_df
+_detect_num_gpus = detect_num_gpus
+_detect_gpu_type = detect_gpu_type
+_apply_gpu_aware_batch_settings = apply_gpu_aware_batch_settings
+_filter_vllm_engine_kwargs = filter_vllm_engine_kwargs
+_build_relevant_regex = build_relevant_regex
+_generate_relevant_blocks = generate_relevant_blocks
+_normalize_profile_columns = normalize_profile_columns
+_merge_result_parts = merge_result_parts
+_prune_result_columns = prune_result_columns
 
 
 def _read_int_file(path: str) -> int:
@@ -281,6 +430,10 @@ def _serialize_arrow_unfriendly_in_row(row: Dict[str, Any], columns: List[str]) 
             val = row.get(col)
             if isinstance(val, (dict, list, tuple)):
                 row[col] = _to_json_str(val)
+            elif isinstance(val, GuidedDecodingParams):
+                row[col] = str(val)
+            elif isinstance(val, SamplingParams):
+                row[col] = str(val)
 
 
 def _sanitize_for_json(value: Any):
@@ -329,15 +482,6 @@ _BOOLISH_EXACT = {
     "is_relevant",
 }
 
-_NONSCALAR_PRESERVE = {
-    "messages",
-    "sampling_params",
-    "guided_decoding",
-    "response_format",
-    "structured_output",
-}
-
-
 def _coerce_bool_like(value: Any) -> bool:
     try:
         if isinstance(value, bool):
@@ -380,28 +524,18 @@ def _coerce_boolish_row(r: Dict[str, Any]) -> Dict[str, Any]:
                 r[key] = False
         else:
             val = r.get(key)
-            if key in _NONSCALAR_PRESERVE:
-                continue
-            modified = False
             if isinstance(val, np.ndarray):
                 try:
                     val = val.tolist()
-                    modified = True
                 except Exception:
-                    pass
+                    val = list(val)
+                r[key] = val
             elif hasattr(val, "tolist") and not isinstance(val, (str, bytes)):
                 try:
                     candidate = val.tolist()
-                    if isinstance(candidate, (dict, list, tuple, set)):
-                        val = candidate
-                        modified = True
+                    r[key] = candidate
                 except Exception:
                     pass
-            if isinstance(val, (dict, list, tuple, set)) or modified:
-                try:
-                    r[key] = _to_json_str(val)
-                except Exception:
-                    r[key] = None
     return r
 
 
@@ -419,52 +553,22 @@ def _coerce_boolish_df(pdf: pd.DataFrame) -> pd.DataFrame:
                 except Exception:
                     pass
         else:
-            if col in _NONSCALAR_PRESERVE:
-                continue
             try:
-                sample = None
-                for v in pdf[col].values:
-                    if v is None:
-                        continue
-                    if isinstance(v, float) and pd.isna(v):
-                        continue
-                    sample = v
-                    break
+                sample = next(
+                    (v for v in pdf[col].values if v is not None and not (isinstance(v, float) and pd.isna(v))),
+                    None,
+                )
             except Exception:
                 sample = None
-            needs_convert = False
-            if isinstance(sample, np.ndarray):
-                needs_convert = True
-            elif hasattr(sample, "tolist") and not isinstance(sample, (str, bytes)):
+            if isinstance(sample, np.ndarray) or (
+                hasattr(sample, "tolist") and not isinstance(sample, (str, bytes))
+            ):
                 try:
-                    candidate = sample.tolist()
-                    if isinstance(candidate, (dict, list, tuple, set)):
-                        sample = candidate
-                        needs_convert = True
-                except Exception:
-                    pass
-            if isinstance(sample, (dict, list, tuple, set)) or needs_convert:
-                try:
-                    def _coerce_val(v):
-                        if v is None:
-                            return None
-                        if isinstance(v, np.ndarray):
-                            try:
-                                v = v.tolist()
-                            except Exception:
-                                pass
-                        elif hasattr(v, "tolist") and not isinstance(v, (str, bytes)):
-                            try:
-                                candidate = v.tolist()
-                                if isinstance(candidate, (dict, list, tuple, set)):
-                                    v = candidate
-                            except Exception:
-                                pass
-                        if isinstance(v, (dict, list, tuple, set)):
-                            return _to_json_str(v)
-                        return v
-
-                    pdf[col] = pdf[col].apply(_coerce_val)
+                    pdf[col] = pdf[col].apply(
+                        lambda v: v.tolist() if isinstance(v, np.ndarray) else (
+                            v.tolist() if (hasattr(v, "tolist") and not isinstance(v, (str, bytes))) else v
+                        )
+                    )
                 except Exception:
                     pass
     return pdf
@@ -611,10 +715,16 @@ def _filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
                 accepted = None
         if accepted:
             filtered = {k: v for k, v in ek.items() if k in accepted}
+            if "guided_decoding" in ek and "guided_decoding" not in filtered and not os.environ.get("RULE_TUPLES_SILENT"):
+                try:
+                    print("[classify] Warning: guided_decoding not accepted by AsyncEngineArgs; keeping original value", flush=True)
+                except Exception:
+                    pass
+                filtered["guided_decoding"] = ek.get("guided_decoding")
             if len(filtered) != len(ek):
                 try:
                     if not os.environ.get("RULE_TUPLES_SILENT"):
-                        dropped = [k for k in ek.keys() if k not in accepted]
+                        dropped = [k for k in ek.keys() if k not in filtered]
                         print(f"Filtering unsupported vLLM engine kwargs: {dropped}")
                 except Exception:
                     pass
@@ -1076,9 +1186,20 @@ def _generate_relevant_blocks(text: str, compiled_regex: re.Pattern, window_word
     return [text[s:e] for s, e in merged]
 
 
-def run_classification_stage(df: pd.DataFrame, cfg):
-    """Article relevance classification stage.
 
+
+def run_classification_core(df: pd.DataFrame, cfg):
+    """
+    Core classification implementation.
+    
+    This is the actual implementation that performs classification.
+    Profile-specific modules call this function after setting up their profile-specific configuration.
+    
+    NOTE: This is the legacy implementation preserved for backward compatibility.
+    The full implementation (2965 lines) is kept here to maintain functionality
+    while we transition to profile-specific modules.
+    
+    Article relevance classification stage:
     - Heuristic: detect AI-related keywords in text
     - LLM: borrow prompt shape from experiments/prompts/base.yaml (relevance_v1) when available,
       else fall back to UAIR classify prompt. Produces both `relevance_answer` and `is_relevant`.
@@ -1138,6 +1259,13 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         classification_profile = "relevance"
     is_eu_profile = (classification_profile == "eu_ai_act")
     is_risks_benefits_profile = (classification_profile == "risks_and_benefits")
+    try:
+        print(
+            f"[classify] classification_profile={classification_profile} eu={is_eu_profile} rb={is_risks_benefits_profile}",
+            flush=True,
+        )
+    except Exception:
+        pass
     # Prefilter gating: pre_gating (filter before LLM), post_gating (compute flag only), off
     try:
         prefilter_mode = str(getattr(cfg.runtime, "prefilter_mode", "pre_gating")).strip().lower()
@@ -1776,18 +1904,6 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         return _coerce_boolish_row(r)
 
     # EU input completeness flags
-    _EU_INPUT_KEYS = [
-        "deployment_domain",
-        "deployment_purpose",
-        "deployment_capability",
-        "identity_of_ai_developer",
-        "identity_of_ai_deployer",
-        "location_of_ai_deployer",
-        "identity_of_ai_subject",
-        "location_of_ai_subject",
-        "date_and_time_of_event",
-        "date___time_of_event",
-    ]
     # Authoritative count of expected EU input fields (date field may appear under either of two names)
     _EU_TOTAL_INPUTS = 9
 
@@ -1802,7 +1918,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         if not is_eu_profile and not is_risks_benefits_profile:
             return r
         cnt = 0
-        for k in _EU_INPUT_KEYS:
+        for k in EU_INPUT_KEYS:
             try:
                 if _is_valid_eu_value(r.get(k)):
                     cnt += 1
@@ -1903,9 +2019,16 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                 accepted = None
             if accepted:
                 filtered = {k: v for k, v in sp.items() if k in accepted}
+                if "guided_decoding" in sp and "guided_decoding" not in filtered:
+                    filtered["guided_decoding"] = sp["guided_decoding"]
+                    if not os.environ.get("RULE_TUPLES_SILENT"):
+                        try:
+                            print("[classify] Warning: guided_decoding not in SamplingParams signature; preserving manually", flush=True)
+                        except Exception:
+                            pass
                 # Debug print of dropped keys (best-effort)
                 try:
-                    dropped = [k for k in sp.keys() if k not in accepted]
+                    dropped = [k for k in sp.keys() if k not in filtered]
                     if dropped and not os.environ.get("RULE_TUPLES_SILENT"):
                         print(f"Filtering unsupported vLLM sampling params: {dropped}")
                 except Exception:
@@ -1918,11 +2041,13 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         for k in (
             "early_stopping",
             "length_penalty",
-            "guided_decoding",
             "response_format",
             "structured_output",
         ):
             sp2.pop(k, None)
+        # Ensure guided_decoding survives fallback path
+        if "guided_decoding" in sp:
+            sp2["guided_decoding"] = sp["guided_decoding"]
         return sp2
 
     # Ensure sampling_params have a stable schema across rows to avoid Arrow concat issues
@@ -1945,6 +2070,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
 
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
         _maybe_silence_vllm_logs()
+        global _DEBUG_GUIDED_LOG
         # Ensure article_id is present on every row
         try:
             import hashlib as _hash
@@ -1980,19 +2106,69 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         # Sanitize sampling params; then stabilize to a fixed-key schema
         sp_local = _sanitize_for_json(dict(sampling_params or {}))
         if is_eu_profile and EU_GUIDED_JSON_SCHEMA is not None:
-            # Always include guided_decoding with a string value to keep Arrow schema stable across blocks
+            # Always include guided_decoding payload to keep Arrow schema stable across blocks
             try:
-                schema_json_str = json.dumps(EU_GUIDED_JSON_SCHEMA, ensure_ascii=False)
-            except Exception:
-                schema_json_str = ""
-            sp_local["guided_decoding"] = {"json": str(schema_json_str or "")}
+                guided_params = GuidedDecodingParams(
+                    json=EU_GUIDED_JSON_SCHEMA,
+                    disable_fallback=True,
+                    disable_additional_properties=True,
+                )
+                sp_local["guided_decoding"] = guided_params
+                if is_eu_profile and _DEBUG_GUIDED_LOG["pre"] < 5:
+                    try:
+                        print(
+                            "[classify][eu_ai_act] Injected GuidedDecodingParams into sampling params "
+                            f"(type={type(guided_params)} keys={list(sp_local.keys())})",
+                            flush=True,
+                        )
+                    except Exception:
+                        pass
+                    _DEBUG_GUIDED_LOG["pre"] += 1
+            except Exception as exc:
+                try:
+                    print(
+                        f"[classify][eu_ai_act] Failed to build GuidedDecodingParams: {exc}",
+                        flush=True,
+                    )
+                except Exception:
+                    pass
+                try:
+                    schema_json_str = json.dumps(EU_GUIDED_JSON_SCHEMA, ensure_ascii=False)
+                except Exception:
+                    schema_json_str = ""
+                sp_local["guided_decoding"] = {"json": schema_json_str or ""}
         elif is_risks_benefits_profile and RISKS_BENEFITS_GUIDED_JSON_SCHEMA is not None:
-            # Always include guided_decoding with a string value to keep Arrow schema stable across blocks
+            # Always include guided_decoding payload to keep Arrow schema stable across blocks
             try:
-                schema_json_str = json.dumps(RISKS_BENEFITS_GUIDED_JSON_SCHEMA, ensure_ascii=False)
-            except Exception:
-                schema_json_str = ""
-            sp_local["guided_decoding"] = {"json": str(schema_json_str or "")}
+                guided_params = GuidedDecodingParams(
+                    json=RISKS_BENEFITS_GUIDED_JSON_SCHEMA,
+                    disable_fallback=True,
+                    disable_additional_properties=True,
+                )
+                sp_local["guided_decoding"] = guided_params
+                if is_risks_benefits_profile and _DEBUG_GUIDED_LOG["pre"] < 5:
+                    try:
+                        print(
+                            "[classify][risks_benefits] Injected GuidedDecodingParams into sampling params "
+                            f"(type={type(guided_params)} keys={list(sp_local.keys())})",
+                            flush=True,
+                        )
+                    except Exception:
+                        pass
+                    _DEBUG_GUIDED_LOG["pre"] += 1
+            except Exception as exc:
+                try:
+                    print(
+                        f"[classify][risks_benefits] Failed to build GuidedDecodingParams: {exc}",
+                        flush=True,
+                    )
+                except Exception:
+                    pass
+                try:
+                    schema_json_str = json.dumps(RISKS_BENEFITS_GUIDED_JSON_SCHEMA, ensure_ascii=False)
+                except Exception:
+                    schema_json_str = ""
+                sp_local["guided_decoding"] = {"json": schema_json_str or ""}
         # Stabilize schema to avoid Arrow concat errors across batches
         sp_local = _stabilize_sampling_params(sp_local)
         from datetime import datetime as _dt
@@ -2010,6 +2186,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
 
     def _post(row: Dict[str, Any]) -> Dict[str, Any]:
         from datetime import datetime as _dt
+        global _DEBUG_GUIDED_LOG
         ts_end = _dt.now().timestamp()
         usage = row.get("usage") or row.get("token_counts") or None
         if is_risks_benefits_profile:
@@ -2090,6 +2267,25 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                     eu_label = lab
                 eu_reltext = parsed.get("Relevant Text from the EU AI Act")
                 eu_reason = parsed.get("Reasoning")
+            else:
+                snippet = raw.replace("\n", " ").strip()
+                if snippet:
+                    snippet = snippet[:400]
+                try:
+                    print(
+                        "[classify][eu_ai_act] Failed to parse LLM JSON output; raw snippet: "
+                        f"{snippet}",
+                        flush=True,
+                    )
+                    if _DEBUG_GUIDED_LOG["fail"] < 5:
+                        print(
+                            "[classify][eu_ai_act][debug] Full generated_text dump due to parse failure:\n"
+                            f"{raw}",
+                            flush=True,
+                    )
+                        _DEBUG_GUIDED_LOG["fail"] += 1
+                except Exception:
+                    pass
             # Optionally serialize nested columns for Arrow/Parquet compatibility
             try:
                 serialize_nested = bool(getattr(cfg.runtime, "serialize_nested_json", True))
@@ -2169,6 +2365,85 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         ds_in = df
         ds_all = None  # Track ALL articles (including filtered ones)
         
+        # Debug: inspect incoming schema before any pruning to track problematic columns
+        try:
+            schema = ds_in.schema()
+            cols = list(schema.names)
+            print(f"[classify] Incoming Ray dataset columns ({len(cols)}): {cols}", flush=True)
+            try:
+                import pyarrow as pa  # type: ignore
+                schema_desc = [
+                    f"{field.name}:{field.type}" if isinstance(field, pa.Field) else str(field)
+                    for field in schema
+                ]
+                print(
+                    "[classify] Incoming schema field types: " + ", ".join(schema_desc),
+                    flush=True,
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Limit columns to those required for prompting/metadata to avoid schema drift
+        try:
+            current_cols = set(ds_in.schema().names)
+        except Exception:
+            current_cols = set()
+        base_required = {
+            "article_id",
+            "article_text",
+            "article_path",
+            "chunk_text",
+            "country",
+            "year",
+            "relevant_keyword",
+            "matched_keywords",
+            "keyword_match_count",
+            "core_tuple_verified",
+            "doc_any_component_verified",
+            "missing",
+            "missing_fields",
+            "eu_missing_fields",
+        }
+        profile_specific = set()
+        if is_eu_profile or is_risks_benefits_profile:
+            profile_specific.update(EU_INPUT_KEYS)
+        allowed_columns = get_required_input_columns(is_eu_profile, is_risks_benefits_profile)
+        allowed_columns = allowed_columns & current_cols
+        # Ensure essential columns are retained even if missing from current columns
+        allowed_columns.update({col for col in ("article_id", "article_text") if col in current_cols})
+        try:
+            if allowed_columns and allowed_columns != current_cols:
+                ds_in = ds_in.select_columns(sorted(allowed_columns))
+                print(
+                    f"[classify] Pruned dataset columns to {sorted(allowed_columns)}",
+                    flush=True,
+                )
+        except Exception:
+            pass
+
+        # After pruning, log the updated schema for confirmation
+        try:
+            new_schema = ds_in.schema()
+            new_cols = list(new_schema.names)
+            print(f"[classify] Columns after pruning ({len(new_cols)}): {new_cols}", flush=True)
+            try:
+                import pyarrow as pa  # type: ignore
+                new_schema_desc = [
+                    f"{field.name}:{field.type}" if isinstance(field, pa.Field) else str(field)
+                    for field in new_schema
+                ]
+                print(
+                    "[classify] Post-prune schema field types: "
+                    + ", ".join(new_schema_desc),
+                    flush=True,
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
+
         # Ensure every row has an article_id BEFORE any materialization/merging
         def _ensure_article_id_map(r: Dict[str, Any]) -> Dict[str, Any]:
             try:
@@ -2408,7 +2683,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
                 except Exception:
                     num_vague = 0
                 print(f"[classify] Merged results: {len(df_llm)} LLM-processed + {num_kw} keyword-filtered + {num_vague} too-vague = {len(result_df)} total", flush=True)
-                
+                result_df = _prune_result_columns(result_df, is_eu_profile, is_risks_benefits_profile)
                 return result_df
             except Exception as e:
                 print(f"[classify] ERROR: Failed to merge filtered articles back into results: {e}", flush=True)
@@ -2445,6 +2720,68 @@ def run_classification_stage(df: pd.DataFrame, cfg):
 
     # Apply keyword flag + pre-gating and trimming in Ray maps (same as streaming path)
     ds_in = ds
+
+    # Debug instrumentation for pandas path: capture schema prior to pruning
+    try:
+        schema = ds_in.schema()
+        cols = list(schema.names)
+        print(f"[classify] (pandas path) incoming dataset columns ({len(cols)}): {cols}", flush=True)
+        try:
+            import pyarrow as pa  # type: ignore
+            schema_desc = [
+                f"{field.name}:{field.type}" if isinstance(field, pa.Field) else str(field)
+                for field in schema
+            ]
+            print(
+                "[classify] (pandas path) incoming schema field types: "
+                + ", ".join(schema_desc),
+                flush=True,
+            )
+        except Exception:
+            pass
+    except Exception:
+        cols = []
+        schema = None
+
+    try:
+        current_cols = set(schema.names) if schema else set()
+    except Exception:
+        current_cols = set()
+    allowed_columns = get_required_input_columns(is_eu_profile, is_risks_benefits_profile)
+    allowed_columns = allowed_columns & current_cols
+    allowed_columns.update({col for col in ("article_id", "article_text") if col in current_cols})
+    try:
+        if allowed_columns and allowed_columns != current_cols:
+            ds_in = ds_in.select_columns(sorted(allowed_columns))
+            print(
+                f"[classify] (pandas path) pruned dataset columns to {sorted(allowed_columns)}",
+                flush=True,
+            )
+            try:
+                new_schema = ds_in.schema()
+                new_cols = list(new_schema.names)
+                print(
+                    f"[classify] (pandas path) columns after pruning ({len(new_cols)}): {new_cols}",
+                    flush=True,
+                )
+                try:
+                    import pyarrow as pa  # type: ignore
+                    new_schema_desc = [
+                        f"{field.name}:{field.type}" if isinstance(field, pa.Field) else str(field)
+                        for field in new_schema
+                    ]
+                    print(
+                        "[classify] (pandas path) post-prune schema field types: "
+                        + ", ".join(new_schema_desc),
+                        flush=True,
+                    )
+                except Exception:
+                    pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     ds_all = None  # Track ALL articles (including filtered ones)
     ds_vague = None  # Track too-vague EU rows
     
@@ -2577,6 +2914,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         print(f"[classify] No merge needed, returning LLM results directly", flush=True)
     
     # Stage-scoped logging is handled by the orchestrator
+    out_df = _prune_result_columns(out_df, is_eu_profile, is_risks_benefits_profile)
     return out_df
 
 def _normalize_profile_columns(df: pd.DataFrame, is_eu_profile: bool, is_risks_benefits_profile: bool) -> pd.DataFrame:
@@ -2663,3 +3001,6 @@ def _merge_result_parts(parts: List[pd.DataFrame]) -> pd.DataFrame:
     return merged
 
 
+# Internal reference implementation - kept for reference only, not for external use
+# Profile modules should use run_classification_core() instead
+_run_classification_stage_impl = run_classification_core

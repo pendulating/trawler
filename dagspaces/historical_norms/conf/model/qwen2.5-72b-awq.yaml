@@ -1,0 +1,14 @@
+model_source: /share/pierson/matt/zoo/models/Qwen2.5-72B-Instruct-AWQ
+engine_kwargs:
+  enable_chunked_prefill: true
+  max_num_batched_tokens: 4096
+  max_model_len: 32768
+  gpu_memory_utilization: 0.9
+  tensor_parallel_size: 2
+  enable_prefix_caching: true
+  disable_log_stats: true
+  enforce_eager: true
+  quantization: awq
+batch_size: 1
+concurrency: 1
+

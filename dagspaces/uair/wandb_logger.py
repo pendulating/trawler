@@ -1,4 +1,4 @@
-"""Centralized W&B logging for UAIR pipeline.
+"""Centralized W&B logging for Trawler pipeline (uair dagspace).
 
 This module provides a unified interface for W&B logging across all pipeline stages,
 handling distributed execution (Ray, SLURM) and run lifecycle management.
@@ -115,7 +115,7 @@ class WandbConfig:
     """W&B configuration extracted from Hydra config."""
     
     enabled: bool = False
-    project: str = "UAIR"
+    project: str = "nov10-workshop"
     entity: Optional[str] = None
     group: Optional[str] = None
     tags: List[str] = field(default_factory=list)
@@ -133,7 +133,7 @@ class WandbConfig:
             if wandb_cfg is None:
                 return cls(
                     enabled=False,
-                    project=(env_project or "UAIR"),
+                    project=(env_project or "nov10-workshop"),
                     entity=(env_entity if env_entity and env_entity.strip() else None),
                     group=_get_group_from_config(cfg),
                     tags=[],
@@ -144,9 +144,9 @@ class WandbConfig:
             # Resolve project with fallback to environment, then default
             proj_attr = getattr(wandb_cfg, "project", None)
             if proj_attr is None or str(proj_attr).strip() == "":
-                project = env_project or "UAIR"
+                project = env_project or "nov10-workshop"
             else:
-                project = str(proj_attr or "UAIR")
+                project = str(proj_attr or "nov10-workshop")
             # Resolve entity with fallback to environment
             entity_cfg = _get_optional_str(wandb_cfg, "entity")
             entity = entity_cfg or (env_entity if env_entity and env_entity.strip() else None)
@@ -1141,6 +1141,14 @@ class WandbLogger:
                 if not cols:
                     cols = list(df_local.columns)[:12]
                 cols = _filter_heavy_columns(df_local, cols)
+
+            try:
+                print(
+                    f"[wandb_logger] stage={self.stage} key={key} logging {len(cols)} columns: {cols}",
+                    flush=True,
+                )
+            except Exception:
+                pass
 
             # Final safeguard: ensure internal columns are not selected even if present in prefer_cols
             universal_exclude = {

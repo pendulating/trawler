@@ -1,4 +1,5 @@
-# Top-level Hydra config for E_CI-rule-tuples
+# Top-level Hydra config for uair dagspace
+# Part of the Trawler pipeline framework
 
 defaults:
   - _self_
@@ -12,7 +13,7 @@ defaults:
   - optional pipeline: cluster_topic
 
 experiment:
-  name: UAIR
+  name: uair
 
 runtime:
   debug: false
@@ -95,7 +96,7 @@ sampling_params_taxonomy:
   detokenize: false
 
 # Path/config for taxonomy
-taxonomy_json: ${oc.env:TAXONOMY_JSON,/share/pierson/matt/UAIR/dagspaces/uair/conf/taxonomy/weitz.yaml}
+taxonomy_json: ${oc.env:TAXONOMY_JSON,dagspaces/uair/conf/taxonomy/weitz.yaml}
 
 # Path/config for topic modeling stopwords (optional; overrides topic.tfidf_stop_words if set)
 tfidf_stopwords_path: ${oc.env:TFIDF_STOPWORDS_PATH,null}
@@ -110,7 +111,7 @@ verify:
 wandb:
   enabled: true
   name_prefix: null
-  project: ${oc.env:WANDB_PROJECT,UAIR}
+  project: ${oc.env:WANDB_PROJECT,nov10-workshop}
   entity: ${oc.env:WANDB_ENTITY,""}
   group: ${oc.env:WANDB_GROUP,""}
   table_sample_rows: 1000

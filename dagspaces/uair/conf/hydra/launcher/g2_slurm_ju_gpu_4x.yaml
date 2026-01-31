@@ -9,7 +9,7 @@ mem_gb: ${runtime.job_memory_gb}
 partition: pierson
 array_parallelism: 1
 gpus_per_node: 4
-name: UAIR
+name: uair
 additional_parameters:
   gres: gpu:4
   wckey: ""

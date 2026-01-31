@@ -1,0 +1,36 @@
+# Uses Hydra Submitit Slurm launcher
+_target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
+submitit_folder: ${hydra.sweep.dir}/.submitit/%j
+timeout_min: 480
+nodes: 1
+tasks_per_node: 1
+cpus_per_task: 8
+mem_gb: ${runtime.job_memory_gb}
+gpus_per_node: 4
+  gres: gpu:4
+partition: pierson
+array_parallelism: 1
+name: historical_norms
+additional_parameters:
+setup:
+  - export HYDRA_FULL_ERROR=1
+  - source ~/.bashrc
+  - source /share/pierson/matt/UAIR/.venv/bin/activate
+  - unset WANDB_DISABLED
+  - export RULE_TUPLES_SILENT=1
+  - export WANDB_SILENT=true
+  # Disable wandb service for distributed environments (uses in-process mode)
+  - export WANDB_DISABLE_SERVICE=true
+  - export VLLM_WORKER_MULTIPROC_METHOD=spawn
+  - export VLLM_USE_V1=1
+  # Critical: Avoid shared memory broadcast hangs in V1 engine
+  - export VLLM_NO_SHM_BROADCAST=1
+  - export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64,expandable_segments:True
+  - export CUDA_LAUNCH_BLOCKING=0
+  - export TOKENIZERS_PARALLELISM=false
+  - export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+  # Set local TMPDIR to avoid issues with network drives
+  - if [ -d /scratch ]; then export TMPDIR=/scratch/$USER; else export TMPDIR=/tmp/$USER; fi
+  - mkdir -p $TMPDIR
+  - export CUDA_VISIBLE_DEVICES=0,1,2,3
+

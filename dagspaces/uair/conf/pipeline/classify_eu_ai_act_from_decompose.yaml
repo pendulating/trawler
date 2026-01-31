@@ -1,5 +1,5 @@
 # @package _global_
-# Run only the classify stage (EU AI Act profile) using precomputed decompose output
+# Run only the classify_eu_act stage using precomputed decompose output
 
 defaults:
   - override /hydra/launcher: slurm_monitor
@@ -15,12 +15,12 @@ pipeline:
   sources:
     articles:
       # Use decompose output as input; override with ARTICLES_PATH if desired
-      path: ${oc.env:ARTICLES_PATH,/share/pierson/matt/UAIR/outputs/decompose/oct15_all_decompose_results.parquet}
+      path: ${oc.env:ARTICLES_PATH,/share/pierson/matt/UAIR/outputs/2025-11-04/11-43-17/full_event_pipeline/outputs/verify_nbl/verify_nbl_results.parquet}
       type: parquet
   graph:
     nodes:
       classify_eu_ai_act:
-        stage: classify
+        stage: classify_eu_act
         depends_on: []
         inputs:
           dataset: articles
@@ -31,7 +31,7 @@ pipeline:
           runtime.debug: ${runtime.debug}
           runtime.job_memory_gb: 64
           runtime.use_llm_classify: true
-          runtime.classification_profile: eu_ai_act
+          # Note: Prompt injection is handled internally by the classify_eu_act stage
           # Decompose outputs may not contain article_text; disable keyword gating/buffering
           runtime.prefilter_mode: off
           runtime.keyword_buffering: false

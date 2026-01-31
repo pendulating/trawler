@@ -1,3 +1,3 @@
-"""UAIR experiment package."""
+"""UAIR dagspace - News AI analysis pipeline for Trawler."""
 
 

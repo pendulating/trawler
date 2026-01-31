@@ -1,0 +1,46 @@
+# Top-level Hydra config for historical_norms dagspace
+# Part of the Trawler pipeline framework
+
+defaults:
+  - _self_
+  - pipeline: norm_extraction
+  - model: qwen2.5-72b-awq
+  - data: gutenberg_sample
+  - prompt@prompt_reasoning: reasoning
+  - prompt@prompt_extraction: extraction
+
+experiment:
+  name: historical_norms
+
+runtime:
+  output_root: "outputs/historical_norms"
+  debug: false
+  sample_n: null
+  streaming_io: true
+  auto_streaming_io: true
+  job_memory_gb: 64
+
+sampling_params:
+  seed: 777
+  temperature: 0.0
+  top_p: 1.0
+  top_k: -1
+  max_tokens: 4096
+
+wandb:
+  enabled: true
+  name_prefix: null
+  project: historical-norms-extraction
+  entity: ""
+  group: ""
+  table_sample_rows: 1000
+  single_run: true
+
+hydra:
+  job:
+    name: ${experiment.name}
+  run:
+    dir: ${oc.env:HYDRA_RUN_DIR,outputs}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${oc.env:HYDRA_SWEEP_DIR,multirun}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

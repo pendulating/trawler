@@ -14,24 +14,14 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from hydra.core.hydra_config import HydraConfig
 
-from .config_schema import (
+from dagspaces.common.config_schema import (
     PipelineGraphSpec,
     PipelineNodeSpec,
     load_pipeline_graph,
     resolve_output_root,
 )
-from .stages.classify import run_classification_stage
-from .stages.classify_relevance import run_classification_relevance
-from .stages.classify_eu_act import run_classification_eu_act
-from .stages.classify_risks_benefits import run_classification_risks_benefits
-from .stages.decompose import run_decomposition_stage
-from .stages.decompose_nbl import run_decomposition_stage_nbl
-from .stages.taxonomy import run_taxonomy_stage
-from .stages.topic import run_topic_stage
-from .stages.verify import run_verification_stage
-from .stages.verify_nbl import run_verification_stage_nbl
-from .stages.synthesis import run_synthesis_stage
-from .wandb_logger import WandbLogger
+from .runners import get_stage_registry
+from .wandb_logger import WandbLogger, WandbConfig
 
 try:
     import ray  # type: ignore
@@ -49,7 +39,47 @@ except Exception:
     _SUBMITIT_AVAILABLE = False
 
 
-_STREAMING_COMPATIBLE_STAGES = {"classify", "taxonomy", "verification"}
+_STREAMING_COMPATIBLE_STAGES = {"classify_relevance", "taxonomy", "verification"}
+
+
+class _NoOpLogger:
+    """No-op logger that matches WandbLogger interface when wandb is disabled."""
+    def __init__(self, cfg, stage: str, run_id: Optional[str] = None, run_config: Optional[Dict[str, Any]] = None):
+        self.cfg = cfg
+        self.stage = stage
+        self.run_id = run_id
+        self.run_config = run_config or {}
+        self.wb_config = WandbConfig.from_hydra_config(cfg)
+    
+    def log_metrics(self, metrics: Dict[str, Any], step: Optional[int] = None, commit: bool = True) -> None:
+        pass
+    
+    def log_table(self, df, key: str, prefer_cols: Optional[List[str]] = None, max_rows: Optional[int] = None, panel_group: Optional[str] = None) -> None:
+        pass
+    
+    def set_summary(self, key: str, value: Any) -> None:
+        pass
+    
+    def set_config(self, data: Dict[str, Any], allow_val_change: bool = True) -> None:
+        pass
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
+def _get_wandb_logger(cfg: DictConfig, stage: str, run_id: Optional[str] = None, run_config: Optional[Dict[str, Any]] = None):
+    """Get WandbLogger if enabled, otherwise return a no-op logger.
+    
+    This ensures wandb initialization is completely skipped when wandb.enabled is False.
+    """
+    wb_config = WandbConfig.from_hydra_config(cfg)
+    if wb_config.enabled:
+        return WandbLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
+    else:
+        return _NoOpLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
 
 
 def _probe_single_gpu(device: str) -> bool:
@@ -257,69 +287,17 @@ def _safe_log_table(
             print(f"Warning: Failed to log {key} to wandb: {e}", flush=True)
 
 
-def _compute_doc_level_verification(
-    out: pd.DataFrame,
-    results_path: Optional[str]
-) -> Optional[pd.DataFrame]:
-    """Compute document-level verification aggregation from row-level results.
-    
-    Returns:
-        DataFrame with columns: article_id, doc_any_component_verified, core_tuple_verified
-        or None if computation fails
-    """
-    import pandas as _pd
-    
-    # Preferred: read docs_verification written by stage implementation (if present)
-    docs_df = None
-    try:
-        if results_path:
-            out_dir = os.path.dirname(results_path)
-            cand_file = os.path.join(out_dir, "docs_verification.parquet")
-            cand_dir = os.path.join(out_dir, "docs_verification")
-            if os.path.exists(cand_file):
-                docs_df = _pd.read_parquet(cand_file)
-            elif os.path.isdir(cand_dir):
-                docs_df = _pd.read_parquet(cand_dir)
-    except Exception:
-        docs_df = None
-    
-    # Fallback: compute simple doc-level view from the results DataFrame
-    if docs_df is None and "article_id" in out.columns:
-        try:
-            def _reduce(df_in: _pd.DataFrame) -> _pd.DataFrame:
-                if df_in.empty:
-                    return _pd.DataFrame([])
-                any_tuple = bool(df_in.get("ver_tuples_any_verified", _pd.Series([], dtype=bool)).any())
-                # core tuple verified: require per-field verified flags
-                core_ok = True
-                for f in ("deployment_domain", "deployment_purpose", "deployment_capability"):
-                    col = f"ver_tuple_{f}_verified"
-                    if col in df_in.columns:
-                        try:
-                            v_any = bool(df_in[col].astype(bool).any())
-                        except Exception:
-                            v_any = False
-                        core_ok = core_ok and v_any
-                    else:
-                        core_ok = False
-                return _pd.DataFrame([
-                    {
-                        "article_id": df_in.get("article_id", _pd.Series([None])).iloc[0],
-                        "doc_any_component_verified": any_tuple,
-                        "core_tuple_verified": bool(core_ok),
-                    }
-                ])
-            docs_df = out.groupby("article_id", dropna=False).apply(_reduce).reset_index(drop=True)
-        except Exception:
-            docs_df = None
-    
-    return docs_df
+# _compute_doc_level_verification moved to .runners.base
 
 
 def _inject_prompt_from_file(cfg: DictConfig, prompt_filename: str) -> None:
-    """Inject prompt from YAML file into cfg.prompt."""
+    """Inject prompt from YAML file into cfg.prompt.
+    
+    Supports subdirectory paths like 'general_ai/classify.yaml' or just 'classify.yaml'.
+    """
     try:
         base_dir = os.path.dirname(__file__)
+        # Support subdirectory paths (e.g., 'general_ai/classify.yaml')
         prompt_path = os.path.join(base_dir, "conf", "prompt", prompt_filename)
         if os.path.exists(prompt_path):
             prompt_cfg = OmegaConf.load(prompt_path)
@@ -334,11 +312,9 @@ def _inject_prompt_from_file(cfg: DictConfig, prompt_filename: str) -> None:
         pass  # Non-critical, stage may have defaults
 
 
-class StageRunner:
-    stage_name: str
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        raise NotImplementedError
+# StageRunner base class moved to .runners.base
+# Import it from runners module when needed
+from .runners.base import StageRunner
 
 
 class ArtifactRegistry:
@@ -443,7 +419,8 @@ def _load_parquet_dataset(parquet_path: str, columns: Mapping[str, str], debug: 
             except Exception:
                 pass
 
-    if debug and isinstance(sample_n, int) and sample_n > 0:
+    # Apply sample_n regardless of debug flag - it's a runtime limit, not just for debugging
+    if isinstance(sample_n, int) and sample_n > 0:
         try:
             n = min(int(sample_n), int(len(df)))
         except Exception:
@@ -455,8 +432,10 @@ def _load_parquet_dataset(parquet_path: str, columns: Mapping[str, str], debug: 
             seed = 777
         try:
             df = df.sample(n=n, random_state=seed).reset_index(drop=True)
+            print(f"[_load_parquet_dataset] Applied sample_n={n} (seed={seed}), processing {len(df)} rows", flush=True)
         except Exception:
             df = df.head(n)
+            print(f"[_load_parquet_dataset] Applied sample_n={n} (head), processing {len(df)} rows", flush=True)
     return df
 
 
@@ -509,6 +488,25 @@ def _ensure_ray_init_with_cpu_limits(cfg: DictConfig) -> None:
         obj_store_bytes = int(64 * (1024 ** 3) * 0.90)
     
     namespace = os.environ.get("RAY_NAMESPACE") or os.environ.get("WANDB_GROUP") or "uair"
+    
+    # Detect SLURM GPU allocation
+    gpus_alloc = None
+    try:
+        cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if cuda_visible and cuda_visible.strip():
+            gpus_alloc = len([x for x in cuda_visible.split(",") if x.strip()])
+        else:
+            slurm_gpus = os.environ.get("SLURM_GPUS_ON_NODE") or os.environ.get("SLURM_GPUS_PER_NODE")
+            if slurm_gpus:
+                if ":" in slurm_gpus:
+                    gpus_alloc = int(slurm_gpus.split(":")[-1])
+                else:
+                    try:
+                        gpus_alloc = int(slurm_gpus)
+                    except ValueError:
+                        gpus_alloc = None
+    except Exception:
+        gpus_alloc = None
     
     # Try full initialization, fallback to basic if that fails
     try:
@@ -718,9 +716,11 @@ def _prepare_streaming_dataset(dataset_path: str, columns: Mapping[str, str], cf
             pass
         debug = bool(getattr(cfg.runtime, "debug", False))
         sample_n = getattr(cfg.runtime, "sample_n", None)
-        if debug and isinstance(sample_n, int) and sample_n > 0:
+        # Apply sample_n regardless of debug flag - it's a runtime limit, not just for debugging
+        if isinstance(sample_n, int) and sample_n > 0:
             try:
                 ds = ds.limit(max(1, int(sample_n)))
+                print(f"[_prepare_streaming_dataset] Applied sample_n={sample_n}, limiting dataset to {sample_n} rows", flush=True)
             except Exception:
                 pass
         return ds, True
@@ -817,737 +817,9 @@ def _collect_outputs(context: StageExecutionContext, optional: Mapping[str, bool
     return resolved
 
 
-class ClassificationRunner(StageRunner):
-    stage_name = "classify"
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        dataset_path = context.inputs.get("dataset")
-        if not dataset_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
-        cfg = context.cfg
-        OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
-        # Ensure base stage uses 'relevance' profile (avoid EU/RB vague gating here)
-        try:
-            OmegaConf.update(cfg, "runtime.classification_profile", "relevance", merge=True)
-        except Exception:
-            pass
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_obj = ds if use_streaming and ds is not None else df
-        # Relevance-only implementation (isolated from EU/RB behavior)
-        out = run_classification_relevance(in_obj, cfg)
-        
-        out = _convert_to_pandas_if_needed(out)
-        
-        # Calculate row count
-        row_count = None
-        if isinstance(out, pd.DataFrame):
-            row_count = len(out)
-        elif isinstance(out, pd.Series):
-            row_count = len(out)
-        elif hasattr(out, "__len__"):
-            try:
-                row_count = len(out)
-            except Exception:
-                pass
-        
-        # Save outputs to disk (ClassificationRunner has custom output logic)
-        if isinstance(out, pd.DataFrame):
-            # Scrub any stray too_vague_to_process for base relevance stage
-            try:
-                if "too_vague_to_process" in out.columns:
-                    out["too_vague_to_process"] = False
-            except Exception:
-                pass
-            # Save generic results if requested (profile-agnostic)
-            if "results" in context.output_paths:
-                out.to_parquet(context.output_paths["results"], index=False)
-            # Save "all" output (all classified articles)
-            if "all" in context.output_paths:
-                out.to_parquet(context.output_paths["all"], index=False)
-            # Save "relevant" output (only relevant articles)
-            if "relevant" in context.output_paths and "is_relevant" in out.columns:
-                relevant_df = out[out["is_relevant"] == True].copy()
-                relevant_df.to_parquet(context.output_paths["relevant"], index=False)
-        
-        # Log results table and keyword statistics to wandb
-        if isinstance(out, pd.DataFrame) and context.logger:
-            try:
-                # Include profile-specific columns when present
-                if any(c in out.columns for c in ("eu_ai_label", "eu_ai_desc", "eu_ai_relevant_text", "eu_ai_reason")):
-                    prefer_cols = [
-                        "article_id",
-                        "too_vague_to_process",
-                        "eu_valid_input_count",
-                        "eu_ai_label",
-                        "eu_ai_desc",
-                        "eu_ai_relevant_text",
-                        "eu_ai_reason",
-                        "classification_mode",
-                        "article_path",
-                        "country",
-                        "year",
-                    ]
-                else:
-                    prefer_cols = [
-                        "article_id",
-                        "too_vague_to_process",
-                        "eu_valid_input_count",
-                        "is_relevant",
-                        "classification_mode",
-                        "relevant_keyword",
-                        "matched_keywords",
-                        "keyword_match_count",
-                        "article_text",
-                        "article_path",
-                        "country",
-                        "year",
-                    ]
-                # Filter to only columns that exist
-                prefer_cols = [c for c in prefer_cols if c in out.columns]
-                _safe_log_table(context.logger, out, "classify/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-                
-                # Log keyword filtering statistics
-                if "relevant_keyword" in out.columns:
-                    total_articles = len(out)
-                    articles_with_keywords = out["relevant_keyword"].sum() if "relevant_keyword" in out.columns else 0
-                    articles_without_keywords = total_articles - articles_with_keywords
-                    keyword_presence_rate = articles_with_keywords / total_articles if total_articles > 0 else 0
-                    
-                    keyword_stats = {
-                        "classify/keyword_filtering/total_articles": total_articles,
-                        "classify/keyword_filtering/articles_with_keywords": int(articles_with_keywords),
-                        "classify/keyword_filtering/articles_without_keywords": int(articles_without_keywords),
-                        "classify/keyword_filtering/keyword_presence_rate": keyword_presence_rate,
-                    }
-                    
-                    # Average matches per article (for articles with matches)
-                    if "keyword_match_count" in out.columns:
-                        articles_with_matches = out[out["keyword_match_count"] > 0]
-                        if len(articles_with_matches) > 0:
-                            avg_matches = articles_with_matches["keyword_match_count"].mean()
-                            max_matches = articles_with_matches["keyword_match_count"].max()
-                            keyword_stats["classify/keyword_filtering/avg_matches_per_article"] = avg_matches
-                            keyword_stats["classify/keyword_filtering/max_matches_in_article"] = int(max_matches)
-                    
-                    context.logger.log_metrics(keyword_stats)
-                    print(f"[classify] Keyword filtering: {articles_with_keywords}/{total_articles} articles ({keyword_presence_rate:.1%}) have keywords", flush=True)
-                    
-                    # Log top matched keywords if available
-                    if "matched_keywords" in out.columns:
-                        try:
-                            # Flatten all matched keywords and count frequency
-                            from collections import Counter
-                            all_keywords = []
-                            for kws in out["matched_keywords"].dropna():
-                                if isinstance(kws, list):
-                                    all_keywords.extend(kws)
-                            
-                            if all_keywords:
-                                keyword_freq = Counter(all_keywords)
-                                top_10_keywords = keyword_freq.most_common(10)
-                                
-                                # Log as wandb summary (for easy viewing)
-                                for i, (keyword, count) in enumerate(top_10_keywords, 1):
-                                    context.logger.set_summary(f"classify/top_keywords/{i:02d}_{keyword}", count)
-                                
-                                print(f"[classify] Top 5 keywords: {', '.join([f'{kw}({cnt})' for kw, cnt in top_10_keywords[:5]])}", flush=True)
-                        except Exception as e:
-                            print(f"Warning: Failed to log top keywords: {e}", flush=True)
-            except Exception as e:
-                print(f"Warning: Failed to log classify results or keyword statistics to wandb: {e}", flush=True)
-        
-        metadata: Dict[str, Any] = {
-            "rows": row_count,
-            "streaming": bool(use_streaming),
-        }
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
-
-
-class TaxonomyRunner(StageRunner):
-    stage_name = "taxonomy"
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        dataset_path = context.inputs.get("dataset")
-        if not dataset_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
-        cfg = context.cfg
-        OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_obj = ds if use_streaming and ds is not None else df
-        out = run_taxonomy_stage(in_obj, cfg)
-        
-        out = _convert_to_pandas_if_needed(out)
-        _save_stage_outputs(out, context.output_paths)
-        
-        # Log results table to wandb (in inspect_results panel group)
-        prefer_cols = ["article_id", "chunk_id", "taxonomy_json", "chunk_text", "article_path"]
-        _safe_log_table(context.logger, out, "taxonomy/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-        
-        metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": bool(use_streaming),
-        }
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
-
-
-class DecomposeRunner(StageRunner):
-    stage_name = "decompose"
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        dataset_path = context.inputs.get("dataset")
-        if not dataset_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
-        cfg = context.cfg
-        OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_obj = ds if use_streaming and ds is not None else df
-        out = run_decomposition_stage(in_obj, cfg)
-        
-        out = _convert_to_pandas_if_needed(out)
-        _save_stage_outputs(out, context.output_paths)
-        
-        # Log results table to wandb (in inspect_results panel group)
-        prefer_cols = ["article_id", "chunk_id", "chunk_text", "article_path"]
-        _safe_log_table(context.logger, out, "decompose/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-        
-        metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": bool(use_streaming),
-        }
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
-
-
-class DecomposeNBLRunner(StageRunner):
-    stage_name = "decompose_nbl"
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        dataset_path = context.inputs.get("dataset")
-        if not dataset_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
-        cfg = context.cfg
-        OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_obj = ds if use_streaming and ds is not None else df
-        out = run_decomposition_stage_nbl(in_obj, cfg)
-        
-        out = _convert_to_pandas_if_needed(out)
-        _save_stage_outputs(out, context.output_paths)
-        
-        # Log results table to wandb (in inspect_results panel group)
-        prefer_cols = ["article_id", "chunk_id", "chunk_text", "article_path"]
-        _safe_log_table(context.logger, out, "decompose_nbl/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-        
-        metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": bool(use_streaming),
-        }
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
-
-
-class TopicRunner(StageRunner):
-    stage_name = "topic"
-
-    @staticmethod
-    def _resolve_topic_path(path: str) -> str:
-        if os.path.isdir(path):
-            candidates = [
-                os.path.join(path, "classify_relevant.parquet"),
-                os.path.join(path, "classify_all.parquet"),
-                os.path.join(path, "results.parquet"),
-            ]
-            for cand in candidates:
-                if os.path.exists(cand):
-                    return cand
-        return path
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        dataset_path = context.inputs.get("dataset")
-        if not dataset_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
-        resolved_path = self._resolve_topic_path(dataset_path)
-        
-        cfg = context.cfg
-        OmegaConf.update(cfg, "data.parquet_path", resolved_path, merge=True)
-        df, ds, use_streaming = prepare_stage_input(cfg, resolved_path, self.stage_name)
-        in_obj = ds if use_streaming and ds is not None else df
-        
-        out = run_topic_stage(in_obj, cfg, logger=context.logger)
-        out = _convert_to_pandas_if_needed(out)
-        _save_stage_outputs(out, context.output_paths)
-        
-        # Log results table and plots to wandb
-        if isinstance(out, pd.DataFrame) and context.logger:
-            prefer_cols = ["unit_id", "topic_id", "topic_prob", "topic_top_terms", "article_keywords", "plot_x", "plot_y"]
-            _safe_log_table(context.logger, out, "topic/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-            
-            try:
-                # Log plotly visualization
-                from .stages.topic_plot import log_cluster_scatter_plotly_to_wandb
-                log_cluster_scatter_plotly_to_wandb(out, context.logger, title="topic_cluster_map")
-            except Exception as e:
-                print(f"Warning: Failed to log topic plot to wandb: {e}", flush=True)
-        
-        metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": bool(use_streaming),
-        }
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
-
-
-class VerificationRunner(StageRunner):
-    stage_name = "verification"
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        dataset_path = context.inputs.get("dataset")
-        if not dataset_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
-        cfg = context.cfg
-        OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_obj = ds if use_streaming and ds is not None else df
-        out = run_verification_stage(in_obj, cfg)
-        
-        out = _convert_to_pandas_if_needed(out)
-        _save_stage_outputs(out, context.output_paths)
-        
-        # Log results table to wandb (in inspect_results panel group)
-        prefer_cols = ["article_id", "chunk_id", "chunk_text", "verification_result", "article_path"]
-        _safe_log_table(context.logger, out, "verification/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-        
-        metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": bool(use_streaming),
-        }
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
-
-
-class VerificationNBLRunner(StageRunner):
-    stage_name = "verify_nbl"
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        dataset_path = context.inputs.get("dataset")
-        if not dataset_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
-        cfg = context.cfg
-        OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_obj = ds if use_streaming and ds is not None else df
-        out = run_verification_stage_nbl(in_obj, cfg)
-        
-        out = _convert_to_pandas_if_needed(out)
-        
-        # Prepare optional doc-level aggregation and merge core flags into row-level output
-        docs_df = None
-        if isinstance(out, pd.DataFrame):
-            results_path = context.output_paths.get("results")
-            docs_df = _compute_doc_level_verification(out, results_path)
-            
-            # Merge core flags into row-level frame for downstream gating
-            if docs_df is not None and "article_id" in out.columns and "article_id" in docs_df.columns:
-                try:
-                    out = out.merge(docs_df[["article_id", "core_tuple_verified"]], on="article_id", how="left")
-                except Exception:
-                    pass
-
-        # Save outputs to disk
-        if isinstance(out, pd.DataFrame):
-            for output_name, output_path in context.output_paths.items():
-                if output_name == "docs":
-                    # Emit doc-level table if available
-                    try:
-                        if docs_df is not None and len(docs_df):
-                            docs_df.to_parquet(output_path, index=False)
-                        else:
-                            # If not available, synthesize minimal docs view with article_id and core flag
-                            if "article_id" in out.columns and "core_tuple_verified" in out.columns:
-                                tmp_docs = out[["article_id", "core_tuple_verified"]].drop_duplicates()
-                                tmp_docs.to_parquet(output_path, index=False)
-                    except Exception:
-                        pass
-                else:
-                    out.to_parquet(output_path, index=False)
-        
-        # Log verify_nbl results table with all columns (logger handles filtering of heavy/internal)
-        _safe_log_table(context.logger, out, "verify_nbl/results", prefer_cols=None, panel_group="inspect_results")
-        
-        # Log document-level aggregation in inspect_results; build from memory if needed
-        if docs_df is None and isinstance(out, pd.DataFrame) and "article_id" in out.columns:
-            try:
-                import pandas as _pd
-                docs_df = out[["article_id", "core_tuple_verified"]].drop_duplicates()
-            except Exception:
-                docs_df = None
-        
-        if docs_df is not None and len(docs_df):
-            _safe_log_table(context.logger, docs_df, "verify_nbl/docs", prefer_cols=None, panel_group="inspect_results")
-
-            # Plot run-level verification rates by input and doc-level
-            try:
-                import pandas as _pd
-                import matplotlib.pyplot as _plt  # type: ignore
-
-                df_res = out
-                df_docs = docs_df if 'docs_df' in locals() else None
-
-                # Helper: presence check for scalars/lists
-                def _present_series(s: _pd.Series) -> _pd.Series:
-                    try:
-                        ss = s.astype(str).str.strip()
-                        ssl = ss.str.lower()
-                        not_empty = ss != ""
-                        not_none = ~ssl.isin(["none", "null"])
-                        not_empty_json = ~ss.isin(["[]", "{}"])
-                        return not_empty & not_none & not_empty_json
-                    except Exception:
-                        return _pd.Series([False] * len(s))
-
-                scalar_fields = [
-                    "deployment_domain",
-                    "deployment_purpose",
-                    "deployment_capability",
-                    "deployment_space",
-                    "identity_of_ai_deployer",
-                    "identity_of_ai_subject",
-                    "identity_of_ai_developer",
-                    "location_of_ai_deployer",
-                    "location_of_ai_subject",
-                    "date_and_time_of_event",
-                ]
-                list_fields = [
-                    "list_of_harms_that_occurred",
-                    "list_of_risks_that_occurred",
-                    "list_of_benefits_that_occurred",
-                ]
-
-                labels = []
-                percents = []
-                # Scalars: percent verified among present inputs
-                for f in scalar_fields:
-                    try:
-                        if f in df_res.columns:
-                            present = _present_series(df_res[f])
-                            ver_col = f"ver_tuple_{f}_verified"
-                            if ver_col in df_res.columns:
-                                verified = present & df_res[ver_col].astype(bool)
-                                present_n = int(present.sum())
-                                verified_n = int(verified.sum())
-                                pct = (verified_n / present_n * 100.0) if present_n > 0 else None
-                                labels.append(f)
-                                percents.append(pct)
-                    except Exception:
-                        pass
-                # Lists: percent any verified among present lists
-                for f in list_fields:
-                    try:
-                        if f in df_res.columns:
-                            present = _present_series(df_res[f])
-                            any_col = f"ver_tuple_{f}_any"
-                            if any_col in df_res.columns:
-                                verified = present & df_res[any_col].astype(bool)
-                                present_n = int(present.sum())
-                                verified_n = int(verified.sum())
-                                pct = (verified_n / present_n * 100.0) if present_n > 0 else None
-                                labels.append(f)
-                                percents.append(pct)
-                    except Exception:
-                        pass
-
-                # Build bar plot for input percentages (filter out None)
-                try:
-                    labels_plot = []
-                    percents_plot = []
-                    for l, p in zip(labels, percents):
-                        if p is not None:
-                            labels_plot.append(l)
-                            percents_plot.append(p)
-                    if labels_plot:
-                        fig, ax = _plt.subplots(figsize=(10, max(3, int(len(labels_plot) * 0.4))))
-                        ax.barh(labels_plot, percents_plot, color="#4e79a7")
-                        ax.set_xlabel("Percent verified (%)")
-                        ax.set_title("Verification rate by input")
-                        for i, v in enumerate(percents_plot):
-                            ax.text(v + 1, i, f"{v:.1f}%", va='center')
-                        _plt.tight_layout()
-                        context.logger.log_plot("verify_nbl/percent_verified_by_input", fig)
-                except Exception as e:
-                    print(f"Warning: failed to log percent_verified_by_input plot: {e}", flush=True)
-
-                # Doc-level percentages
-                try:
-                    if df_docs is not None and len(df_docs):
-                        vals = {}
-                        for key in ("doc_any_component_verified", "core_tuple_verified"):
-                            if key in df_docs.columns:
-                                try:
-                                    vals[key] = float(df_docs[key].astype(bool).mean() * 100.0)
-                                except Exception:
-                                    pass
-                        if vals:
-                            fig2, ax2 = _plt.subplots(figsize=(6, 3))
-                            keys = list(vals.keys())
-                            vals_list = [vals[k] for k in keys]
-                            ax2.bar(keys, vals_list, color="#59a14f")
-                            ax2.set_ylabel("Percent of articles (%)")
-                            ax2.set_title("Doc-level verification rates")
-                            for i, v in enumerate(vals_list):
-                                ax2.text(i, v + 1, f"{v:.1f}%", ha='center')
-                            _plt.tight_layout()
-                            context.logger.log_plot("verify_nbl/doc_level_percentages", fig2)
-                except Exception as e:
-                    print(f"Warning: failed to log doc_level_percentages plot: {e}", flush=True)
-            except Exception as e:
-                print(f"Warning: verify_nbl run-level plots error: {e}", flush=True)
-        
-        metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": bool(use_streaming),
-        }
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
-
-class SynthesisRunner(StageRunner):
-    stage_name = "synthesis"
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        # Synthesis requires clusters; articles are optional (enables text-aware join when provided)
-        clusters_path = context.inputs.get("clusters")
-        articles_path = context.inputs.get("articles")
-        
-        if not clusters_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'clusters' input (topic assignments)")
-        
-        cfg = context.cfg
-        
-        # Load both datasets
-        try:
-            df_clusters = pd.read_parquet(clusters_path)
-            print(f"Loaded {len(df_clusters)} rows from clusters: {clusters_path}", flush=True)
-        except Exception as e:
-            raise ValueError(f"Failed to load clusters from '{clusters_path}': {e}")
-        
-        df_articles = None
-        if articles_path:
-            try:
-                if os.path.exists(articles_path):
-                    df_articles = pd.read_parquet(articles_path)
-                    print(f"Loaded {len(df_articles)} rows from articles: {articles_path}", flush=True)
-                else:
-                    print(f"Articles path not found; proceeding without articles: {articles_path}", flush=True)
-            except Exception as e:
-                print(f"Warning: Failed to load articles from '{articles_path}': {e}; proceeding without articles.", flush=True)
-        
-        # Pass both to synthesis stage
-        out = run_synthesis_stage(df_clusters, cfg, logger=context.logger, articles_df=df_articles)
-        
-        out = _convert_to_pandas_if_needed(out)
-        _save_stage_outputs(out, context.output_paths)
-        
-        # Log results table to wandb (in inspect_results panel group)
-        prefer_cols = ["cluster_id", "num_articles", "primary_risk_type", "risk_confidence", "synthesis_summary"]
-        _safe_log_table(context.logger, out, "synthesis/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-        
-        metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": False,  # Synthesis uses dual-input join, not streaming
-        }
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
-
-
-class ClassificationEUActRunner(StageRunner):
-    stage_name = "classify_eu_act"
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        dataset_path = context.inputs.get("dataset")
-        if not dataset_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
-        cfg = context.cfg
-        OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
-        # Note: Prompt injection is handled internally by run_classification_eu_act
-        # Always load as pandas for gating; streaming not supported for this custom stage
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_df = df if df is not None else (ds.to_pandas() if hasattr(ds, "to_pandas") else None)
-        if in_df is None:
-            raise RuntimeError("Failed to load input dataset for classify_eu_act")
-        # Gate by core_tuple_verified == True
-        try:
-            total_rows = len(in_df)
-        except Exception:
-            total_rows = None
-        try:
-            if "core_tuple_verified" in in_df.columns:
-                mask = in_df["core_tuple_verified"].fillna(False).astype(bool)
-            else:
-                mask = pd.Series([False] * len(in_df))
-            gated_df = in_df[mask].copy()
-        except Exception:
-            gated_df = in_df.iloc[0:0].copy()
-        # Prefer one row per article to avoid duplicate classifications
-        try:
-            if "article_id" in gated_df.columns and len(gated_df):
-                # Keep the first occurrence per article_id
-                gated_df = gated_df.sort_values(by=["article_id"]).drop_duplicates(subset=["article_id"], keep="first")
-        except Exception:
-            pass
-
-        # Run classification with EU AI Act profile (assumed set via overrides)
-        # EU-only classification (prompt injected inside wrapper)
-        out = run_classification_eu_act(gated_df, cfg)
-
-        out = _convert_to_pandas_if_needed(out)
-        
-        # Save outputs to disk
-        if isinstance(out, pd.DataFrame) and "results" in context.output_paths:
-            out.to_parquet(context.output_paths["results"], index=False)
-
-        # Log results
-        prefer_cols = [
-            c for c in [
-                "article_id",
-                "eu_ai_label",
-                "eu_ai_desc",
-                "eu_ai_relevant_text",
-                "eu_ai_reason",
-                "classification_mode",
-                "article_path",
-                "country",
-                "year",
-            ] if c in out.columns
-        ]
-        _safe_log_table(context.logger, out, "classify_eu_act/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-        
-        # Log simple counts
-        if context.logger:
-            try:
-                context.logger.log_metrics({
-                    "classify_eu_act/input_rows": int(total_rows or 0),
-                    "classify_eu_act/gated_rows": int(len(gated_df)),
-                    "classify_eu_act/output_rows": int(len(out)),
-                })
-            except Exception:
-                pass
-
-        metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": False,
-        }
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
-
-
-class ClassificationRisksBenefitsRunner(StageRunner):
-    stage_name = "classify_risk_and_benefits"
-
-    def run(self, context: StageExecutionContext) -> StageResult:
-        dataset_path = context.inputs.get("dataset")
-        if not dataset_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
-        cfg = context.cfg
-        OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
-        # Ensure proper profile
-        try:
-            OmegaConf.update(cfg, "runtime.classification_profile", "risks_and_benefits", merge=True)
-            OmegaConf.update(cfg, "runtime.use_llm_classify", True, merge=True)
-        except Exception:
-            pass
-        # Note: Prompt injection is handled internally by run_classification_risks_benefits
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_df = df if df is not None else (ds.to_pandas() if hasattr(ds, "to_pandas") else None)
-        if in_df is None:
-            raise RuntimeError("Failed to load input dataset for classify_risk_and_benefits")
-        # Gate by core_tuple_verified == True to mirror EU AI Act classification requirements
-        try:
-            if "core_tuple_verified" in in_df.columns:
-                mask = in_df["core_tuple_verified"].fillna(False).astype(bool)
-            else:
-                mask = pd.Series([False] * len(in_df))
-            gated_df = in_df[mask].copy()
-        except Exception:
-            gated_df = in_df.iloc[0:0].copy()
-        in_df = gated_df
-        # Prefer one row per article to avoid duplicate classifications
-        try:
-            if "article_id" in in_df.columns and len(in_df):
-                in_df = in_df.sort_values(by=["article_id"]).drop_duplicates(subset=["article_id"], keep="first")
-        except Exception:
-            pass
-        # Risks & Benefits classification (prompt injected inside wrapper)
-        out = run_classification_risks_benefits(in_df, cfg)
-
-        out = _convert_to_pandas_if_needed(out)
-        
-        # Save outputs to disk
-        if isinstance(out, pd.DataFrame) and "results" in context.output_paths:
-            out.to_parquet(context.output_paths["results"], index=False)
-
-        # Log results
-        prefer_cols = [
-            c for c in [
-                "article_id",
-                "risks_benefits_json",
-                "classification_mode",
-                "article_path",
-                "country",
-                "year",
-            ] if c in out.columns
-        ]
-        _safe_log_table(context.logger, out, "classify_risk_and_benefits/results", prefer_cols=prefer_cols, panel_group="inspect_results")
-
-        metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": False,
-        }
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
-
-_STAGE_REGISTRY: Dict[str, StageRunner] = {
-    "classify": ClassificationRunner(),
-    "classify_eu_act": ClassificationEUActRunner(),
-    "classify_risk_and_benefits": ClassificationRisksBenefitsRunner(),
-    "decompose": DecomposeRunner(),
-    "decompose_nbl": DecomposeNBLRunner(),
-    "taxonomy": TaxonomyRunner(),
-    "topic": TopicRunner(),
-    "verification": VerificationRunner(),
-    "verify_nbl": VerificationNBLRunner(),
-    "synthesis": SynthesisRunner(),
-}
+# All runner classes have been moved to the .runners module
+# Import the stage registry from runners
+_STAGE_REGISTRY: Dict[str, StageRunner] = get_stage_registry()
 
 
 def _ensure_output_dirs(paths: Iterable[str]) -> None:
@@ -1648,7 +920,7 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
     node_dict = context_data["node"]
     
     # Reconstruct PipelineNodeSpec
-    from .config_schema import PipelineNodeSpec, OutputSpec
+    from dagspaces.common.config_schema import PipelineNodeSpec, OutputSpec
     outputs = {}
     for out_key, out_val in node_dict.get("outputs", {}).items():
         outputs[out_key] = OutputSpec.from_config(out_key, out_val)
@@ -1694,7 +966,7 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
         "outputs": list(context.output_paths.keys()),
     }
     
-    with WandbLogger(cfg, stage=node.stage, run_id=wandb_run_id, run_config=run_config) as logger:
+    with _get_wandb_logger(cfg, stage=node.stage, run_id=wandb_run_id, run_config=run_config) as logger:
         try:
             # Update context with logger
             context.logger = logger
@@ -1732,7 +1004,7 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
 
 def run_experiment(cfg: DictConfig) -> None:
     # Execute entire pipeline with wandb logging context
-    with WandbLogger(cfg, stage="orchestrator", run_id="monitor", run_config={"type": "pipeline"}) as logger:
+    with _get_wandb_logger(cfg, stage="orchestrator", run_id="monitor", run_config={"type": "pipeline"}) as logger:
         try:
             # Get the parent/monitor group ID to pass to child jobs
             # This ensures all stages in one pipeline run are grouped together

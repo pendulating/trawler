@@ -1,4 +1,4 @@
-# Lightweight Submitit Slurm launcher for the UAIR orchestrator parent (monitor)
+# Lightweight Submitit Slurm launcher for the Trawler orchestrator parent (monitor)
 _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
 submitit_folder: ${hydra.sweep.dir}/.submitit/%j
 timeout_min: 2880
@@ -8,7 +8,7 @@ cpus_per_task: 2
 mem_gb: 8
 partition: pierson
 array_parallelism: 1
-name: UAIR-monitor
+name: uair-monitor
 additional_parameters:
   gres: "none"
   wckey: ""

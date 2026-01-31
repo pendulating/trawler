@@ -5,7 +5,7 @@ prompt_template: |
   Classify the following urban AI use by utilizing a three-tier classification: 1) Prohibited, 2) High Risk, and 3) Limited or Low Risk. 
 
         Follow these four steps below:
-        1. Write a brief description of the urban AI usage, using similar language to the EU AI Act. The description should start with "The urban AI usage intended to be used ...", and be written in a single sentence.
+        1. Write a brief description of the urban AI usage, using similar language to the EU AI Act. The description should start with "The usage of AI is ...", and be written in a single sentence.
         2. Determine whether the urban AI usage is Prohibited or of High Risk, providing the exact text from the EU AI Act and explaining the reasoning. Be very strict and verify the reasoning.
         Assume High Risk unless there is clear evidence that it is Prohibited. Pay particular attention to the subject and user of the urban AI usage, as this is critical for classification.
         Ensure that the subject and user align with the text. They are very important. Also, ensure that you understand the purpose and the capability of the urban AI usage as this is highly critical for the risk classification.

@@ -607,6 +607,21 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
         return out
 
     # Prefer the longer NBL prompt; fall back to decompose or generic prompt
+    # Support prompt subdirectory override (e.g., 'general_ai' for general_ai/decompose_nbl_prompt.yaml)
+    prompt_subdir = getattr(cfg.runtime, "prompt_subdirectory", None)
+    if prompt_subdir:
+        # Load prompt from subdirectory file
+        try:
+            from .classify_shared import inject_prompt_from_file
+            inject_prompt_from_file(cfg, f"{prompt_subdir}/decompose_nbl_prompt.yaml")
+            # After injection, the prompt will be in cfg.prompt, so update cfg.prompt_decompose_nbl
+            if OmegaConf.select(cfg, "prompt.system_prompt"):
+                OmegaConf.update(cfg, "prompt_decompose_nbl.system_prompt", OmegaConf.select(cfg, "prompt.system_prompt"), merge=True)
+            if OmegaConf.select(cfg, "prompt.prompt_template"):
+                OmegaConf.update(cfg, "prompt_decompose_nbl.prompt_template", OmegaConf.select(cfg, "prompt.prompt_template"), merge=True)
+        except Exception:
+            pass  # Fall back to config-based loading
+    
     try:
         system_prompt = str(
             OmegaConf.select(cfg, "prompt_decompose_nbl.system_prompt")
