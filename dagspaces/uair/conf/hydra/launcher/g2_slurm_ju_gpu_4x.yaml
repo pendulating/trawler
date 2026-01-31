@@ -17,6 +17,9 @@ setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
   - source /share/pierson/matt/UAIR/.venv/bin/activate
+  # CRITICAL: Force CUDA_VISIBLE_DEVICES to match SLURM's actual allocation
+  # This prevents bashrc or prolog scripts from overriding with incorrect values
+  - if [ -n "$SLURM_JOB_GPUS" ]; then export CUDA_VISIBLE_DEVICES=$SLURM_JOB_GPUS; fi
   - unset WANDB_DISABLED
   - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
   - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
@@ -37,7 +40,5 @@ setup:
   # Set local TMPDIR to avoid issues with network drives
   - if [ -d /scratch ]; then export TMPDIR=/scratch/$USER; else export TMPDIR=/tmp/$USER; fi
   - mkdir -p $TMPDIR
-  # Let SLURM set CUDA_VISIBLE_DEVICES based on allocated GPUs for auto-detection
-  # Fallback: disable CPU bind via env if launcher ignores srun_args
   - export SLURM_CPU_BIND=none
 

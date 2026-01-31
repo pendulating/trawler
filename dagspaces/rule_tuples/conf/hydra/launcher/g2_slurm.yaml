@@ -17,7 +17,9 @@ setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
   - source activate /share/pierson/matt/conda/cillm-lora
+  # CRITICAL: Force CUDA_VISIBLE_DEVICES to match SLURM's actual allocation
+  # This prevents bashrc or prolog scripts from overriding with incorrect values
+  - if [ -n "$SLURM_JOB_GPUS" ]; then export CUDA_VISIBLE_DEVICES=$SLURM_JOB_GPUS; fi
   - export RULE_TUPLES_SILENT=1
   - export WANDB_SILENT=true
-  - export CUDA_VISIBLE_DEVICES=0,1,2,3
 
