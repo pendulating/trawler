@@ -36,9 +36,15 @@ setup:
   - export RAY_NAMESPACE=${oc.env:WANDB_GROUP,uair}
   - export VLLM_WORKER_MULTIPROC_METHOD=spawn
   - export VLLM_USE_V1=1
+  # Critical: Avoid shared memory broadcast hangs in V1 engine
+  - export VLLM_NO_SHM_BROADCAST=1
   - export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64,expandable_segments:True
   - export CUDA_LAUNCH_BLOCKING=0
   - export TOKENIZERS_PARALLELISM=false
+  - export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
+  # Set local TMPDIR to avoid issues with network drives
+  - if [ -d /scratch ]; then export TMPDIR=/scratch/$USER; else export TMPDIR=/tmp/$USER; fi
+  - mkdir -p $TMPDIR
   # Let SLURM set CUDA_VISIBLE_DEVICES based on allocated GPUs for auto-detection
   # Fallback: disable CPU bind via env if launcher ignores srun_args
   - export SLURM_CPU_BIND=none

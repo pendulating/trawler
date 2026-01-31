@@ -887,12 +887,37 @@ def _load_launcher_config(cfg: DictConfig, launcher_name: str) -> Optional[DictC
         raise ValueError(f"Failed to load launcher config '{launcher_name}': {e}") from e
 
 
+import contextlib
+
+@contextlib.contextmanager
+def _clean_slurm_env():
+    """Temporarily remove Slurm environment variables to prevent incorrect inheritance when nesting.
+    
+    When submitit submits child jobs from within a SLURM job, the parent's SLURM environment
+    variables can leak into the child job's submission context, causing issues like:
+    - Incorrect resource allocation
+    - Job dependency conflicts
+    - Namespace collisions
+    
+    This context manager temporarily removes all SLURM/SBATCH env vars during job submission.
+    """
+    slurm_vars = {k: v for k, v in os.environ.items() if k.startswith("SLURM") or k.startswith("SBATCH")}
+    for k in slurm_vars:
+        del os.environ[k]
+    try:
+        yield
+    finally:
+        os.environ.update(slurm_vars)
+
+
 def _create_submitit_executor(launcher_cfg: DictConfig, job_name: str, log_folder: str) -> Any:
     """Create a submitit executor from launcher configuration."""
     if not _SUBMITIT_AVAILABLE or submitit is None:
         raise RuntimeError("submitit is not available but is required for SLURM job submission")
     
-    executor = submitit.AutoExecutor(folder=log_folder)
+    # Clean SLURM env to prevent inheritance issues
+    with _clean_slurm_env():
+        executor = submitit.AutoExecutor(folder=log_folder)
     
     # Map launcher config to submitit parameters
     executor.update_parameters(
@@ -1144,20 +1169,100 @@ def run_experiment(cfg: DictConfig) -> None:
                         "output_root": output_root,
                     }
                     
-                    # Submit the job
-                    job = executor.submit(execute_stage_job, context_data)
+                    # Submit the job (clean SLURM env to prevent inheritance issues)
+                    with _clean_slurm_env():
+                        job = executor.submit(execute_stage_job, context_data)
                     _print_status({"node": node.key, "stage": node.stage, "status": "submitted", "job_id": job.job_id})
                     
-                    # Wait for the job to complete
+                    # Wait for the job to complete with error recovery
                     try:
-                        job_result = job.result()  # This blocks until the job completes
-                        result = StageResult(
-                            outputs=job_result["outputs"],
-                            metadata=job_result["metadata"],
-                        )
+                        # Blocking call to get result
+                        job_result = job.result()
                     except Exception as exc:
-                        _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": str(exc)})
-                        raise
+                        # Check if the job was actually cancelled or just misreported by submitit
+                        # This can happen due to signal handling issues or timing races
+                        try:
+                            import subprocess
+                            # Use squeue to check if the job is still alive
+                            check = subprocess.run(
+                                ["squeue", "-j", str(job.job_id), "-h", "-o", "%t"],
+                                capture_output=True, text=True, timeout=10
+                            )
+                            job_state = check.stdout.strip()
+                            
+                            if job_state in ("R", "PD", "CG"):
+                                # Job is still running/pending/completing - wait for it manually
+                                _print_status({
+                                    "debug": "job_misreported_as_failed",
+                                    "job_id": job.job_id,
+                                    "state": job_state,
+                                    "original_error": str(exc)
+                                })
+                                
+                                # Manual polling fallback
+                                while True:
+                                    time.sleep(30)
+                                    check = subprocess.run(
+                                        ["squeue", "-j", str(job.job_id), "-h", "-o", "%t"],
+                                        capture_output=True, text=True, timeout=10
+                                    )
+                                    current_state = check.stdout.strip()
+                                    if not current_state or current_state not in ("R", "PD", "CG"):
+                                        break
+                                
+                                # Try to read result from pickle file (submitit's fallback)
+                                if hasattr(job, 'paths') and hasattr(job.paths, 'result_pickle'):
+                                    if os.path.exists(job.paths.result_pickle):
+                                        import pickle
+                                        with open(job.paths.result_pickle, "rb") as f:
+                                            _outcome, _result = pickle.load(f)
+                                            job_result = _result
+                                            _print_status({
+                                                "debug": "recovered_result_from_pickle",
+                                                "job_id": job.job_id
+                                            })
+                                    else:
+                                        _print_status({
+                                            "node": node.key, "stage": node.stage,
+                                            "status": "failed", "job_id": job.job_id,
+                                            "error": f"Job completed but no result pickle found: {exc}"
+                                        })
+                                        raise
+                                else:
+                                    _print_status({
+                                        "node": node.key, "stage": node.stage,
+                                        "status": "failed", "job_id": job.job_id,
+                                        "error": f"Job completed but cannot access result paths: {exc}"
+                                    })
+                                    raise
+                            else:
+                                # Job actually failed
+                                _print_status({
+                                    "node": node.key, "stage": node.stage,
+                                    "status": "failed", "job_id": job.job_id,
+                                    "error": str(exc)
+                                })
+                                raise
+                        except subprocess.TimeoutExpired:
+                            _print_status({
+                                "node": node.key, "stage": node.stage,
+                                "status": "failed", "job_id": job.job_id,
+                                "error": f"squeue timeout while checking job status: {exc}"
+                            })
+                            raise
+                        except Exception as inner_exc:
+                            if 'job_result' not in dir():
+                                _print_status({
+                                    "node": node.key, "stage": node.stage,
+                                    "status": "failed", "job_id": job.job_id,
+                                    "error": f"{exc} (recovery failed: {inner_exc})"
+                                })
+                                raise exc from inner_exc
+                    
+                    result = StageResult(
+                        outputs=job_result["outputs"],
+                        metadata=job_result["metadata"],
+                    )
                 else:
                     # Run locally in the current process
                     _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})
