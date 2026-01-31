@@ -1,13 +1,14 @@
 import React, { useMemo, useEffect, useState, useCallback, useRef } from 'react';
 import DeckGL from '@deck.gl/react';
 import { _GlobeView as GlobeView, COORDINATE_SYSTEM } from '@deck.gl/core';
-import { SolidPolygonLayer, GeoJsonLayer, ScatterplotLayer, TextLayer, IconLayer } from '@deck.gl/layers';
+import { SolidPolygonLayer, GeoJsonLayer, ScatterplotLayer, TextLayer, IconLayer, ArcLayer } from '@deck.gl/layers';
 import Overlays from './Overlays.jsx';
 import ColorbarHUD from './ColorbarHUD.jsx';
 
 const WORLD_LOCAL_URL = '/world_countries.geojson';
 const WORLD_REMOTE_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson';
 const AI_URL = '/country_data.geojson';
+const ARC_URL = '/cross_country_mentions_by_year.json';
 
 const FIXED_ZOOM = 2.4;
 const ROTATE_DEG_PER_SEC = 6; // rotation speed
@@ -15,6 +16,12 @@ const SCALE_MAX = 0.15;
 const GROWTH_ABS_MAX = 0.10; // 10 percentage points
 const GROWTH_PCT_MAX = 1.0;  // 100% relative growth
 const VIEW_LATITUDE = 25; // Center around US/Western Europe
+const ARC_DEFAULT_MIN_SHARE = 0.02;
+const ARC_MAX_SEGMENTS = 600;
+const ARC_SHARE_HIGHLIGHT = 0.2;
+const ARC_MIN_ALPHA = 60;
+const ARC_MAX_ALPHA = 230;
+const NO_DATA_COLOR = [60, 65, 85, 160];
 
 function normalizeLongitude(lon) {
   let x = lon;
@@ -60,8 +67,14 @@ function interpolateStops(t, stops) {
 export default function App() {
   const [landData, setLandData] = useState(null);
   const [aiData, setAiData] = useState(null);
+  const [arcData, setArcData] = useState(null);
   const [periods, setPeriods] = useState([]);
   const [periodIndex, setPeriodIndex] = useState(0);
+  const [viewMode, setViewMode] = useState('surface');
+  const [arcYears, setArcYears] = useState([]);
+  const [arcYearIndex, setArcYearIndex] = useState(0);
+  const [arcMinShare, setArcMinShare] = useState(ARC_DEFAULT_MIN_SHARE);
+  const [arcMaxVisible, setArcMaxVisible] = useState(400);
   const [autoAdvance, setAutoAdvance] = useState(true);
   const [mode, setMode] = useState('fraction'); // 'fraction' | 'growth_abs' | 'growth_pct'
   const [growthPctMax, setGrowthPctMax] = useState(1.0);
@@ -182,6 +195,34 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(ARC_URL);
+        if (!resp.ok) return;
+        const json = await resp.json();
+        if (cancelled) return;
+        const records = Array.isArray(json) ? json : [];
+        setArcData(records);
+        const years = Array.from(
+          new Set(
+            records
+              .map(d => Number(d.year))
+              .filter(v => Number.isFinite(v))
+          )
+        ).sort((a, b) => a - b);
+        if (years.length) {
+          setArcYears(years);
+          setArcYearIndex(0);
+        }
+      } catch (e) {
+        console.error('Failed loading arc data', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     const id = requestAnimationFrame(() => setDeckMounted(true));
     return () => cancelAnimationFrame(id);
   }, []);
@@ -264,6 +305,14 @@ export default function App() {
     return [r, g, b, 220];
   }, [mode, growthPctMax]);
 
+  const getCountryFill = useCallback((props) => {
+    if (!periods.length) return NO_DATA_COLOR;
+    const periodKey = periods[periodIndex].replace('-', '_');
+    const total = Number(props[`total_${periodKey}`] || 0);
+    if (!total) return NO_DATA_COLOR;
+    return getAIColor(getMetricValue(props));
+  }, [periods, periodIndex, getMetricValue, getAIColor]);
+
   const background = useMemo(() => new SolidPolygonLayer({
     id: 'earth-background',
     data: [[[-180, 90], [0, 90], [180, 90], [180, -90], [0, -90], [-180, -90], [-180, 90]]],
@@ -301,7 +350,7 @@ export default function App() {
       filled: true,
       extruded: true,
       stroked: true,
-      getFillColor: f => getAIColor(getMetricValue(f.properties)),
+      getFillColor: f => getCountryFill(f.properties),
       getLineColor: [40, 60, 120, 180],
       lineWidthMinPixels: 1,
       getElevation: f => {
@@ -396,8 +445,6 @@ export default function App() {
     pickable: false
   }), []);
 
-  const layers = useMemo(() => [background, land, aiLayer, hudIconLayer, hudTextLayer].filter(Boolean), [background, land, aiLayer, hudIconLayer, hudTextLayer]);
-
   const updateCameraOverlay = useCallback(() => {
     const now = performance.now();
     if (now - lastCamOverlayTsRef.current < 100) return; // throttle ~10 fps
@@ -479,22 +526,32 @@ export default function App() {
 
   useEffect(() => {
     const handler = (e) => {
-      if (!periods.length) return;
-      if (e.key === 'ArrowRight') setPeriodIndex(i => (i + 1) % periods.length);
-      if (e.key === 'ArrowLeft') setPeriodIndex(i => (i + periods.length - 1) % periods.length);
+      if (e.key === 'a' || e.key === 'A') {
+        setViewMode(mode => (mode === 'surface' ? 'arcs' : 'surface'));
+        return;
+      }
+      if (viewMode === 'surface') {
+        if (!periods.length) return;
+        if (e.key === 'ArrowRight') setPeriodIndex(i => (i + 1) % periods.length);
+        if (e.key === 'ArrowLeft') setPeriodIndex(i => (i + periods.length - 1) % periods.length);
+      } else if (viewMode === 'arcs') {
+        if (!arcYears.length) return;
+        if (e.key === 'ArrowRight') setArcYearIndex(i => (i + 1) % arcYears.length);
+        if (e.key === 'ArrowLeft') setArcYearIndex(i => (i + arcYears.length - 1) % arcYears.length);
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [periods]);
+  }, [periods, arcYears, viewMode]);
 
   useEffect(() => {
-    if (!autoAdvance || periods.length <= 1 || !transitionsEnabled || paused) return;
+    if (viewMode !== 'surface' || !autoAdvance || periods.length <= 1 || !transitionsEnabled || paused) return;
     const next = () => setPeriodIndex(i => (i + 1) % periods.length);
     // First advance exactly at 5s mark (when transitionsEnabled flips) to align HUD and layers
     const firstId = setTimeout(next, 0);
     const intervalId = setInterval(next, 10000);
     return () => { clearTimeout(firstId); clearInterval(intervalId); };
-  }, [autoAdvance, periods, transitionsEnabled, paused]);
+  }, [autoAdvance, periods, transitionsEnabled, paused, viewMode]);
 
   const isFrontFacing = useCallback((lonDeg, latDeg) => {
     const lon = (lonDeg * Math.PI) / 180;
@@ -506,7 +563,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!aiData || !webglReady) return;
+    if (viewMode !== 'surface' || !aiData || !webglReady) {
+      setHudMarkers([]);
+      return;
+    }
     const deck = deckRef.current && deckRef.current.deck;
     if (!deck) return;
     let cancelled = false;
@@ -573,9 +633,19 @@ export default function App() {
       if (intervalId) clearInterval(intervalId);
       timeouts.forEach(id => clearTimeout(id));
     };
-  }, [aiData, webglReady, periods, periodIndex, isFrontFacing, paused]);
+  }, [aiData, webglReady, periods, periodIndex, isFrontFacing, paused, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== 'surface') {
+      setHoverUi(null);
+    }
+  }, [viewMode]);
 
   const onHover = useCallback((info) => {
+    if (viewMode !== 'surface') {
+      setHoverUi(null);
+      return;
+    }
     const now = performance.now();
     if (now - lastHoverTsRef.current < 80) return;
     lastHoverTsRef.current = now;
@@ -595,25 +665,49 @@ export default function App() {
       period,
       total: Number(total) || 0
     });
-  }, [periods, periodIndex]);
+  }, [periods, periodIndex, viewMode]);
+
+  const deckTooltip = useCallback(({ object, layer }) => {
+    if (!object) return null;
+    if (viewMode === 'arcs' && layer?.id === 'arc-links') {
+      const sharePct = ((object.mention_share || 0) * 100).toFixed(2);
+      return {
+        html: `
+          <div class="tooltip-country">${object.sourceName} → ${object.targetName}</div>
+          <div class="tooltip-row"><span class="tooltip-label">Year:</span><span class="tooltip-value">${object.year ?? '—'}</span></div>
+          <div class="tooltip-row"><span class="tooltip-label">Mentions:</span><span class="tooltip-value">${Number(object.mention_occurrences || 0).toLocaleString()}</span></div>
+          <div class="tooltip-row"><span class="tooltip-label">Share:</span><span class="tooltip-value">${sharePct}%</span></div>
+        `,
+        style: {
+          backgroundColor: 'rgba(15, 23, 42, 0.95)',
+          borderRadius: '8px',
+          padding: '10px 12px',
+          fontSize: '12px',
+          color: '#e2e8f0'
+        }
+      };
+    }
+    return null;
+  }, [viewMode]);
 
   const colorbarStops = useMemo(() => (mode === 'fraction' ? COLOR_STOPS : DIVERGING_STOPS), [mode]);
 
   const colorbarDots = useMemo(() => {
-    if (!aiData || !periods.length) return [];
+    if (viewMode !== 'surface' || !aiData || !periods.length) return [];
     const period = periods[periodIndex] || '';
     const pk = period.replace('-', '_');
     const feats = aiData.type === 'FeatureCollection' ? aiData.features : aiData;
     const out = [];
     for (const f of feats) {
       const p = f.properties || {};
+      const total = Number(p[`total_${pk}`] || 0);
+      if (!total) continue;
       const value = Number(
         mode === 'fraction' ? (p[`ai_fraction_${pk}`] || 0) :
         mode === 'growth_abs' ? (p[`ai_growth_${pk}`] || 0) :
         (p[`ai_growth_pct_${pk}`] || 0)
       );
       const name = p.country_name || p.ADMIN || p.NAME || '';
-      const total = Number(p[`total_${period.replace('-', '_')}`] || 0);
       const iso2 = (p.country_iso || p.ISO_A2 || p.iso_a2 || p.ISO_A2_EH || '').toLowerCase();
       const color = getAIColor(value);
       const jitterKey = iso2 || (p.country_iso || p.ISO_A2 || name || '');
@@ -625,7 +719,118 @@ export default function App() {
       out.push({ id: p.country_iso || p.ISO_A2 || name, iso2, name, total, value, color, jitterY: jitter });
     }
     return out;
-  }, [aiData, periods, periodIndex, mode, getAIColor]);
+  }, [aiData, periods, periodIndex, mode, getAIColor, viewMode]);
+
+  const currentArcYear = arcYears.length ? arcYears[arcYearIndex % arcYears.length] : null;
+
+  const arcYearBundle = useMemo(() => {
+    if (!arcData || !arcData.length || currentArcYear === null || !landData) {
+      return { rows: [], totalAvailable: 0, maxOccurrences: 0 };
+    }
+    const idx = labelIndexRef.current;
+    const rows = [];
+    for (const entry of arcData) {
+      const entryYear = Number(entry.year);
+      if (!Number.isFinite(entryYear) || entryYear !== currentArcYear) continue;
+      const sourceIso = (entry.source_country || '').toUpperCase();
+      const targetIso = (entry.mentioned_country || '').toUpperCase();
+      const sourcePos = idx.get(sourceIso);
+      const targetPos = idx.get(targetIso);
+      if (!sourcePos || !targetPos) continue;
+      const share = Number(entry.mention_share) || 0;
+      if (share < arcMinShare) continue;
+      rows.push({
+        ...entry,
+        year: entryYear,
+        source_country: sourceIso,
+        mentioned_country: targetIso,
+        mention_occurrences: Number(entry.mention_occurrences) || 0,
+        article_hits: Number(entry.article_hits) || 0,
+        mention_share: share,
+        sourcePosition: [sourcePos.lon, sourcePos.lat],
+        targetPosition: [targetPos.lon, targetPos.lat],
+        sourceName: entry.source_country_name || sourcePos.name || sourceIso,
+        targetName: entry.mentioned_country_name || targetPos.name || targetIso,
+      });
+    }
+    rows.sort((a, b) => b.mention_occurrences - a.mention_occurrences);
+    const totalAvailable = rows.length;
+    const limited = rows.slice(0, arcMaxVisible);
+    const maxOccurrences = limited.length ? limited[0].mention_occurrences : 0;
+    return { rows: limited, totalAvailable, maxOccurrences };
+  }, [arcData, arcYears, arcYearIndex, currentArcYear, arcMinShare, arcMaxVisible, landData]);
+
+  const arcNodes = useMemo(() => {
+    const nodeMap = new Map();
+    const accumulate = (iso, position, name, weight) => {
+      const key = iso;
+      const existing = nodeMap.get(key);
+      if (existing) {
+        existing.total += weight;
+      } else {
+        nodeMap.set(key, { id: key, position, name, iso2: iso.toLowerCase(), total: weight });
+      }
+    };
+    for (const row of arcYearBundle.rows) {
+      accumulate(row.source_country, row.sourcePosition, row.sourceName, row.mention_occurrences || 0);
+      accumulate(row.mentioned_country, row.targetPosition, row.targetName, row.mention_occurrences || 0);
+    }
+    return Array.from(nodeMap.values());
+  }, [arcYearBundle]);
+
+  const arcSummary = useMemo(() => ({
+    year: currentArcYear,
+    shown: arcYearBundle.rows.length,
+    available: arcYearBundle.totalAvailable
+  }), [arcYearBundle, currentArcYear]);
+
+  const arcLayer = useMemo(() => {
+    if (viewMode !== 'arcs' || !arcYearBundle.rows.length) return null;
+    const maxOcc = Math.max(arcYearBundle.maxOccurrences, 1);
+    const alphaFromShare = (share) => {
+      const intensity = Math.min(Math.max(share, 0) / ARC_SHARE_HIGHLIGHT, 1);
+      return Math.round(ARC_MIN_ALPHA + (ARC_MAX_ALPHA - ARC_MIN_ALPHA) * intensity);
+    };
+    return new ArcLayer({
+      id: 'arc-links',
+      data: arcYearBundle.rows,
+      coordinateSystem: COORDINATE_SYSTEM.LNGLAT,
+      greatCircle: true,
+      getSourcePosition: d => d.sourcePosition,
+      getTargetPosition: d => d.targetPosition,
+      getSourceColor: d => [64, 196, 255, alphaFromShare(d.mention_share || 0)],
+      getTargetColor: d => [248, 113, 113, alphaFromShare(d.mention_share || 0)],
+      getWidth: d => 1 + 8 * Math.sqrt((d.mention_occurrences || 0) / maxOcc),
+      pickable: true,
+      parameters: { depthTest: true, blend: true }
+    });
+  }, [arcYearBundle, viewMode]);
+
+  const arcNodeLayer = useMemo(() => {
+    if (viewMode !== 'arcs' || !arcNodes.length) return null;
+    const maxNodeWeight = arcNodes.reduce((max, node) => Math.max(max, node.total || 0), 0) || 1;
+    return new ScatterplotLayer({
+      id: 'arc-nodes',
+      data: arcNodes,
+      coordinateSystem: COORDINATE_SYSTEM.LNGLAT,
+      getPosition: d => d.position,
+      getFillColor: [15, 23, 42, 230],
+      getLineColor: [255, 255, 255, 200],
+      getRadius: d => 100000 + 800000 * Math.sqrt((d.total || 0) / maxNodeWeight),
+      stroked: true,
+      filled: true,
+      pickable: false,
+      radiusUnits: 'meters',
+      parameters: { depthTest: true }
+    });
+  }, [arcNodes, viewMode]);
+
+  const layers = useMemo(() => {
+    if (viewMode === 'surface') {
+      return [background, land, aiLayer, hudIconLayer, hudTextLayer].filter(Boolean);
+    }
+    return [background, land, arcLayer, arcNodeLayer].filter(Boolean);
+  }, [background, land, aiLayer, hudIconLayer, hudTextLayer, arcLayer, arcNodeLayer, viewMode]);
 
   return (
     <div style={{width: '100vw', height: '100vh', position: 'relative'}}>
@@ -637,6 +842,7 @@ export default function App() {
           initialViewState={initialViewState}
           onViewStateChange={onViewStateChange}
           layers={layers}
+          getTooltip={deckTooltip}
           useDevicePixels={1}
           glOptions={{ powerPreference: 'high-performance', antialias: false, stencil: false, desynchronized: true }}
           parameters={{ clearColor: [0.05, 0.08, 0.16, 1], depthTest: true, depthMask: true }}
@@ -647,40 +853,79 @@ export default function App() {
         />)}
       </div>
       <Overlays hoverUi={hoverUi} autoOverlays={autoOverlays} cameraOverlay={cameraOverlay} />
-      <ColorbarHUD leftPx={240} scaleMax={mode === 'fraction' ? SCALE_MAX : (growthPctMax || 1)} dots={colorbarDots} gradientStops={colorbarStops} mode={mode} transitionsEnabled={transitionsEnabled} />
-      <div style={{position: 'absolute', top: 12, left: 12, background: 'rgba(15,23,42,0.8)', padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)'}}>
-        <div style={{fontSize: 12, color: '#94a3b8'}}>Period</div>
-        <div style={{position: 'relative', width: 120, height: 22, overflow: 'hidden'}}>
-          <div style={{position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', transform: isPeriodSliding ? 'translateY(-100%)' : 'translateY(0%)', transition: disablePeriodTransition ? 'none' : 'transform 5000ms ease-in-out'}}>
-            <div style={{position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', display: 'flex', alignItems: 'center', color: '#AFC7FF', fontSize: 14, fontWeight: 600}}>
-              {periodLabelTop || '—'}
-            </div>
-            <div style={{position: 'absolute', left: 0, top: '100%', width: '100%', height: '100%', display: 'flex', alignItems: 'center', color: '#AFC7FF', fontSize: 14, fontWeight: 600}}>
-              {nextPeriodLabel}
-            </div>
-          </div>
+      {viewMode === 'surface' && (
+        <ColorbarHUD leftPx={240} scaleMax={mode === 'fraction' ? SCALE_MAX : (growthPctMax || 1)} dots={colorbarDots} gradientStops={colorbarStops} mode={mode} transitionsEnabled={transitionsEnabled} />
+      )}
+      <div style={{position: 'absolute', top: 12, left: 12, background: 'rgba(15,23,42,0.8)', padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', width: 220, pointerEvents: 'auto'}}>
+        <div style={{fontSize: 12, color: '#94a3b8'}}>View</div>
+        <div style={{marginTop: 6, display: 'flex', gap: 6}}>
+          <button onClick={() => setViewMode('surface')} style={{flex: 1, padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', color: viewMode === 'surface' ? '#0b1026' : '#cbd5e1', background: viewMode === 'surface' ? '#AFC7FF' : 'transparent', cursor: 'pointer'}}>
+            AI Coverage
+          </button>
+          <button onClick={() => setViewMode('arcs')} style={{flex: 1, padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', color: viewMode === 'arcs' ? '#0b1026' : '#cbd5e1', background: viewMode === 'arcs' ? '#AFC7FF' : 'transparent', cursor: 'pointer'}}>
+            Cross-links
+          </button>
         </div>
-        <div style={{marginTop: 6, fontSize: 11, color: '#94a3b8'}}>Use ← → to change period</div>
-        <label style={{display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 12, color: '#cbd5e1', cursor: 'pointer'}}>
-          <input type="checkbox" checked={autoAdvance} onChange={e => setAutoAdvance(e.target.checked)} />
-          Auto-advance (5s)
-        </label>
-        <button onClick={() => setPaused(p => !p)} style={{marginTop: 8, padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', color: paused ? '#0b1026' : '#cbd5e1', background: paused ? '#AFC7FF' : 'transparent', cursor: 'pointer'}}>
+
+        {viewMode === 'surface' ? (
+          <>
+            <div style={{marginTop: 10, fontSize: 12, color: '#94a3b8'}}>Period</div>
+            <div style={{position: 'relative', width: '100%', height: 22, overflow: 'hidden'}}>
+              <div style={{position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', transform: isPeriodSliding ? 'translateY(-100%)' : 'translateY(0%)', transition: disablePeriodTransition ? 'none' : 'transform 5000ms ease-in-out'}}>
+                <div style={{position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', display: 'flex', alignItems: 'center', color: '#AFC7FF', fontSize: 14, fontWeight: 600}}>
+                  {periodLabelTop || '—'}
+                </div>
+                <div style={{position: 'absolute', left: 0, top: '100%', width: '100%', height: '100%', display: 'flex', alignItems: 'center', color: '#AFC7FF', fontSize: 14, fontWeight: 600}}>
+                  {nextPeriodLabel}
+                </div>
+              </div>
+            </div>
+            <div style={{marginTop: 6, fontSize: 11, color: '#94a3b8'}}>Use ← → to change period</div>
+            <label style={{display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 12, color: '#cbd5e1', cursor: 'pointer'}}>
+              <input type="checkbox" checked={autoAdvance} onChange={e => setAutoAdvance(e.target.checked)} />
+              Auto-advance (5s)
+            </label>
+            <div style={{marginTop: 10, fontSize: 12, color: '#94a3b8'}}>Mode</div>
+            <div style={{marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap'}}>
+              <button onClick={() => setMode('fraction')} style={{flex: 1, padding: '4px 6px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', color: mode === 'fraction' ? '#0b1026' : '#cbd5e1', background: mode === 'fraction' ? '#AFC7FF' : 'transparent', cursor: 'pointer'}}>
+                AI Fraction
+              </button>
+              <button onClick={() => setMode('growth_abs')} style={{flex: 1, padding: '4px 6px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', color: mode === 'growth_abs' ? '#0b1026' : '#cbd5e1', background: mode === 'growth_abs' ? '#AFC7FF' : 'transparent', cursor: 'pointer'}}>
+                Growth (Δ)
+              </button>
+              <button onClick={() => setMode('growth_pct')} style={{flex: 1, padding: '4px 6px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', color: mode === 'growth_pct' ? '#0b1026' : '#cbd5e1', background: mode === 'growth_pct' ? '#AFC7FF' : 'transparent', cursor: 'pointer'}}>
+                Growth (%)
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{marginTop: 10, fontSize: 12, color: '#94a3b8'}}>Year</div>
+            <div style={{marginTop: 6, display: 'flex', alignItems: 'center', gap: 8}}>
+              <button disabled={!arcYears.length} onClick={() => arcYears.length && setArcYearIndex(i => (i + arcYears.length - 1) % arcYears.length)} style={{padding: '4px 6px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', cursor: arcYears.length ? 'pointer' : 'not-allowed'}}>
+                ‹
+              </button>
+              <div style={{flex: 1, textAlign: 'center', color: '#AFC7FF', fontSize: 14, fontWeight: 600}}>
+                {arcSummary.year ?? '—'}
+              </div>
+              <button disabled={!arcYears.length} onClick={() => arcYears.length && setArcYearIndex(i => (i + 1) % arcYears.length)} style={{padding: '4px 6px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#cbd5e1', cursor: arcYears.length ? 'pointer' : 'not-allowed'}}>
+                ›
+              </button>
+            </div>
+            <div style={{marginTop: 6, fontSize: 11, color: '#94a3b8'}}>Use ← → to change year</div>
+            <div style={{marginTop: 10, fontSize: 12, color: '#94a3b8'}}>Min mention share</div>
+            <input type="range" min="0" max="0.2" step="0.005" value={arcMinShare} onChange={e => setArcMinShare(Number(e.target.value))} style={{width: '100%'}} />
+            <div style={{fontSize: 11, color: '#cbd5e1'}}>{(arcMinShare * 100).toFixed(1)}%</div>
+            <div style={{marginTop: 10, fontSize: 12, color: '#94a3b8'}}>Max arcs</div>
+            <input type="range" min="50" max={ARC_MAX_SEGMENTS} step="10" value={arcMaxVisible} onChange={e => setArcMaxVisible(Number(e.target.value))} style={{width: '100%'}} />
+            <div style={{fontSize: 11, color: '#cbd5e1'}}>{arcSummary.shown.toLocaleString()} shown · {arcSummary.available.toLocaleString()} available</div>
+          </>
+        )}
+
+        <button onClick={() => setPaused(p => !p)} style={{marginTop: 12, width: '100%', padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', color: paused ? '#0b1026' : '#cbd5e1', background: paused ? '#AFC7FF' : 'transparent', cursor: 'pointer'}}>
           {paused ? 'Play' : 'Pause'}
         </button>
-        <div style={{marginTop: 10}} />
-        <div style={{fontSize: 12, color: '#94a3b8'}}>Mode</div>
-        <div style={{marginTop: 6, display: 'flex', gap: 6}}>
-          <button onClick={() => setMode('fraction')} style={{padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', color: mode === 'fraction' ? '#0b1026' : '#cbd5e1', background: mode === 'fraction' ? '#AFC7FF' : 'transparent', cursor: 'pointer'}}>
-            AI Fraction
-          </button>
-          <button onClick={() => setMode('growth_abs')} style={{padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', color: mode === 'growth_abs' ? '#0b1026' : '#cbd5e1', background: mode === 'growth_abs' ? '#AFC7FF' : 'transparent', cursor: 'pointer'}}>
-            Growth (Δ pct-pts)
-          </button>
-          <button onClick={() => setMode('growth_pct')} style={{padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', color: mode === 'growth_pct' ? '#0b1026' : '#cbd5e1', background: mode === 'growth_pct' ? '#AFC7FF' : 'transparent', cursor: 'pointer'}}>
-            Growth (% rel)
-          </button>
-        </div>
+        <div style={{marginTop: 6, fontSize: 11, color: '#94a3b8'}}>Shortcut: press “A” to toggle view</div>
       </div>
     </div>
   );

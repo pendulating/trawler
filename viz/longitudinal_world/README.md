@@ -27,10 +27,13 @@ longitudinal_world/
 
 ```bash
 # Install required Python packages
-pip install pandas geopandas requests
+pip install pandas geopandas requests flashtext
 
-# Run the data preparation script
+# Run the AI-fraction and geometry preparation script
 python prepare_geo_data.py
+
+# (Optional) Build cross-country mention datasets for the arc view
+python prepare_cross_country_mentions.py
 ```
 
 This will:
@@ -38,6 +41,7 @@ This will:
 2. Calculate AI-relevant fractions per country per time period
 3. Download country geometries from Natural Earth
 4. Merge and export to `country_data.geojson`
+5. (Optional) Aggregate cross-country mention counts and export `cross_country_mentions_by_year.json`
 
 ### Step 2: Run Visualization (Node.js)
 
