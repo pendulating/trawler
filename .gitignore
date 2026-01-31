@@ -205,3 +205,28 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# Hydra
+**/multirun/ 
+**/outputs/
+**/global_subset
+**/wandb/
+.slurm_jobs/
+cldr/
+
+# Trawler project-specific ignores
+# Data files (users download separately)
+data/
+
+# Debug artifacts
+debug/
+
+# Process ID files
+*.pid
+
+# AI assistant files
+.serena/
+
+# Large font assets
+assets/fonts/
