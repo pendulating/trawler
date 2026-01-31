@@ -1,7 +1,0 @@
-wandb:
-  mode: online
-  project: sensing-ai-risks
-  prefix: exp_
-  suffix: _twopass
-
-

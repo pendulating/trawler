@@ -1,5 +1,0 @@
-pipeline:
-  in_process: false
-  dry_run: false
-
-

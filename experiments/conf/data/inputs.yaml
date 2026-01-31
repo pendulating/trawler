@@ -1,4 +1,0 @@
-data:
-  input_parquet: ${env:DATA_ROOT,/share/pierson/matt/UAIR/data}/global_subset/all_articles.parquet
-
-
