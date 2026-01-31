@@ -1,6 +1,6 @@
-# UAIR Pipeline Framework Documentation
+# Trawler Pipeline Framework Documentation
 
-Build scalable, configuration-driven dagspaces for Urban AI Risk assessment.
+Build scalable, configuration-driven pipelines for large-scale text dataset processing.
 
 ---
 
@@ -8,10 +8,10 @@ Build scalable, configuration-driven dagspaces for Urban AI Risk assessment.
 
 ### For Beginners
 
-Start here if you are new to UAIR:
+Start here if you are new to Trawler:
 
 1. **[User Guide](USER_GUIDE.md)** - Complete introduction
-   - What is UAIR?
+   - What is Trawler?
    - Quick Start
    - Core Concepts (architecture, configuration, stages)
    - Required reading for understanding the framework
@@ -40,13 +40,6 @@ Once you understand the basics:
    - Stage reference
    - Troubleshooting tips
 
-### Advanced Topics (Coming Soon)
-
-5. **SLURM Guide** - Distributed execution on clusters
-6. **Complete Examples** - End-to-end pipeline walkthroughs
-7. **API Reference** - Detailed API documentation
-8. **Troubleshooting** - Common issues and solutions
-
 ---
 
 ## Quick Start
@@ -54,9 +47,9 @@ Once you understand the basics:
 ### 1. Installation
 
 ```bash
-cd /share/pierson/matt/UAIR
+cd /path/to/trawler
 source .venv/bin/activate
-pip install -r requirements.txt
+uv pip install -e .
 ```
 
 ### 2. Run Your First Pipeline
@@ -71,7 +64,7 @@ python -m dagspaces.uair.cli \
 
 ### 3. Explore the Documentation
 
-- **New to dagspaces?** → [User Guide](USER_GUIDE.md#quick-start)
+- **New to pipelines?** → [User Guide](USER_GUIDE.md#quick-start)
 - **Building a custom pipeline?** → [Configuration Guide](CONFIGURATION_GUIDE.md#pipeline-recipes)
 - **Need a new stage?** → [Custom Stages Guide](CUSTOM_STAGES_GUIDE.md#simple-stage-template)
 - **Need quick help?** → [Quick Reference](QUICK_REFERENCE.md)
@@ -97,10 +90,12 @@ Articles → Relevance Filter → [Topic Modeling | Sentiment Analysis | Risk Sc
 Articles → Coarse Classification → Fine-Grained Analysis → Quality Check
 ```
 
-**Custom Domain dagspaces**
+**Custom Domain Pipelines**
+- News article analysis (uair dagspace)
+- Historical text norm extraction (historical_norms dagspace)
+- Social media rule analysis (rule_tuples dagspace)
 - Medical text analysis
 - Legal document processing
-- Code vulnerability detection
 - Scientific literature mining
 
 ---
@@ -128,8 +123,8 @@ Articles → Coarse Classification → Fine-Grained Analysis → Quality Check
 
 ### Key Features
 
-- **DAG-based dagspaces**: Express complex workflows as directed graphs
-- **Configuration-Driven**: No code changes needed for new dagspaces
+- **DAG-based pipelines**: Express complex workflows as directed graphs
+- **Configuration-Driven**: No code changes needed for new pipelines
 - **Distributed Execution**: Scale to large datasets with Ray + SLURM
 - **LLM Integration**: Built-in vLLM support with automatic GPU management
 - **Experiment Tracking**: Automatic W&B logging
@@ -153,7 +148,7 @@ Articles → Coarse Classification → Fine-Grained Analysis → Quality Check
 2. Build a custom pipeline using recipes (90 min)
 3. Learn [Per-Node Configuration](CONFIGURATION_GUIDE.md#per-node-configuration) (30 min)
 
-**Goal**: Build production-ready dagspaces from templates
+**Goal**: Build production-ready pipelines from templates
 
 ### Advanced Track (5+ hours)
 
@@ -162,6 +157,18 @@ Articles → Coarse Classification → Fine-Grained Analysis → Quality Check
 3. Deploy to SLURM cluster (1+ hours)
 
 **Goal**: Extend the framework for your domain
+
+---
+
+## Available Dagspaces
+
+Trawler organizes domain-specific pipelines into **dagspaces**:
+
+| Dagspace | Domain | Entry Point |
+|----------|--------|-------------|
+| **uair** | News AI Analysis | `python -m dagspaces.uair.cli` |
+| **historical_norms** | Historical Text Analysis | `python -m dagspaces.historical_norms.cli` |
+| **rule_tuples** | Social Media Rules | `python -m dagspaces.rule_tuples.cli` |
 
 ---
 
@@ -230,27 +237,9 @@ python -m dagspaces.uair.cli \
 
 ### Workflow 4: Build and Test Custom Stage
 
-1. Create stage: `dagspaces/uair/stages/mystage.py`
-2. Register: Add to `_STAGE_REGISTRY` in `orchestrator.py`
-3. Test: `python -m dagspaces.uair.cli pipeline=test_mystage`
-
----
-
-## Contributing
-
-### Adding a New Stage
-
-See [Custom Stages Guide - Registering Your Stage](CUSTOM_STAGES_GUIDE.md#registering-your-stage)
-
-### Improving Documentation
-
-Documentation lives in `/share/pierson/matt/UAIR/docs/`
-
-To contribute:
-1. Edit relevant markdown file
-2. Follow existing structure and style
-3. Add examples and code snippets
-4. Update this README's table of contents if needed
+1. Create stage: `dagspaces/{dagspace}/stages/mystage.py`
+2. Register: Add to stage registry in `runners/__init__.py`
+3. Test: `python -m dagspaces.{dagspace}.cli pipeline=test_mystage`
 
 ---
 
@@ -278,20 +267,6 @@ To contribute:
 
 ---
 
-## Built-in Stages
-
-| Stage | Input | Output | Purpose |
-|-------|-------|--------|---------|
-| **classify** | Articles | `is_relevant` flag | Filter relevant articles |
-| **taxonomy** | Articles | `chunk_label` | Assign risk categories |
-| **decompose** | Articles | `ci_*` fields | Extract structured info |
-| **topic** | Articles | `topic_id` | Unsupervised clustering |
-| **verification** | Labeled articles | `verify_*` scores | Validate claims |
-
-See [Quick Reference - Stage Reference](QUICK_REFERENCE.md#stage-reference) for details.
-
----
-
 ## External Resources
 
 ### Technologies Used
@@ -303,24 +278,10 @@ See [Quick Reference - Stage Reference](QUICK_REFERENCE.md#stage-reference) for 
 - [SLURM](https://slurm.schedmd.com/) - Job scheduling
 - [Weights & Biases](https://wandb.ai/) - Experiment tracking
 
-### Related Projects
-
-- **UAIR Research**: Urban AI Risks assessment project
-- **Weitz Taxonomy**: Climate adaptation AI risks
-
----
-
-## Contact
-
-For questions about UAIR framework:
-- Check existing documentation first
-- Review code examples in `dagspaces/uair/`
-- Consult [Quick Reference](QUICK_REFERENCE.md) troubleshooting section
-
 ---
 
 Ready to build your first pipeline? Start with the [User Guide](USER_GUIDE.md).
 
 ---
 
-*Documentation last updated: 2025-10-02*
+*Documentation last updated: 2026-01-31*

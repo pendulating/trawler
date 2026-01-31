@@ -1,95 +1,30 @@
-# UAIR: Urban AI Risks Assessment Framework
+# Trawler: Large-Scale Text Pipeline Framework
 
-Large-scale AI-powered analysis of urban AI risks in news media.
+A configurable DAG-based pipeline framework for processing large text datasets with LLM integration.
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
 
 ## Overview
 
-UAIR (Urban AI Risks) is a scalable pipeline framework for assessing AI-related risks in urban contexts through large-scale inference over news article datasets. The framework enables researchers to:
+Trawler is a scalable pipeline framework for running multi-stage text processing workflows over large datasets. Built on Ray Data for distributed processing and vLLM for efficient LLM inference, Trawler enables researchers and engineers to:
 
-- **Classify** articles for AI relevance using LLM-powered or heuristic methods
-- **Categorize** articles into risk taxonomies (climate adaptation, governance, ethics)
-- **Extract** structured information about AI deployments and impacts
-- **Cluster** articles by topic to discover emerging patterns
-- **Verify** claims and validate extracted information
+- **Define** complex multi-stage pipelines as YAML DAGs
+- **Process** millions of documents using distributed computing
+- **Integrate** LLMs for classification, extraction, and synthesis
+- **Track** experiments automatically with Weights & Biases
+- **Deploy** on local machines or SLURM clusters
 
 ### Key Features
 
-- **Configuration-Driven**: Define complex multi-stage dagspaces in YAML, no code changes needed
-- **Scalable**: Process millions of articles using Ray Data and SLURM clusters
+- **Configuration-Driven**: Define pipelines in YAML, no code changes needed
+- **Dagspace Architecture**: Modular domain-specific pipeline configurations
+- **Scalable**: Process millions of records using Ray Data and SLURM clusters
 - **LLM-Integrated**: Built-in vLLM support with automatic GPU management
-- **Modular**: Mix and match stages, models, and datasets
-- **Tracked**: Automatic experiment logging with Weights & Biases
 - **Extensible**: Easy to add custom processing stages
-
----
-
-## Quick Start
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/your-org/UAIR.git
-cd UAIR
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-uv pip install -r requirements.txt
-```
-
-### Run Your First Pipeline
-
-```bash
-# Topic modeling on a sample of articles
-python -m dagspaces.uair.cli \
-  runtime.debug=true \
-  runtime.sample_n=100 \
-  data.parquet_path=/path/to/articles.parquet
-```
-
-### Example: Full Risk Assessment Pipeline
-
-```bash
-# Complete pipeline: classify → taxonomy → verify
-python -m dagspaces.uair.cli \
-  pipeline=taxonomy_full \
-  data.parquet_path=/path/to/articles.parquet
-```
-
-Results are saved to `outputs/` with full experiment tracking in W&B.
-
----
-
-## Documentation
-
-Complete documentation is available in `docs/`:
-
-### Getting Started
-
-- **[Documentation Hub](docs/README.md)** - Documentation navigation and index
-- **[User Guide](docs/USER_GUIDE.md)** - Complete introduction with Quick Start
-- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Command cheat sheet
-
-### Building dagspaces
-
-- **[Configuration Guide](docs/CONFIGURATION_GUIDE.md)** - Pipeline recipes and config patterns
-- **[Custom Stages Guide](docs/CUSTOM_STAGES_GUIDE.md)** - Building custom processing stages
-
-### Learning Path
-
-| Level | Time | What to Read |
-|-------|------|--------------|
-| **Beginner** | 1-2 hours | [User Guide](docs/USER_GUIDE.md) (Intro + Quick Start + Core Concepts) |
-| **Intermediate** | 3-4 hours | [Configuration Guide](docs/CONFIGURATION_GUIDE.md) (Pipeline Recipes) |
-| **Advanced** | 5+ hours | [Custom Stages Guide](docs/CUSTOM_STAGES_GUIDE.md) (Build custom stages) |
+- **Tracked**: Automatic experiment logging with Weights & Biases
 
 ---
 
@@ -100,7 +35,7 @@ Complete documentation is available in `docs/`:
 │                    Pipeline Definition (YAML)                    │
 ├─────────────────────────────────────────────────────────────────┤
 │  Sources → Stage 1 → Stage 2 → Stage 3 → Outputs               │
-│  (Data)    (classify) (taxonomy) (verify)  (Parquet)           │
+│  (Data)    (filter)  (extract) (synth)   (Parquet)             │
 ├─────────────────────────────────────────────────────────────────┤
 │              Orchestrator (DAG Execution Engine)                 │
 ├─────────────────────────────────────────────────────────────────┤
@@ -110,122 +45,142 @@ Complete documentation is available in `docs/`:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Built-in Processing Stages
+### Dagspaces
 
-| Stage | Purpose | Input | Output |
-|-------|---------|-------|--------|
-| **classify** | Relevance filtering | Raw articles | `is_relevant` flag |
-| **taxonomy** | Risk categorization | Articles | `chunk_label` (risk category) |
-| **decompose** | Info extraction | Articles | Structured fields |
-| **topic** | Topic modeling | Articles | `topic_id`, cluster info |
-| **verification** | Claim validation | Labeled articles | Verification scores |
+Trawler organizes domain-specific pipelines into **dagspaces** - self-contained modules with their own stages, configurations, and prompts:
+
+| Dagspace | Domain | Description |
+|----------|--------|-------------|
+| **uair** | News Analysis | AI risk assessment in news media coverage |
+| **historical_norms** | Literature | Norm extraction from historical texts |
+| **rule_tuples** | Social Media | Rule classification from Reddit communities |
+
+Each dagspace follows a consistent structure:
+
+```
+dagspaces/{name}/
+├── cli.py                 # Hydra CLI entry point
+├── orchestrator.py        # Pipeline execution engine
+├── conf/                  # Configuration files
+│   ├── config.yaml        # Base config
+│   ├── pipeline/          # Pipeline DAG definitions
+│   ├── prompt/            # LLM prompt templates
+│   └── model/             # Model configurations
+├── runners/               # Stage runner classes
+└── stages/                # Stage implementations
+```
+
+---
+
+## Quick Start
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/your-org/trawler.git
+cd trawler
+
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate
+
+# Install with uv (recommended)
+uv pip install -e .
+```
+
+### Run a Pipeline
+
+```bash
+# Run the UAIR news analysis pipeline
+python -m dagspaces.uair.cli \
+  pipeline=full_event_pipeline \
+  data.parquet_path=/path/to/articles.parquet
+
+# Run historical norms extraction
+python -m dagspaces.historical_norms.cli \
+  pipeline=norm_extraction \
+  data.parquet_path=/path/to/texts.parquet
+```
+
+### Debug Mode
+
+```bash
+# Run with sampling for quick iteration
+python -m dagspaces.uair.cli \
+  runtime.debug=true \
+  runtime.sample_n=100 \
+  data.parquet_path=/path/to/data.parquet
+```
+
+---
+
+## Documentation
+
+Complete documentation is available in `docs/`:
+
+| Document | Description |
+|----------|-------------|
+| [User Guide](docs/USER_GUIDE.md) | Complete introduction and Quick Start |
+| [Configuration Guide](docs/CONFIGURATION_GUIDE.md) | Pipeline recipes and config patterns |
+| [Custom Stages Guide](docs/CUSTOM_STAGES_GUIDE.md) | Building custom processing stages |
+| [Quick Reference](docs/QUICK_REFERENCE.md) | Command cheat sheet |
 
 ---
 
 ## Project Structure
 
 ```
-UAIR/
-├── docs/                          # Documentation
-│   ├── README.md                  # Documentation hub
-│   ├── USER_GUIDE.md              # Complete user guide
-│   ├── CUSTOM_STAGES_GUIDE.md     # Build custom stages
-│   ├── CONFIGURATION_GUIDE.md     # Config recipes
-│   └── QUICK_REFERENCE.md         # Cheat sheet
-├── dagspaces/uair/                # Core framework
-│   ├── cli.py                     # CLI entry point
-│   ├── orchestrator.py            # Pipeline orchestrator
-│   ├── config_schema.py           # Configuration schemas
-│   ├── wandb_logger.py            # W&B integration
-│   ├── conf/                      # Configuration files
-│   │   ├── config.yaml            # Base config
-│   │   ├── data/                  # Data source configs
-│   │   ├── model/                 # Model configs
-│   │   ├── prompt/                # Prompt templates
-│   │   ├── pipeline/              # Pipeline definitions
-│   │   └── hydra/launcher/        # SLURM configs
-│   └── stages/                    # Processing stages
-│       ├── classify.py            # Relevance classification
-│       ├── taxonomy.py            # Risk categorization
-│       ├── topic.py               # Topic modeling
-│       ├── verify.py              # Verification
-│       └── decompose.py           # Information extraction
-├── scripts/                       # Utility scripts
-├── data/                          # Data directory
-├── outputs/                       # Pipeline outputs
-└── requirements.txt               # Python dependencies
+trawler/
+├── dagspaces/                    # Domain-specific pipelines
+│   ├── uair/                     # News AI analysis
+│   │   ├── cli.py                # CLI entry point
+│   │   ├── orchestrator.py       # Pipeline orchestrator
+│   │   ├── conf/                 # Configuration files
+│   │   ├── runners/              # Stage runners
+│   │   └── stages/               # Stage implementations
+│   ├── historical_norms/         # Historical text analysis
+│   └── rule_tuples/              # Social media rules
+├── docs/                         # Documentation
+├── notebooks/                    # Analysis notebooks
+├── scripts/                      # Utility scripts
+├── viz/                          # Visualization projects
+└── pyproject.toml                # Project configuration
 ```
 
 ---
 
-## Use Cases
+## Pipeline Configuration
 
-### Urban AI Risks Assessment (Primary)
-
-Analyze news coverage of AI deployments in urban contexts:
+Trawler uses [Hydra](https://hydra.cc/) for hierarchical configuration. Pipelines are defined as DAGs in YAML:
 
 ```yaml
-# conf/pipeline/urban_risks.yaml
+# conf/pipeline/my_pipeline.yaml
 pipeline:
+  sources:
+    articles:
+      path: ${data.parquet_path}
   graph:
     nodes:
-      classify:  # Filter AI-relevant articles
-        stage: classify
-      taxonomy:  # Categorize by risk type
-        stage: taxonomy
+      classify:
+        stage: classify_relevance
+        inputs: {articles: articles}
+        outputs: [classified]
+      extract:
+        stage: decompose
         depends_on: [classify]
-      verify:    # Validate claims
-        stage: verification
-        depends_on: [taxonomy]
+        inputs: {articles: classified}
+        outputs: [extracted]
 ```
 
-### Custom Domain Analysis
-
-Adapt for other domains (medical, legal, scientific):
-
-1. Define your taxonomy in `conf/taxonomy/my_domain.yaml`
-2. Create custom prompts in `conf/prompt/my_prompts.yaml`
-3. Build pipeline in `conf/pipeline/my_pipeline.yaml`
-4. Run: `python -m dagspaces.uair.cli pipeline=my_pipeline`
-
-See [Custom Stages Guide](docs/CUSTOM_STAGES_GUIDE.md) for details.
-
----
-
-## Example dagspaces
-
-### Topic Modeling
+**Override from command line:**
 
 ```bash
-# Discover topics in your dataset
-python -m dagspaces.uair.cli \
-  pipeline=cluster_topic \
-  topic.embed.device=cuda \
-  data.parquet_path=/data/articles.parquet
-```
-
-### Multi-Stage Analysis
-
-```bash
-# Full pipeline with classification, taxonomy, and verification
-python -m dagspaces.uair.cli \
-  pipeline=taxonomy_full \
-  runtime.sample_n=1000 \
-  data.parquet_path=/data/articles.parquet
-```
-
-### Custom Configuration
-
-```bash
-# Override GPU and batch settings
 python -m dagspaces.uair.cli \
   pipeline=my_pipeline \
-  model.engine_kwargs.max_model_len=8192 \
   model.batch_size=16 \
-  model.engine_kwargs.tensor_parallel_size=4
+  runtime.sample_n=1000
 ```
-
-More examples in [Configuration Guide](docs/CONFIGURATION_GUIDE.md#pipeline-recipes).
 
 ---
 
@@ -234,7 +189,6 @@ More examples in [Configuration Guide](docs/CONFIGURATION_GUIDE.md#pipeline-reci
 ### Local Execution
 
 ```bash
-# Run locally (no SLURM)
 python -m dagspaces.uair.cli \
   hydra/launcher=null \
   runtime.sample_n=100
@@ -243,103 +197,74 @@ python -m dagspaces.uair.cli \
 ### SLURM Cluster
 
 ```bash
-# Submit to SLURM with GPU
 python -m dagspaces.uair.cli \
-  pipeline=my_pipeline \
+  pipeline=full_event_pipeline \
   hydra/launcher=g2_slurm_gpu_4x
 ```
-
-See [Configuration Guide - SLURM Launchers](docs/CONFIGURATION_GUIDE.md#slurm-launcher-configuration) for details.
-
----
-
-## Configuration
-
-UAIR uses [Hydra](https://hydra.cc/) for hierarchical configuration:
-
-```yaml
-# config.yaml
-defaults:
-  - data: inputs
-  - model: vllm_qwen3-30b
-  - prompt: classify
-  - pipeline: null
-
-runtime:
-  debug: false
-  sample_n: null
-  output_root: ./outputs
-
-pipeline:
-  sources:
-    articles:
-      path: ${data.parquet_path}
-  graph:
-    nodes:
-      # Define your stages here
-```
-
-**Override from command line**:
-```bash
-python -m dagspaces.uair.cli \
-  runtime.debug=true \
-  model.batch_size=8 \
-  data.parquet_path=/path/to/data.parquet
-```
-
-See [Configuration Guide](docs/CONFIGURATION_GUIDE.md) for comprehensive patterns.
 
 ---
 
 ## Development
 
-### Running Tests
-
-```bash
-# Install dev dependencies
-pip install -r requirements-dev.txt
-
-# Run tests
-pytest tests/
-
-# Run with coverage
-pytest --cov=dagspaces tests/
-```
-
 ### Creating a Custom Stage
 
-1. **Implement stage function** in `dagspaces/uair/stages/mystage.py`:
+1. **Implement stage function** in `dagspaces/{name}/stages/mystage.py`:
+
 ```python
 def run_mystage(df, cfg):
+    """Process dataframe with custom logic."""
     # Your processing logic
     return df
 ```
 
-2. **Register stage** in `orchestrator.py`:
+2. **Create runner** in `dagspaces/{name}/runners/mystage.py`:
+
 ```python
+from .base import StageRunner
+
 class MyStageRunner(StageRunner):
     stage_name = "mystage"
+    
     def run(self, context):
-        # ...
+        from ..stages.mystage import run_mystage
+        return run_mystage(context.input_df, context.cfg)
 ```
 
-3. **Add to registry**:
+3. **Register** in `dagspaces/{name}/runners/__init__.py`:
+
 ```python
-_STAGE_REGISTRY["mystage"] = MyStageRunner()
+STAGE_REGISTRY["mystage"] = MyStageRunner()
 ```
 
-Full guide: [Custom Stages Guide](docs/CUSTOM_STAGES_GUIDE.md)
+See [Custom Stages Guide](docs/CUSTOM_STAGES_GUIDE.md) for details.
 
 ---
 
-## Research
+## Example Dagspaces
 
-This framework supports the Urban AI Risks research project, assessing AI deployment risks in urban contexts through large-scale news analysis.
+### UAIR: News AI Analysis
 
-**Related Work**:
-- Climate adaptation taxonomy (Weitz et al.)
-- AI risk frameworks
-- Urban AI governance
+Analyze AI-related risks and benefits in news coverage:
+
+```bash
+python -m dagspaces.uair.cli \
+  pipeline=classify_risks_and_benefits_from_decompose \
+  data.parquet_path=/data/news_articles.parquet
+```
+
+Stages: `classify_relevance` → `decompose` → `verify` → `taxonomy` → `topic` → `synthesis`
+
+### Historical Norms: Literature Analysis
+
+Extract structured norms from historical texts:
+
+```bash
+python -m dagspaces.historical_norms.cli \
+  pipeline=norm_extraction \
+  data.parquet_path=/data/gutenberg_texts.parquet
+```
+
+Stages: `fetch_gutenberg` → `norm_reasoning` → `norm_extraction`
 
 ---
 
@@ -347,12 +272,10 @@ This framework supports the Urban AI Risks research project, assessing AI deploy
 
 We welcome contributions! Areas of interest:
 
-- **New Stages**: Additional processing capabilities
-- **Taxonomies**: Domain-specific risk categorizations
+- **New Dagspaces**: Domain-specific pipeline configurations
+- **Stages**: Additional processing capabilities  
 - **Optimizations**: Performance improvements
 - **Documentation**: Examples, tutorials, guides
-
-See [Custom Stages Guide](docs/CUSTOM_STAGES_GUIDE.md) for implementation guidelines.
 
 ---
 
@@ -362,62 +285,12 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-## Getting Help
-
-### Documentation
-
-- Start with [User Guide](docs/USER_GUIDE.md)
-- Check [Quick Reference](docs/QUICK_REFERENCE.md) for common issues
-- Browse [Configuration Guide](docs/CONFIGURATION_GUIDE.md) for recipes
-
-### Common Issues
-
-**GPU Out of Memory**:
-```bash
-python -m dagspaces.uair.cli \
-  model.engine_kwargs.gpu_memory_utilization=0.6 \
-  model.batch_size=2
-```
-
-**Ray Object Store Full**:
-```bash
-python -m dagspaces.uair.cli \
-  runtime.rows_per_block=1000
-```
-
-**Debug Mode**:
-```bash
-python -m dagspaces.uair.cli \
-  runtime.debug=true \
-  runtime.sample_n=10
-```
-
-More troubleshooting: [Quick Reference - Troubleshooting](docs/QUICK_REFERENCE.md#troubleshooting)
-
----
-
 ## Acknowledgments
 
 Built with:
+
 - [Hydra](https://hydra.cc/) - Configuration management
 - [Ray Data](https://docs.ray.io/en/latest/data/data.html) - Distributed processing
 - [vLLM](https://docs.vllm.ai/) - LLM inference
 - [Weights & Biases](https://wandb.ai/) - Experiment tracking
 - [SLURM](https://slurm.schedmd.com/) - Cluster scheduling
-
----
-
-## Contact
-
-For questions about the framework:
-- Check the [documentation](docs/)
-- Review [examples](docs/CONFIGURATION_GUIDE.md#pipeline-recipes)
-- Consult [troubleshooting guide](docs/QUICK_REFERENCE.md#troubleshooting)
-
----
-
-For additional information, consult the [User Guide - Quick Start](docs/USER_GUIDE.md#quick-start).
-
----
-
-*Project maintained by the Urban AI Risks research team.*

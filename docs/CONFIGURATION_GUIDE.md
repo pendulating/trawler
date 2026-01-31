@@ -1,6 +1,6 @@
-# UAIR Configuration Guide
+# Trawler Configuration Guide
 
-Hydra configuration patterns for building flexible, scalable dagspaces.
+Hydra configuration patterns for building flexible, scalable pipelines.
 
 ---
 

@@ -1,6 +1,6 @@
 # Building Custom Stages - Practical Guide
 
-This guide provides instructions for creating custom processing stages for the UAIR pipeline framework, from simple transformations to complex LLM-powered analysis.
+This guide provides instructions for creating custom processing stages for the Trawler pipeline framework, from simple transformations to complex LLM-powered analysis.
 
 ---
 
@@ -47,7 +47,7 @@ This example demonstrates a custom stage that adds sentiment scores to articles.
 Create `dagspaces/uair/stages/sentiment.py`:
 
 ```python
-"""Sentiment analysis stage for UAIR pipeline."""
+"""Sentiment analysis stage for Trawler pipeline."""
 from typing import Any, Dict
 import pandas as pd
 from omegaconf import DictConfig

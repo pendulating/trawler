@@ -1,6 +1,6 @@
-# UAIR Pipeline Framework - User Guide
+# Trawler Pipeline Framework - User Guide
 
-Building Custom dagspaces for Urban AI Risk Assessment
+Building Custom Pipelines for Large-Scale Text Processing
 
 ---
 
@@ -21,9 +21,9 @@ Building Custom dagspaces for Urban AI Risk Assessment
 
 ## Introduction
 
-### What is UAIR?
+### What is Trawler?
 
-UAIR (Urban AI Risks) is a pipeline framework designed for assessing AI-related risks in urban contexts by running large-scale AI inference over news article datasets. The framework provides:
+Trawler is a pipeline framework designed for processing large text datasets by running large-scale AI inference. The framework provides:
 
 - **DAG-based Pipeline Orchestration**: Define complex multi-stage workflows as directed acyclic graphs
 - **Distributed Execution**: Scale to large datasets using Ray Data and SLURM clusters
@@ -33,7 +33,7 @@ UAIR (Urban AI Risks) is a pipeline framework designed for assessing AI-related 
 
 ### Core Philosophy
 
-UAIR follows three key principles:
+Trawler follows three key principles:
 
 1. **Configuration over Code**: Define dagspaces declaratively in YAML, not Python
 2. **Composability**: Mix and match stages, models, and datasets
@@ -43,7 +43,7 @@ UAIR follows three key principles:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    UAIR Pipeline Framework                       │
+│                    Trawler Pipeline Framework                    │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                   │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
@@ -240,7 +240,7 @@ Refer to [Core Concepts](#core-concepts) for detailed framework understanding, o
 
 ### 1. Pipeline Architecture
 
-A UAIR pipeline is defined as a **Directed Acyclic Graph (DAG)** of processing stages.
+A Trawler pipeline is defined as a **Directed Acyclic Graph (DAG)** of processing stages.
 
 #### Components of a Pipeline
 
@@ -322,7 +322,7 @@ nodes:
 
 ### 2. Configuration System
 
-UAIR uses **Hydra** for hierarchical configuration management with **OmegaConf** for variable interpolation.
+Trawler uses **Hydra** for hierarchical configuration management with **OmegaConf** for variable interpolation.
 
 #### Configuration Structure
 
@@ -363,7 +363,7 @@ defaults:
   - optional pipeline: null   # Optionally load a pipeline config
 
 experiment:
-  name: UAIR
+  name: trawler
 
 runtime:
   debug: false
@@ -470,7 +470,7 @@ class StageRunner:
 
 #### Built-in Stage Runners
 
-UAIR provides five built-in stage runners:
+The uair dagspace provides five built-in stage runners:
 
 | Stage Runner | Stage Name | Purpose |
 |--------------|------------|---------|
@@ -544,7 +544,7 @@ The orchestrator automatically handles conversion based on `runtime.streaming_io
 
 #### Canonical Column Names
 
-UAIR expects certain canonical column names:
+Trawler expects certain canonical column names:
 
 | Column | Description | Required |
 |--------|-------------|----------|
@@ -558,7 +558,7 @@ The orchestrator performs automatic column mapping based on `data.columns` confi
 
 #### Handling Nested Data
 
-Parquet doesn't support nested Python objects natively. UAIR provides serialization helpers:
+Parquet doesn't support nested Python objects natively. Trawler provides serialization helpers:
 
 ```python
 from dagspaces.uair.stages.classify import _to_json_str
@@ -582,5 +582,5 @@ For additional topics including Configuration Recipes, Advanced Topics, Complete
 
 ---
 
-*Last updated: 2025-10-02*
+*Last updated: 2026-01-31*
 
