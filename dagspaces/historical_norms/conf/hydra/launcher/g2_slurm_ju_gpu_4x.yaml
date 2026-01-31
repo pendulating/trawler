@@ -17,9 +17,9 @@ setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
   - source /share/pierson/matt/UAIR/.venv/bin/activate
-  # CRITICAL: Force CUDA_VISIBLE_DEVICES to match SLURM's actual allocation
-  # This prevents bashrc or prolog scripts from overriding with incorrect values
-  - if [ -n "$SLURM_JOB_GPUS" ]; then export CUDA_VISIBLE_DEVICES=$SLURM_JOB_GPUS; fi
+  # Let SLURM cgroups handle CUDA_VISIBLE_DEVICES automatically
+  # (cgroups remaps global GPU indices to local 0,1,2,... within the job)
+  - unset CUDA_VISIBLE_DEVICES
   - unset WANDB_DISABLED
   - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
   - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
