@@ -6,7 +6,6 @@ from typing import Any, Dict, Iterable, Optional, Sequence
 import copy
 import hashlib
 import json
-import logging
 import os
 
 import pandas as pd
@@ -14,9 +13,13 @@ from omegaconf import OmegaConf
 
 
 from dagspaces.common.vllm_inference import run_vllm_inference
-
-
-_VLLM_LOGS_SILENCED = False
+from dagspaces.common.stage_utils import (
+    maybe_silence_vllm_logs,
+    to_json_str,
+    serialize_arrow_unfriendly_in_row,
+    extract_last_json,
+    sanitize_for_json,
+)
 
 TUPLE_FIELDS = [
     "deployment_domain",
@@ -116,86 +119,6 @@ INPUT_COLUMNS = (
 )
 
 
-def _maybe_silence_vllm_logs() -> None:
-    """Best-effort suppression of noisy vLLM logs."""
-    global _VLLM_LOGS_SILENCED
-    if _VLLM_LOGS_SILENCED:
-        return
-    try:
-        if os.environ.get("RULE_TUPLES_SILENT"):
-            os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-            for name in ("vllm", "vllm.logger", "vllm.engine", "vllm.worker"):
-                lg = logging.getLogger(name)
-                lg.setLevel(logging.ERROR)
-                lg.propagate = False
-        _VLLM_LOGS_SILENCED = True
-    except Exception:
-        pass
-
-
-
-
-def _to_json_str(value: Any) -> Optional[str]:
-    try:
-        if value is None:
-            return None
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
-        try:
-            return str(value)
-        except Exception:
-            return None
-
-
-def _serialize_arrow_unfriendly_in_row(row: Dict[str, Any], columns: Iterable[str]) -> None:
-    for col in columns:
-        if col in row and isinstance(row[col], (dict, list, tuple)):
-            row[col] = _to_json_str(row[col])
-
-
-def _extract_last_json(text: str) -> Optional[Dict[str, Any]]:
-    if not isinstance(text, str) or not text.strip():
-        return None
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            return obj
-    except Exception:
-        pass
-    try:
-        import re
-
-        snippets = re.findall(r"\{[\s\S]*\}", text)
-        for snippet in reversed(snippets or []):
-            try:
-                obj = json.loads(snippet)
-                if isinstance(obj, dict):
-                    return obj
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return None
-
-
-def _sanitize_for_json(value: Any) -> Any:
-    try:
-        if value is None:
-            return None
-        if isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, dict):
-            return {str(k): _sanitize_for_json(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple, set)):
-            return [_sanitize_for_json(v) for v in value]
-        tolist = getattr(value, "tolist", None)
-        if callable(tolist):
-            return _sanitize_for_json(tolist())
-        return str(value)
-    except Exception:
-        return None
-
-
 def _decode_jsonish(value: Any) -> Any:
     if value is None:
         return None
@@ -275,7 +198,7 @@ def _normalize_object_columns(df: pd.DataFrame) -> None:
             continue
         if series.map(lambda v: isinstance(v, (dict, list, tuple, set))).any():
             df[col] = series.map(
-                lambda v: _to_json_str(_sanitize_for_json(v)) if v is not None else None
+                lambda v: to_json_str(sanitize_for_json(v)) if v is not None else None
             )
         try:
             df[col] = df[col].astype("string")
@@ -359,7 +282,7 @@ def _format_tuple_section(row: Dict[str, Any]) -> str:
     data: Dict[str, Any] = {}
     for field in TUPLE_FIELDS:
         data[field] = _decode_jsonish(row.get(field))
-    sanitized = _sanitize_for_json(data) or {}
+    sanitized = sanitize_for_json(data) or {}
     return json.dumps(sanitized, ensure_ascii=False, indent=2)
 
 
@@ -464,7 +387,7 @@ def _prepare_sampling_params(cfg, schema: Dict[str, Any]) -> Dict[str, Any]:
         sampling_params = OmegaConf.to_container(raw, resolve=True) if hasattr(raw, "_get_node") or isinstance(raw, (dict,)) else dict(raw)
     except Exception:
         sampling_params = dict(getattr(cfg, "sampling_params", {}))
-    sampling_params = _sanitize_for_json(sampling_params) or {}
+    sampling_params = sanitize_for_json(sampling_params) or {}
     if not isinstance(sampling_params, dict):
         sampling_params = {}
     guided = {
@@ -490,7 +413,7 @@ def _build_preprocessor(
     sampling_params_template = copy.deepcopy(sampling_params)
 
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
-        _maybe_silence_vllm_logs()
+        maybe_silence_vllm_logs()
         article_id = row.get("article_id") or "unknown"
         eu_label = row.get("eu_ai_label") or row.get("risk_classification") or "Unknown"
         eu_desc = row.get("eu_ai_desc") or ""
@@ -548,7 +471,7 @@ def _build_postprocessor(schema_fields: Iterable[str]) -> Any:
 
     def _post(row: Dict[str, Any]) -> Dict[str, Any]:
         raw = row.get("generated_text") or ""
-        parsed = _extract_last_json(raw)
+        parsed = extract_last_json(raw)
         out: Dict[str, Any] = {
             k: v
             for k, v in row.items()
@@ -567,7 +490,7 @@ def _build_postprocessor(schema_fields: Iterable[str]) -> Any:
         for key in fields:
             value = parsed.get(key) if isinstance(parsed, dict) else None
             if isinstance(value, (dict, list, tuple)):
-                out[key] = _to_json_str(value)
+                out[key] = to_json_str(value)
             else:
                 out[key] = value
         # Ensure string fields are never None to prevent PyArrow from inferring null type
@@ -579,7 +502,7 @@ def _build_postprocessor(schema_fields: Iterable[str]) -> Any:
         if not out.get("risk_classification"):
             out["risk_classification"] = out.get("provided_risk_label") or ""
         out["llm_output"] = raw
-        _serialize_arrow_unfriendly_in_row(out, ["actors_involved", "government_or_regulators", "supporting_quotes"])
+        serialize_arrow_unfriendly_in_row(out, ["actors_involved", "government_or_regulators", "supporting_quotes"])
         return out
 
     return _post
@@ -720,7 +643,7 @@ def run_grounded_summary_stage(
                     info["fields"][field] = {"verified": None}
                 else:
                     info["fields"][field] = {"verified": bool(val)}
-        return _to_json_str(info)
+        return to_json_str(info)
 
     base_df["verification_snapshot"] = base_df.apply(_build_verification_snapshot, axis=1)
     mask_verified = base_df["core_tuple_verified"].fillna(False)

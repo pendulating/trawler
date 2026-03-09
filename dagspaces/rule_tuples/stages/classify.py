@@ -1,96 +1,15 @@
 from typing import Any, Dict, List
 import pandas as pd
 import os
-import logging
 import json
 from omegaconf import OmegaConf
 
 from dagspaces.common.vllm_inference import run_vllm_inference
-
-_VLLM_LOGS_SILENCED = False
-
-def _maybe_silence_vllm_logs() -> None:
-    global _VLLM_LOGS_SILENCED
-    if _VLLM_LOGS_SILENCED:
-        return
-    try:
-        if os.environ.get("RULE_TUPLES_SILENT"):
-            os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-            for name in ("vllm", "vllm.logger", "vllm.engine", "vllm.core", "vllm.worker"):
-                lg = logging.getLogger(name)
-                lg.setLevel(logging.ERROR)
-                lg.propagate = False
-        _VLLM_LOGS_SILENCED = True
-    except Exception:
-        pass
-
-
-def _to_json_str(value: Any):
-    """Serialize Python objects to JSON string for Arrow/Parquet friendliness.
-
-    Returns None for None input; falls back to str(value) on failure.
-    """
-    try:
-        if value is None:
-            return None
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
-        try:
-            return str(value)
-        except Exception:
-            return None
-
-
-def _serialize_arrow_unfriendly_in_row(row: Dict[str, Any], columns: List[str]) -> None:
-    """In-place convert nested/dict/list columns to JSON strings in a row dict."""
-    for col in columns:
-        if col in row:
-            val = row.get(col)
-            if isinstance(val, (dict, list, tuple)):
-                row[col] = _to_json_str(val)
-
-
-def _filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop engine kwargs unsupported by the installed vLLM version.
-
-    We try to introspect vllm.AsyncEngineArgs for accepted fields. If that
-    fails, conservatively drop known newer flags.
-    """
-    try:
-        import vllm as _v
-        accepted = None
-        # Prefer dataclass fields (older vLLM uses dataclasses)
-        try:
-            fields = getattr(getattr(_v, "AsyncEngineArgs", None), "__dataclass_fields__", None)
-            if isinstance(fields, dict) and fields:
-                accepted = set(fields.keys())
-        except Exception:
-            accepted = None
-        # Fallback to signature introspection
-        if accepted is None:
-            try:
-                import inspect as _inspect
-                sig = _inspect.signature(_v.AsyncEngineArgs.__init__)
-                accepted = set(k for k in sig.parameters.keys() if k != "self")
-            except Exception:
-                accepted = None
-        if accepted:
-            filtered = {k: v for k, v in ek.items() if k in accepted}
-            if len(filtered) != len(ek):
-                try:
-                    if not os.environ.get("RULE_TUPLES_SILENT"):
-                        dropped = [k for k in ek.keys() if k not in accepted]
-                        print(f"Filtering unsupported vLLM engine kwargs: {dropped}")
-                except Exception:
-                    pass
-            return filtered
-    except Exception:
-        pass
-    # Conservative fallback for unknown versions: drop newer flags
-    ek = dict(ek)
-    for k in ("use_v2_block_manager",):
-        ek.pop(k, None)
-    return ek
+from dagspaces.common.stage_utils import (
+    maybe_silence_vllm_logs,
+    to_json_str,
+    serialize_arrow_unfriendly_in_row,
+)
 
 
 def run_classification_stage(df: pd.DataFrame, cfg):
@@ -130,7 +49,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         sampling_params = dict(getattr(cfg, "sampling_params", {}))
 
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
-        _maybe_silence_vllm_logs()
+        maybe_silence_vllm_logs()
         user = _format_prompt(row.get("rule_text"))
         from datetime import datetime as _dt
         return {
@@ -154,7 +73,7 @@ def run_classification_stage(df: pd.DataFrame, cfg):
         except Exception:
             serialize_nested = True
         if serialize_nested:
-            _serialize_arrow_unfriendly_in_row(row, [
+            serialize_arrow_unfriendly_in_row(row, [
                 "messages",
                 "sampling_params",
                 "usage",

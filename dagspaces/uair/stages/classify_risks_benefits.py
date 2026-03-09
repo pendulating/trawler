@@ -4,7 +4,6 @@ from typing import Any, Dict, List
 import pandas as pd
 import json
 import os
-import logging
 from omegaconf import OmegaConf
 
 from .classify_shared import (
@@ -24,44 +23,9 @@ from .classify_shared import (
 )
 
 from dagspaces.common.vllm_inference import run_vllm_inference
+from dagspaces.common.stage_utils import maybe_silence_vllm_logs
 
-_VLLM_LOGS_SILENCED = False
 _EU_TOTAL_INPUTS = 9
-
-
-def _maybe_silence_vllm_logs() -> None:
-    global _VLLM_LOGS_SILENCED
-    if _VLLM_LOGS_SILENCED:
-        return
-    try:
-        # Configure vLLM logging level from environment or default
-        vllm_log_level = os.environ.get("VLLM_LOGGING_LEVEL", "WARNING")
-        if os.environ.get("RULE_TUPLES_SILENT"):
-            vllm_log_level = "ERROR"
-            os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-        
-        # Configure vLLM loggers to ensure they work properly
-        for name in ("vllm", "vllm.logger", "vllm.engine", "vllm.core", "vllm.worker"):
-            lg = logging.getLogger(name)
-            # Set level based on environment
-            if vllm_log_level == "ERROR":
-                lg.setLevel(logging.ERROR)
-            elif vllm_log_level == "WARNING":
-                lg.setLevel(logging.WARNING)
-            elif vllm_log_level == "INFO":
-                lg.setLevel(logging.INFO)
-            elif vllm_log_level == "DEBUG":
-                lg.setLevel(logging.DEBUG)
-            else:
-                lg.setLevel(logging.WARNING)
-            # Ensure logs propagate unless we're silencing
-            if not os.environ.get("RULE_TUPLES_SILENT"):
-                lg.propagate = True
-            else:
-                lg.propagate = False
-        _VLLM_LOGS_SILENCED = True
-    except Exception:
-        pass
 
 
 def get_risks_benefits_guided_json_schema() -> Dict[str, Any] | None:
@@ -564,7 +528,7 @@ def run_classification_risks_benefits(df: Any, cfg) -> Any:
         return coerce_boolish_row(r)
     
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
-        _maybe_silence_vllm_logs()
+        maybe_silence_vllm_logs()
         # Ensure article_id is present
         try:
             import hashlib as _hash

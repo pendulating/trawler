@@ -1,7 +1,6 @@
 from typing import Any, Dict, List
 import os
 import json
-import logging
 import re
 from bisect import bisect_right
 import pandas as pd
@@ -12,32 +11,7 @@ except Exception:
     yaml = None  # type: ignore
 
 from dagspaces.common.vllm_inference import run_vllm_inference
-
-_VLLM_LOGS_SILENCED = False
-
-def _maybe_silence_vllm_logs() -> None:
-    global _VLLM_LOGS_SILENCED
-    if _VLLM_LOGS_SILENCED:
-        return
-    try:
-        from dagspaces.uair.logging_filters import PatternModuloFilter
-        lg = logging.getLogger("vllm")
-        try:
-            n = int(os.environ.get("UAIR_VLLM_LOG_EVERY", "10") or "10")
-        except Exception:
-            n = 10
-        lg.setLevel(logging.INFO)
-        try:
-            existing_filters = getattr(lg, "filters", [])
-            if not any(getattr(f, "__class__", object).__name__ == "PatternModuloFilter" for f in existing_filters):
-                lg.addFilter(PatternModuloFilter(mod=n, pattern="Elapsed time for batch"))
-        except Exception:
-            pass
-        if os.environ.get("RULE_TUPLES_SILENT"):
-            lg.setLevel(logging.ERROR)
-        _VLLM_LOGS_SILENCED = True
-    except Exception:
-        pass
+from dagspaces.common.stage_utils import maybe_silence_vllm_logs
 
 
 
@@ -290,7 +264,7 @@ def run_taxonomy_stage(df, cfg):
         return row
 
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
-        _maybe_silence_vllm_logs()
+        maybe_silence_vllm_logs()
         row = _ensure_ids(dict(row))
         row = _attach_chunk_text(row)
         row = _trim_row(row)

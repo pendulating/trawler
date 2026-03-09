@@ -3,91 +3,18 @@
 from typing import Any, Dict, List, Optional
 import os
 import json
-import logging
 import hashlib
 import pandas as pd
 from omegaconf import OmegaConf
 from dataclasses import dataclass
 
 from dagspaces.common.vllm_inference import run_vllm_inference
-
-_VLLM_LOGS_SILENCED = False
-
-
-def _maybe_silence_vllm_logs() -> None:
-    """Silence vLLM logs when RULE_TUPLES_SILENT is set."""
-    global _VLLM_LOGS_SILENCED
-    if _VLLM_LOGS_SILENCED:
-        return
-    try:
-        from dagspaces.uair.logging_filters import PatternModuloFilter
-        lg = logging.getLogger("vllm")
-        try:
-            n = int(os.environ.get("UAIR_VLLM_LOG_EVERY", "10") or "10")
-        except Exception:
-            n = 10
-        lg.setLevel(logging.INFO)
-        try:
-            existing_filters = getattr(lg, "filters", [])
-            if not any(getattr(f, "__class__", object).__name__ == "PatternModuloFilter" for f in existing_filters):
-                lg.addFilter(PatternModuloFilter(mod=n, pattern="Elapsed time for batch"))
-        except Exception:
-            pass
-        if os.environ.get("RULE_TUPLES_SILENT"):
-            lg.setLevel(logging.ERROR)
-        _VLLM_LOGS_SILENCED = True
-    except Exception:
-        pass
-
-
-def _to_json_str(value: Any) -> Optional[str]:
-    """Serialize to JSON string."""
-    try:
-        if value is None:
-            return None
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
-        try:
-            return str(value)
-        except Exception:
-            return None
-
-
-def _serialize_arrow_unfriendly_in_row(row: Dict[str, Any], columns: List[str]) -> None:
-    """In-place convert nested columns to JSON strings."""
-    for col in columns:
-        if col in row:
-            val = row.get(col)
-            if isinstance(val, (dict, list, tuple)):
-                row[col] = _to_json_str(val)
-
-
-def _extract_last_json(text: str) -> Optional[Dict[str, Any]]:
-    """Extract the last JSON object from text.
-
-    First tries to parse the whole string; on failure, finds the last {...} block.
-    """
-    if not isinstance(text, str) or not text.strip():
-        return None
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            return obj
-    except Exception:
-        pass
-    try:
-        import re as _re
-        snippets = _re.findall(r"\{[\s\S]*\}", text)
-        for snip in reversed(snippets or []):
-            try:
-                obj = json.loads(snip)
-                if isinstance(obj, dict):
-                    return obj
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return None
+from dagspaces.common.stage_utils import (
+    maybe_silence_vllm_logs,
+    to_json_str,
+    serialize_arrow_unfriendly_in_row,
+    extract_last_json,
+)
 
 
 @dataclass
@@ -319,14 +246,14 @@ def _synthesize_cluster_final(
         "num_articles": num_articles,
         "primary_risk_type": "Privacy Violations",  # Placeholder
         "risk_confidence": 0.75,
-        "risk_evidence": _to_json_str(["Evidence 1", "Evidence 2"]),
-        "common_themes": _to_json_str(reduced_insights.get("themes", [])),
-        "temporal_patterns": _to_json_str({"trend": "increasing"}),
-        "geographic_distribution": _to_json_str({"primary_countries": [cluster_data.get("countries", "")]}),
+        "risk_evidence": to_json_str(["Evidence 1", "Evidence 2"]),
+        "common_themes": to_json_str(reduced_insights.get("themes", [])),
+        "temporal_patterns": to_json_str({"trend": "increasing"}),
+        "geographic_distribution": to_json_str({"primary_countries": [cluster_data.get("countries", "")]}),
         "synthesis_summary": f"This cluster of {num_articles} articles focuses on...",
-        "key_entities": _to_json_str(reduced_insights.get("common_entities", [])),
-        "technology_types": _to_json_str(["NLP", "Computer Vision"]),
-        "impact_areas": _to_json_str(["healthcare", "finance"]),
+        "key_entities": to_json_str(reduced_insights.get("common_entities", [])),
+        "technology_types": to_json_str(["NLP", "Computer Vision"]),
+        "impact_areas": to_json_str(["healthcare", "finance"]),
         "cluster_top_terms": cluster_data.get("cluster_top_terms", ""),
         "avg_topic_prob": cluster_data.get("avg_topic_prob", 0.0),
     }
@@ -477,7 +404,7 @@ def run_synthesis_stage(df, cfg, logger=None, articles_df=None):
     def _format_top_articles(arts: List[Dict[str, Any]], k: int = 5) -> str:
         try:
             if not arts:
-                return _to_json_str([]) or "[]"
+                return to_json_str([]) or "[]"
             try:
                 arts_sorted = sorted(arts, key=lambda r: float(r.get("topic_prob", 0.0)), reverse=True)
             except Exception:
@@ -492,12 +419,12 @@ def run_synthesis_stage(df, cfg, logger=None, articles_df=None):
                 except Exception:
                     snip = str(txt)
                 formatted.append({"article_id": aid, "quote": snip})
-            return _to_json_str(formatted) or "[]"
+            return to_json_str(formatted) or "[]"
         except Exception:
             return "[]"
 
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
-        _maybe_silence_vllm_logs()
+        maybe_silence_vllm_logs()
         articles_list = row.get("articles")
         if articles_list is None:
             articles_list = []
@@ -536,7 +463,7 @@ def run_synthesis_stage(df, cfg, logger=None, articles_df=None):
 
     def _post(row: Dict[str, Any]) -> Dict[str, Any]:
         txt = row.get("generated_text")
-        obj = _extract_last_json(txt if isinstance(txt, str) else "") or {}
+        obj = extract_last_json(txt if isinstance(txt, str) else "") or {}
         out: Dict[str, Any] = {
             "cluster_id": row.get("cluster_id"),
             "num_articles": row.get("num_articles"),
@@ -559,7 +486,7 @@ def run_synthesis_stage(df, cfg, logger=None, articles_df=None):
         ):
             if k in obj:
                 out[k] = obj.get(k)
-        _serialize_arrow_unfriendly_in_row(out, [
+        serialize_arrow_unfriendly_in_row(out, [
             "common_themes",
             "key_entities",
             "technology_types",

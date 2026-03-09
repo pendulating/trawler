@@ -4,7 +4,6 @@ from typing import Any, Dict, List
 import pandas as pd
 import json
 import os
-import logging
 from omegaconf import OmegaConf
 
 from .classify_shared import (
@@ -12,10 +11,6 @@ from .classify_shared import (
     generate_relevant_blocks,
     coerce_boolish_row,
     coerce_boolish_df,
-    detect_num_gpus,
-    detect_gpu_type,
-    apply_gpu_aware_batch_settings,
-    filter_vllm_engine_kwargs,
     to_json_str,
     serialize_arrow_unfriendly_in_row,
     sanitize_for_json,
@@ -25,23 +20,7 @@ from .classify_shared import (
     prune_result_columns,
 )
 
-_VLLM_LOGS_SILENCED = False
-
-
-def _maybe_silence_vllm_logs() -> None:
-    global _VLLM_LOGS_SILENCED
-    if _VLLM_LOGS_SILENCED:
-        return
-    try:
-        if os.environ.get("RULE_TUPLES_SILENT"):
-            os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-            for name in ("vllm", "vllm.logger", "vllm.engine", "vllm.core", "vllm.worker"):
-                lg = logging.getLogger(name)
-                lg.setLevel(logging.ERROR)
-                lg.propagate = False
-        _VLLM_LOGS_SILENCED = True
-    except Exception:
-        pass
+from dagspaces.common.stage_utils import maybe_silence_vllm_logs
 
 
 def heuristic_relevance(text: Any) -> bool:
@@ -392,7 +371,7 @@ def run_classification_relevance(df: Any, cfg) -> Any:
         return coerce_boolish_row(r)
 
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
-        _maybe_silence_vllm_logs()
+        maybe_silence_vllm_logs()
         # Ensure article_id is present
         try:
             import hashlib as _hash

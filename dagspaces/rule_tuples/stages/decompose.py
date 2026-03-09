@@ -2,7 +2,6 @@ from typing import Any, Dict, Optional
 import pandas as pd
 import json
 import os
-import logging
 from omegaconf import OmegaConf
 from dagspaces.uair.schema_builders import (
     object_schema,
@@ -11,109 +10,12 @@ from dagspaces.uair.schema_builders import (
 )
 
 from dagspaces.common.vllm_inference import run_vllm_inference
-
-_VLLM_LOGS_SILENCED = False
-
-def _maybe_silence_vllm_logs() -> None:
-    global _VLLM_LOGS_SILENCED
-    if _VLLM_LOGS_SILENCED:
-        return
-    try:
-        if os.environ.get("RULE_TUPLES_SILENT"):
-            os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-            for name in ("vllm", "vllm.logger", "vllm.engine", "vllm.core", "vllm.worker"):
-                lg = logging.getLogger(name)
-                lg.setLevel(logging.ERROR)
-                lg.propagate = False
-        _VLLM_LOGS_SILENCED = True
-    except Exception:
-        pass
-
-
-def _to_json_str(value: Any):
-    """Serialize Python objects to JSON string for Arrow/Parquet friendliness.
-
-    Returns None for None input; falls back to str(value) on failure.
-    """
-    try:
-        if value is None:
-            return None
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
-        try:
-            return str(value)
-        except Exception:
-            return None
-
-
-def _serialize_arrow_unfriendly_in_row(row: Dict[str, Any], columns):
-    """In-place convert nested/dict/list columns to JSON strings in a row dict."""
-    for col in columns:
-        if col in row:
-            val = row.get(col)
-            if isinstance(val, (dict, list, tuple)):
-                row[col] = _to_json_str(val)
-
-
-def _filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop engine kwargs unsupported by the installed vLLM version.
-
-    We try to introspect vllm.AsyncEngineArgs for accepted fields. If that
-    fails, conservatively drop known newer flags.
-    """
-    try:
-        import vllm as _v
-        accepted = None
-        try:
-            fields = getattr(getattr(_v, "AsyncEngineArgs", None), "__dataclass_fields__", None)
-            if isinstance(fields, dict) and fields:
-                accepted = set(fields.keys())
-        except Exception:
-            accepted = None
-        if accepted is None:
-            try:
-                import inspect as _inspect
-                sig = _inspect.signature(_v.AsyncEngineArgs.__init__)
-                accepted = set(k for k in sig.parameters.keys() if k != "self")
-            except Exception:
-                accepted = None
-        if accepted:
-            filtered = {k: v for k, v in ek.items() if k in accepted}
-            if len(filtered) != len(ek):
-                try:
-                    if not os.environ.get("RULE_TUPLES_SILENT"):
-                        dropped = [k for k in ek.keys() if k not in accepted]
-                        print(f"Filtering unsupported vLLM engine kwargs: {dropped}")
-                except Exception:
-                    pass
-            return filtered
-    except Exception:
-        pass
-    ek = dict(ek)
-    for k in ("use_v2_block_manager",):
-        ek.pop(k, None)
-    return ek
-
-def _extract_last_json(text: str) -> Optional[Dict[str, Any]]:
-    if not isinstance(text, str) or not text.strip():
-        return None
-    s = text
-    try:
-        obj = json.loads(s)
-        if isinstance(obj, dict):
-            return obj
-    except Exception:
-        pass
-    import re
-    snippets = re.findall(r"\{[\s\S]*\}", s)
-    for snip in reversed(snippets or []):
-        try:
-            obj = json.loads(snip)
-            if isinstance(obj, dict):
-                return obj
-        except Exception:
-            continue
-    return None
+from dagspaces.common.stage_utils import (
+    maybe_silence_vllm_logs,
+    to_json_str,
+    serialize_arrow_unfriendly_in_row,
+    extract_last_json,
+)
 
 
 def run_decomposition_stage(df: pd.DataFrame, cfg):
@@ -149,7 +51,7 @@ def run_decomposition_stage(df: pd.DataFrame, cfg):
             lambda r: ["subject", "sender", "receiver", "information", "transmission_principle"], axis=1
         )
         if serialize_nested:
-            out["ci_missing_elements"] = out["ci_missing_elements"].map(_to_json_str)
+            out["ci_missing_elements"] = out["ci_missing_elements"].map(to_json_str)
         return out
 
     system_prompt = str(getattr(cfg.prompt_decompose, "system_prompt", ""))
@@ -166,7 +68,7 @@ def run_decomposition_stage(df: pd.DataFrame, cfg):
         sampling_params = dict(getattr(cfg, "sampling_params", {}))
 
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
-        _maybe_silence_vllm_logs()
+        maybe_silence_vllm_logs()
         user = _format_prompt(row.get("rule_text"))
         sp = dict(sampling_params)
         sp.setdefault("max_tokens", 256)
@@ -202,7 +104,7 @@ def run_decomposition_stage(df: pd.DataFrame, cfg):
 
     def _post(row: Dict[str, Any]) -> Dict[str, Any]:
         txt = row.get("generated_text")
-        obj = _extract_last_json(txt if isinstance(txt, str) else "") or {}
+        obj = extract_last_json(txt if isinstance(txt, str) else "") or {}
 
         def _norm_key(k: Any) -> str:
             s = str(k).strip().lower()
@@ -234,21 +136,21 @@ def run_decomposition_stage(df: pd.DataFrame, cfg):
                 missing = []
 
         if serialize_nested:
-            _serialize_arrow_unfriendly_in_row(row, [
+            serialize_arrow_unfriendly_in_row(row, [
                 "messages",
                 "sampling_params",
                 "usage",
                 "token_counts",
             ])
-            missing_out = _to_json_str(missing)
+            missing_out = to_json_str(missing)
         else:
             missing_out = missing
 
         def _norm_ci_value(v: Any) -> Any:
             if isinstance(v, (list, tuple)):
-                return _to_json_str(v) if serialize_nested else ", ".join([str(x) for x in v if x is not None])
+                return to_json_str(v) if serialize_nested else ", ".join([str(x) for x in v if x is not None])
             if isinstance(v, dict):
-                return _to_json_str(v) if serialize_nested else str(v)
+                return to_json_str(v) if serialize_nested else str(v)
             return v
 
         return {

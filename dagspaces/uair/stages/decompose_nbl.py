@@ -2,7 +2,6 @@ from typing import Any, Dict, Optional
 import pandas as pd
 import json
 import os
-import logging
 from omegaconf import OmegaConf
 from enum import Enum
 try:
@@ -23,8 +22,14 @@ from dagspaces.uair.schema_builders import (
 )
 
 from dagspaces.common.vllm_inference import run_vllm_inference
+from dagspaces.common.stage_utils import (
+    maybe_silence_vllm_logs,
+    to_json_str,
+    serialize_arrow_unfriendly_in_row,
+    extract_last_json,
+    sanitize_for_json,
+)
 
-_VLLM_LOGS_SILENCED = False
 _SCHEMA_WRITTEN = False  # one-time per-process schema dump guard
 _SAMPLING_PARAMS_WRITTEN = False  # one-time per-process sampling params dump
 
@@ -108,80 +113,6 @@ if BaseModel is not None:
         list_of_benefits_that_occurred: list[str]
         missing: list[str]
 
-def _maybe_silence_vllm_logs() -> None:
-    global _VLLM_LOGS_SILENCED
-    if _VLLM_LOGS_SILENCED:
-        return
-    try:
-        if os.environ.get("RULE_TUPLES_SILENT"):
-            os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-            for name in ("vllm", "vllm.logger", "vllm.engine", "vllm.core", "vllm.worker"):
-                lg = logging.getLogger(name)
-                lg.setLevel(logging.ERROR)
-                lg.propagate = False
-        _VLLM_LOGS_SILENCED = True
-    except Exception:
-        pass
-
-
-def _to_json_str(value: Any):
-    """Serialize Python objects to JSON string for Arrow/Parquet friendliness.
-
-    Returns None for None input; falls back to str(value) on failure.
-    """
-    try:
-        if value is None:
-            return None
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
-        try:
-            return str(value)
-        except Exception:
-            return None
-
-
-def _serialize_arrow_unfriendly_in_row(row: Dict[str, Any], columns):
-    """In-place convert nested/dict/list columns to JSON strings in a row dict."""
-    for col in columns:
-        if col in row:
-            val = row.get(col)
-            if isinstance(val, (dict, list, tuple)):
-                row[col] = _to_json_str(val)
-
-
-def _sanitize_for_json(value: Any):
-    """Recursively convert value to JSON-serializable builtins.
-
-    - dict -> dict with str keys and sanitized values
-    - list/tuple/set -> list of sanitized values
-    - objects with .tolist() -> use tolist() (e.g., numpy arrays)
-    - other non-serializables -> str(value)
-    """
-    try:
-        if value is None:
-            return None
-        if isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, dict):
-            out = {}
-            for k, v in value.items():
-                try:
-                    key = str(k)
-                except Exception:
-                    key = repr(k)
-                out[key] = _sanitize_for_json(v)
-            return out
-        if isinstance(value, (list, tuple, set)):
-            return [_sanitize_for_json(v) for v in value]
-        tolist = getattr(value, "tolist", None)
-        if callable(tolist):
-            try:
-                return _sanitize_for_json(tolist())
-            except Exception:
-                pass
-        return str(value)
-    except Exception:
-        return None
 
 
 def _inline_json_schema_refs(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -294,28 +225,6 @@ def _trim_text_to_token_budget(text: str, tokenizer, token_budget: int) -> str:
         except Exception:
             return text
 
-def _extract_last_json(text: str) -> Optional[Dict[str, Any]]:
-    if not isinstance(text, str) or not text.strip():
-        return None
-    s = text
-    try:
-        obj = json.loads(s)
-        if isinstance(obj, dict):
-            return obj
-    except Exception:
-        pass
-    import re
-    snippets = re.findall(r"\{[\s\S]*\}", s)
-    for snip in reversed(snippets or []):
-        try:
-            obj = json.loads(snip)
-            if isinstance(obj, dict):
-                return obj
-        except Exception:
-            continue
-    return None
-
-
 def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
     """Urban AI risk decomposition stage (NBL variant).
 
@@ -369,7 +278,7 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
             out[c] = None
         out["missing"] = out.apply(lambda r: list(missing_keys), axis=1)
         if serialize_nested:
-            out["missing"] = out["missing"].map(_to_json_str)
+            out["missing"] = out["missing"].map(to_json_str)
         return out
 
     # Prefer the longer NBL prompt; fall back to decompose or generic prompt
@@ -423,7 +332,7 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
 
     def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
         global _SCHEMA_WRITTEN, _SAMPLING_PARAMS_WRITTEN
-        _maybe_silence_vllm_logs()
+        maybe_silence_vllm_logs()
         raw_article = str(row.get("article_text") or "")
         sp = dict(sampling_params)
         # Longer outputs for NBL prompt
@@ -487,7 +396,7 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
                 try:
                     schema_json_str = json.dumps(schema, ensure_ascii=False)
                 except Exception:
-                    schema_json_str = json.dumps(_sanitize_for_json(schema), ensure_ascii=False)
+                    schema_json_str = json.dumps(sanitize_for_json(schema), ensure_ascii=False)
                 sp["guided_decoding"] = {"json": schema_json_str}
         except Exception:
             pass
@@ -540,7 +449,7 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
         # Remove artifacts that might override our messages/params or collide with schema keys
         base = {k: v for k, v in row.items() if k not in {"messages", "sampling_params", "generated_text", "llm_output", "json", "guided_decoding", "response_format", "structured_output"}}
         # Sanitize sampling params to ensure JSON-serializable (convert ndarrays -> lists)
-        sp_sanitized = _sanitize_for_json(sp)
+        sp_sanitized = sanitize_for_json(sp)
         # Remove conflicting/unsupported structured output keys at top-level
         try:
             if isinstance(sp_sanitized, dict):
@@ -565,7 +474,7 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
 
                 except Exception as e:
                     try:
-                        dbg_str = json.dumps(_sanitize_for_json(debug_schema), ensure_ascii=False)
+                        dbg_str = json.dumps(sanitize_for_json(debug_schema), ensure_ascii=False)
                     except Exception:
                         dbg_str = f"<unserializable type={type(debug_schema)}>"
                     print(f"[decompose_nbl] structured_output schema not serializable: {e}; sanitized={dbg_str}", flush=True)
@@ -585,7 +494,7 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
                         os.makedirs(debug_dir, exist_ok=True)
                         out_path = os.path.join(debug_dir, f"structured_schema_pid{os.getpid()}.json")
                         with open(out_path, "w", encoding="utf-8") as f:
-                            json.dump(_sanitize_for_json(debug_schema), f, ensure_ascii=False, indent=2)
+                            json.dump(sanitize_for_json(debug_schema), f, ensure_ascii=False, indent=2)
                         print(f"[decompose_nbl] wrote structured_output schema to {out_path}", flush=True)
                         _SCHEMA_WRITTEN = True
                 except Exception:
@@ -624,7 +533,7 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
 
     def _post(row: Dict[str, Any]) -> Dict[str, Any]:
         txt = row.get("generated_text")
-        obj = _extract_last_json(txt if isinstance(txt, str) else "") or {}
+        obj = extract_last_json(txt if isinstance(txt, str) else "") or {}
 
         # Strongly-typed parse using Pydantic model when available to ensure
         # canonical schema keys are mapped consistently to output columns.
@@ -783,18 +692,18 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
 
         # Optionally serialize nested columns for Arrow/Parquet compatibility
         if serialize_nested:
-            _serialize_arrow_unfriendly_in_row(row, [
+            serialize_arrow_unfriendly_in_row(row, [
                 "messages",
                 "sampling_params",
                 "usage",
                 "token_counts",
             ])
-            missing_out = _to_json_str(missing_norm)
+            missing_out = to_json_str(missing_norm)
             # Persist typed/normalized JSON for traceability when available
             if isinstance(parsed_dict, dict):
-                row["llm_json"] = _to_json_str(parsed_dict)
+                row["llm_json"] = to_json_str(parsed_dict)
             else:
-                row["llm_json"] = _to_json_str(obj)
+                row["llm_json"] = to_json_str(obj)
         else:
             missing_out = missing_norm
             row["llm_json"] = parsed_dict if isinstance(parsed_dict, dict) else obj
@@ -802,9 +711,9 @@ def run_decomposition_stage_nbl(df: pd.DataFrame, cfg):
         # Ensure scalar columns are Arrow-friendly (no lists/dicts in columns)
         def _norm_ci_value(v: Any) -> Any:
             if isinstance(v, (list, tuple)):
-                return _to_json_str(v) if serialize_nested else ", ".join([str(x) for x in v if x is not None])
+                return to_json_str(v) if serialize_nested else ", ".join([str(x) for x in v if x is not None])
             if isinstance(v, dict):
-                return _to_json_str(v) if serialize_nested else str(v)
+                return to_json_str(v) if serialize_nested else str(v)
             return v
 
         deployment_domain_out = _norm_ci_value(deployment_domain)
