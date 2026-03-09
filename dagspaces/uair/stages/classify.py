@@ -96,14 +96,6 @@ def run_classification_stage(df: pd.DataFrame, cfg) -> Any:
 # Column definitions and utility functions have been moved to classify_shared.py
 # These are re-exported above for convenience
 
-# Import legacy implementation dependencies
-try:
-    import ray  # noqa: F401
-    from ray.data.llm import build_llm_processor, vLLMEngineProcessorConfig  # type: ignore
-    _RAY_OK = True
-except Exception:
-    _RAY_OK = False
-
 from vllm.sampling_params import SamplingParams, GuidedDecodingParams  # type: ignore
 import re
 from bisect import bisect_right
@@ -112,6 +104,8 @@ import os
 import logging
 import json
 from omegaconf import OmegaConf
+
+from dagspaces.common.vllm_inference import run_vllm_inference
 
 # Import shared utilities
 from .classify_shared import (
@@ -122,7 +116,6 @@ from .classify_shared import (
     _parse_cpus_on_node as parse_cpus_on_node,
     _detect_slurm_job_mem_bytes as detect_slurm_job_mem_bytes,
     _effective_total_memory_bytes as effective_total_memory_bytes,
-    _ensure_ray_init as ensure_ray_init,
     _to_json_str as to_json_str,
     _serialize_arrow_unfriendly_in_row as serialize_arrow_unfriendly_in_row,
     _sanitize_for_json as sanitize_for_json,
@@ -153,7 +146,6 @@ from .classify_shared import (
     parse_cpus_on_node,
     detect_slurm_job_mem_bytes,
     effective_total_memory_bytes,
-    ensure_ray_init,
     to_json_str,
     serialize_arrow_unfriendly_in_row,
     sanitize_for_json,
@@ -179,7 +171,6 @@ _parse_int = parse_int
 _parse_cpus_on_node = parse_cpus_on_node
 _detect_slurm_job_mem_bytes = detect_slurm_job_mem_bytes
 _effective_total_memory_bytes = effective_total_memory_bytes
-_ensure_ray_init = ensure_ray_init
 _to_json_str = to_json_str
 _serialize_arrow_unfriendly_in_row = serialize_arrow_unfriendly_in_row
 _sanitize_for_json = sanitize_for_json
@@ -328,84 +319,6 @@ def _effective_total_memory_bytes() -> int:
         pass
     return -1
 
-
-def _ensure_ray_init(cfg) -> None:
-    try:
-        import ray  # type: ignore
-        if not ray.is_initialized():
-            # Detect SLURM CPU allocation
-            cpus_alloc = None
-            try:
-                cpt = os.environ.get("SLURM_CPUS_PER_TASK")
-                if cpt is not None and str(cpt).strip() != "":
-                    cpus_alloc = int(cpt)
-                else:
-                    con = os.environ.get("SLURM_CPUS_ON_NODE")
-                    if con is not None and str(con).strip() != "":
-                        cpus_alloc = _parse_cpus_on_node(con)
-            except Exception:
-                cpus_alloc = None
-            # Prefer proportion of system memory when available; fallback to job_memory_gb.
-            obj_store_bytes = None
-            try:
-                # Allow explicit override via cfg.runtime.object_store_proportion (0.0-1.0)
-                prop = getattr(cfg.runtime, "object_store_proportion", None)
-                prop = float(prop) if prop is not None else None
-            except Exception:
-                prop = None
-            # Honor env proportion if set and no explicit override provided
-            try:
-                if prop is None:
-                    env_prop = os.environ.get("RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION")
-                    if env_prop is not None and str(env_prop).strip() != "":
-                        prop = float(env_prop)
-            except Exception:
-                pass
-            if prop is not None and 0.0 < prop <= 0.95:
-                try:
-                    total_bytes = _effective_total_memory_bytes()
-                    if total_bytes:
-                        obj_store_bytes = int(total_bytes * float(prop))
-                except Exception:
-                    obj_store_bytes = None
-            if obj_store_bytes is None:
-                try:
-                    # Prefer SLURM job mem if available to avoid using full node memory
-                    slurm_bytes = _detect_slurm_job_mem_bytes()
-                    if slurm_bytes > 0:
-                        job_mem_gb = max(1, int(slurm_bytes / (1024 ** 3)))
-                    else:
-                        job_mem_gb = int(getattr(cfg.runtime, "job_memory_gb", 64) or 64)
-                except Exception:
-                    job_mem_gb = 64
-                try:
-                    job_mem_gb = int(getattr(cfg.runtime, "job_memory_gb", 64) or 64)
-                except Exception:
-                    job_mem_gb = 64
-                try:
-                    obj_store_bytes = int(max(1, job_mem_gb) * (1024 ** 3) * 0.90)
-                except Exception:
-                    obj_store_bytes = int(64 * (1024 ** 3) * 0.90)
-            try:
-                if cpus_alloc is not None and int(cpus_alloc) > 0:
-                    ray.init(log_to_driver=True, object_store_memory=int(obj_store_bytes), num_cpus=int(cpus_alloc))
-                else:
-                    ray.init(log_to_driver=True, object_store_memory=int(obj_store_bytes))
-            except Exception:
-                # Best-effort fallback: let Ray auto-init
-                try:
-                    ray.init(log_to_driver=True)
-                except Exception:
-                    pass
-            # Constrain Ray Data CPU limits to SLURM allocation when available
-            try:
-                if cpus_alloc is not None and int(cpus_alloc) > 0:
-                    ctx = ray.data.DataContext.get_current()
-                    ctx.execution_options.resource_limits = ctx.execution_options.resource_limits.copy(cpu=int(cpus_alloc))
-            except Exception:
-                pass
-    except Exception:
-        pass
 
 def _to_json_str(value: Any):
     """Serialize Python objects to JSON string for Arrow/Parquet friendliness.
@@ -1205,41 +1118,40 @@ def run_classification_core(df: pd.DataFrame, cfg):
       else fall back to UAIR classify prompt. Produces both `relevance_answer` and `is_relevant`.
     Uses `article_text` as the canonical input text column.
     """
-    # Ensure Ray is initialized with desired object store cap based on job_memory_gb
-    _ensure_ray_init(cfg)
-    # Streaming path: if a Ray Dataset is passed, use it end-to-end
-    is_ray_ds = hasattr(df, "map_batches") and hasattr(df, "count") and _RAY_OK
-    if not is_ray_ds:
-        if df is None or len(df) == 0:
-            return pd.DataFrame(columns=["article_id","article_text","is_relevant"])  # minimal
-        out = df.copy()
-        # Ensure article_id exists for all rows (deterministic hash of path or text)
-        try:
-            import hashlib as _hash
-            if "article_id" not in out.columns:
-                out["article_id"] = None
-            def _gen_id_row(r: pd.Series) -> str:
-                try:
-                    src = r.get("article_path")
-                    if not isinstance(src, str) or src.strip() == "":
-                        src = r.get("article_text") or r.get("chunk_text") or ""
-                    return _hash.sha1(str(src).encode("utf-8")).hexdigest()
-                except Exception:
-                    return _hash.sha1(str(r.get("article_text") or r.get("chunk_text") or "").encode("utf-8")).hexdigest()
-            def _need_id(val: Any) -> bool:
-                # Treat non-strings, empty strings, and NaNs as missing IDs
-                return not (isinstance(val, str) and val.strip() != "")
+    if df is None or len(df) == 0:
+        return pd.DataFrame(columns=["article_id", "article_text", "is_relevant"])  # minimal
+    out = df.copy()
+    if hasattr(out, "to_pandas") and not isinstance(out, pd.DataFrame):
+        out = out.to_pandas()
+    if out is None or len(out) == 0:
+        return pd.DataFrame(columns=["article_id", "article_text", "is_relevant"])
+    # Ensure article_id exists for all rows (deterministic hash of path or text)
+    try:
+        import hashlib as _hash
+        if "article_id" not in out.columns:
+            out["article_id"] = None
+        def _gen_id_row(r: pd.Series) -> str:
             try:
-                mask_missing = out["article_id"].apply(_need_id)
+                src = r.get("article_path")
+                if not isinstance(src, str) or src.strip() == "":
+                    src = r.get("article_text") or r.get("chunk_text") or ""
+                return _hash.sha1(str(src).encode("utf-8")).hexdigest()
             except Exception:
-                mask_missing = True
-            if isinstance(mask_missing, bool):
-                out["article_id"] = out.apply(_gen_id_row, axis=1)
-            else:
-                out.loc[mask_missing, "article_id"] = out.loc[mask_missing].apply(_gen_id_row, axis=1)
+                return _hash.sha1(str(r.get("article_text") or r.get("chunk_text") or "").encode("utf-8")).hexdigest()
+        def _need_id(val: Any) -> bool:
+            # Treat non-strings, empty strings, and NaNs as missing IDs
+            return not (isinstance(val, str) and val.strip() != "")
+        try:
+            mask_missing = out["article_id"].apply(_need_id)
         except Exception:
-            pass
-        out = _coerce_boolish_df(out)
+            mask_missing = True
+        if isinstance(mask_missing, bool):
+            out["article_id"] = out.apply(_gen_id_row, axis=1)
+        else:
+            out.loc[mask_missing, "article_id"] = out.loc[mask_missing].apply(_gen_id_row, axis=1)
+    except Exception:
+        pass
+    out = _coerce_boolish_df(out)
     def _heuristic(text: Any) -> bool:
         s = str(text or "").lower()
         if not s:
@@ -1272,28 +1184,11 @@ def run_classification_core(df: pd.DataFrame, cfg):
     except Exception:
         prefilter_mode = "pre_gating"
     if not use_llm:
-        if is_ray_ds:
-            def _heuristic_batch(pdf: pd.DataFrame) -> pd.DataFrame:
-                pdf = pdf.copy()
-                pdf["is_relevant"] = pdf["article_text"].apply(_heuristic)
-                pdf["classification_mode"] = "heuristic"
-                return pdf
-            return df.map_batches(_heuristic_batch, batch_format="pandas")
         out["is_relevant"] = out["article_text"].apply(_heuristic)
         out["classification_mode"] = "heuristic"
-        out_df = out
-        return out_df
-
-    if not _RAY_OK:
-        out["is_relevant"] = out["article_text"].apply(_heuristic)
-        out["classification_mode"] = "heuristic_fallback"
-        try:
-            print("Warning: Ray LLM not available; falling back to heuristic classification.")
-        except Exception:
-            pass
         return out
 
-    # LLM classification via Ray vLLM
+    # LLM classification via vLLM
     # Optional keyword-based buffering (±window words around matches)
     try:
         enable_kw_buf = bool(getattr(cfg.runtime, "keyword_buffering", True))
@@ -1651,70 +1546,6 @@ def run_classification_core(df: pd.DataFrame, cfg):
         except Exception:
             return None
 
-    # Constrain GPU mem via vLLM engine args: prefer provided config; otherwise set conservative defaults
-    ek = dict(getattr(cfg.model, "engine_kwargs", {}))
-    ek.setdefault("max_model_len", 4096)
-    ek.setdefault("max_num_seqs", 16)
-    ek.setdefault("gpu_memory_utilization", 0.85)
-    tp_env = os.environ.get("UAIR_TENSOR_PARALLEL_SIZE")
-    if "tensor_parallel_size" not in ek and tp_env:
-        try:
-            tp_val = max(1, int(tp_env))
-            ek["tensor_parallel_size"] = tp_val
-            if not os.environ.get("RULE_TUPLES_SILENT"):
-                print(f"Using tensor_parallel_size={tp_val} from UAIR_TENSOR_PARALLEL_SIZE")
-        except Exception:
-            pass
-    # Auto-detect tensor_parallel_size from allocated GPUs if not explicitly set
-    if "tensor_parallel_size" not in ek:
-        try:
-            num_gpus = _detect_num_gpus()
-            ek["tensor_parallel_size"] = num_gpus
-            if not os.environ.get("RULE_TUPLES_SILENT"):
-                print(f"Auto-detected {num_gpus} GPU(s) for tensor parallelism")
-        except Exception:
-            ek.setdefault("tensor_parallel_size", 1)
-    # Apply GPU-type-aware batch settings (max_num_seqs and batch_size)
-    gpu_settings = _apply_gpu_aware_batch_settings(ek, cfg)
-    # vLLM best-practice safe defaults (overridable via config)
-    ek.setdefault("enable_prefix_caching", True)
-    ek.setdefault("use_v2_block_manager", True)
-    ek.setdefault("tokenizer_mode", "auto")
-    ek.setdefault("trust_remote_code", True)
-    ek.setdefault("dtype", "auto")
-    ek.setdefault("kv_cache_dtype", "auto")
-    ek = _filter_vllm_engine_kwargs(ek)
-    # Prefer xgrammar backend for stricter JSON Schema enforcement (align with decompose_nbl)
-    ek.setdefault("guided_decoding_backend", "xgrammar")
-    # Determine batch_size: explicit config > GPU-aware default > fallback
-    try:
-        batch_size_cfg = getattr(cfg.model, "batch_size", None)
-        if batch_size_cfg is not None:
-            batch_size = int(batch_size_cfg)
-        elif gpu_settings and "batch_size" in gpu_settings:
-            batch_size = gpu_settings["batch_size"]
-            if not os.environ.get("RULE_TUPLES_SILENT"):
-                print(f"Auto-set batch_size={batch_size} for {_detect_gpu_type()}")
-        else:
-            batch_size = 16
-    except Exception:
-        batch_size = 16
-    engine_config = vLLMEngineProcessorConfig(
-        model_source=str(getattr(cfg.model, "model_source")),
-        runtime_env={
-            "env_vars": {
-                # Doc-supported knob to reduce verbosity safely
-                "VLLM_LOGGING_LEVEL": str(os.environ.get("VLLM_LOGGING_LEVEL", "WARNING")),
-                # Propagate wandb config to Ray workers (uses in-process mode)
-                "WANDB_DISABLE_SERVICE": str(os.environ.get("WANDB_DISABLE_SERVICE", "true")),
-                "WANDB_SILENT": str(os.environ.get("WANDB_SILENT", "true")),
-            }
-        },
-        engine_kwargs=ek,
-        concurrency=int(getattr(cfg.model, "concurrency", 1) or 1),
-        batch_size=int(batch_size),
-    )
-
     # Prefer stage/profile-specific sampling params when present; convert nested DictConfig -> dict
     try:
         if is_eu_profile:
@@ -1802,18 +1633,7 @@ def run_classification_core(df: pd.DataFrame, cfg):
         except Exception:
             RISKS_BENEFITS_GUIDED_JSON_SCHEMA = None
 
-    # Driver-computed conservative char budget for user content (captured into Ray workers)
-    try:
-        mm_len = int(getattr(cfg.model, "engine_kwargs", {}).get("max_model_len", 4096))
-    except Exception:
-        mm_len = 4096
-    try:
-        max_out = int(sampling_params.get("max_tokens", 8) or 8)
-    except Exception:
-        max_out = 8
-    _approx_user_char_budget = max(2048, (mm_len - max_out - 512) * 4)
-
-    # Columns to drop from final stage outputs (internal Ray/vLLM mechanics)
+    # Columns to drop from final stage outputs (internal vLLM mechanics)
     _INTERNAL_DROP_COLS = [
         "messages",
         "sampling_params",
@@ -2360,434 +2180,19 @@ def run_classification_core(df: pd.DataFrame, cfg):
                 "_progress_row": 1,
             }
 
-    # Pre-attach chunk_text in a separate map when streaming; apply prefilter gating and trimming
-    if is_ray_ds:
-        ds_in = df
-        ds_all = None  # Track ALL articles (including filtered ones)
-        
-        # Debug: inspect incoming schema before any pruning to track problematic columns
-        try:
-            schema = ds_in.schema()
-            cols = list(schema.names)
-            print(f"[classify] Incoming Ray dataset columns ({len(cols)}): {cols}", flush=True)
-            try:
-                import pyarrow as pa  # type: ignore
-                schema_desc = [
-                    f"{field.name}:{field.type}" if isinstance(field, pa.Field) else str(field)
-                    for field in schema
-                ]
-                print(
-                    "[classify] Incoming schema field types: " + ", ".join(schema_desc),
-                    flush=True,
-                )
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        # Limit columns to those required for prompting/metadata to avoid schema drift
-        try:
-            current_cols = set(ds_in.schema().names)
-        except Exception:
-            current_cols = set()
-        base_required = {
-            "article_id",
-            "article_text",
-            "article_path",
-            "chunk_text",
-            "country",
-            "year",
-            "relevant_keyword",
-            "matched_keywords",
-            "keyword_match_count",
-            "core_tuple_verified",
-            "doc_any_component_verified",
-            "missing",
-            "missing_fields",
-            "eu_missing_fields",
-        }
-        profile_specific = set()
-        if is_eu_profile or is_risks_benefits_profile:
-            profile_specific.update(EU_INPUT_KEYS)
-        allowed_columns = get_required_input_columns(is_eu_profile, is_risks_benefits_profile)
-        allowed_columns = allowed_columns & current_cols
-        # Ensure essential columns are retained even if missing from current columns
-        allowed_columns.update({col for col in ("article_id", "article_text") if col in current_cols})
-        try:
-            if allowed_columns and allowed_columns != current_cols:
-                ds_in = ds_in.select_columns(sorted(allowed_columns))
-                print(
-                    f"[classify] Pruned dataset columns to {sorted(allowed_columns)}",
-                    flush=True,
-                )
-        except Exception:
-            pass
-
-        # After pruning, log the updated schema for confirmation
-        try:
-            new_schema = ds_in.schema()
-            new_cols = list(new_schema.names)
-            print(f"[classify] Columns after pruning ({len(new_cols)}): {new_cols}", flush=True)
-            try:
-                import pyarrow as pa  # type: ignore
-                new_schema_desc = [
-                    f"{field.name}:{field.type}" if isinstance(field, pa.Field) else str(field)
-                    for field in new_schema
-                ]
-                print(
-                    "[classify] Post-prune schema field types: "
-                    + ", ".join(new_schema_desc),
-                    flush=True,
-                )
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        # Ensure every row has an article_id BEFORE any materialization/merging
-        def _ensure_article_id_map(r: Dict[str, Any]) -> Dict[str, Any]:
-            try:
-                aid = r.get("article_id")
-                if not (isinstance(aid, str) and aid.strip() != ""):
-                    src = r.get("article_path")
-                    if not isinstance(src, str) or src.strip() == "":
-                        src = r.get("article_text") or r.get("chunk_text") or ""
-                    import hashlib as _hash
-                    r["article_id"] = _hash.sha1(str(src).encode("utf-8")).hexdigest()
-            except Exception:
-                pass
-            return r
-        try:
-            ds_in = ds_in.map(_ensure_article_id_map)
-        except Exception:
-            pass
-
-        def _coerce_boolish_map(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _coerce_boolish_row(dict(r))
-
-        try:
-            ds_in = ds_in.map(_coerce_boolish_map)
-        except Exception:
-            pass
-
-        # Keyword flag + gating
-        if prefilter_mode in ("pre_gating", "post_gating"):
-            # First mark keyword and tally BEFORE any filter so W&B sees true totals
-            usage_actor = None  # type: ignore
-            try:
-                if _RAY_OK:
-                    usage_actor = ray.get_actor("uair_usage_agg")  # type: ignore
-            except Exception:
-                usage_actor = None  # type: ignore
-            # Add keyword information: binary flag, matched keywords list, and match count
-            def _add_keyword_info(r: Dict[str, Any]) -> Dict[str, Any]:
-                has_kw, matched_kws, match_count = _extract_matched_keywords(r.get("article_text"))
-                return {
-                    **r,
-                    "relevant_keyword": has_kw,
-                    "matched_keywords": matched_kws,
-                    "keyword_match_count": match_count,
-                }
-            ds_in = ds_in.map(_add_keyword_info)
-            if usage_actor is not None:
-                def _acc_kw(pdf: pd.DataFrame) -> pd.DataFrame:
-                    try:
-                        total_checked = int(len(pdf))
-                    except Exception:
-                        total_checked = 0
-                    try:
-                        marked = int(pdf["relevant_keyword"].astype(bool).sum()) if "relevant_keyword" in pdf.columns else 0
-                    except Exception:
-                        marked = 0
-                    try:
-                        usage_actor.record.remote("classify", kw_marked=int(marked), kw_checked=int(total_checked))  # type: ignore
-                    except Exception:
-                        pass
-                    return pdf
-                try:
-                    ds_in = ds_in.map_batches(_acc_kw, batch_format="pandas", batch_size=512)
-                except Exception:
-                    pass
-            if prefilter_mode == "pre_gating":
-                # Keep a copy of ALL articles before filtering
-                # Must materialize to cache the unfiltered data, otherwise ds_all will reference
-                # the same lazy execution plan as ds_in and both will be filtered
-                ds_all = ds_in.materialize()
-                # Filter to only articles WITH keywords for LLM processing
-                ds_in = ds_all.filter(lambda r: bool(r.get("relevant_keyword", True)))
-        # EU and risks_benefits: compute input completeness flags and split off too-vague rows before LLM
-        ds_vague = None
-        if is_eu_profile or is_risks_benefits_profile:
-            try:
-                ds_in = ds_in.map(_add_eu_vague_flags)
-                # Capture too-vague rows and filter them out from LLM-bound dataset
-                ds_vague = ds_in.filter(lambda r: bool(r.get("too_vague_to_process", False)))
-                ds_in = ds_in.filter(lambda r: not bool(r.get("too_vague_to_process", False)))
-                # Debug: count vague rows
-                try:
-                    vague_count = ds_vague.count()
-                    print(f"[classify] Filtered {vague_count} too-vague rows before LLM processing", flush=True)
-                except Exception:
-                    pass
-            except Exception:
-                ds_vague = None
-        # Attach chunk_text
-        if enable_kw_buf and kw_regex is not None:
-            ds_in = ds_in.map(_attach_chunk_text)
-        # Trim chunk_text to fit model context budget
-        sys_text = system_prompt
-        def _trim_row(r: Dict[str, Any]) -> Dict[str, Any]:
-            txt = r.get("chunk_text") or r.get("article_text")
-            # Use char-based trimming to avoid heavy tokenizer in Ray workers.
-            r["chunk_text"] = _trim_text_for_prompt(str(txt or ""), None, sys_text)
-            return r
-        ds_in = ds_in.map(_trim_row)
-        processor = build_llm_processor(engine_config, preprocess=_pre, postprocess=_post)
-        ds_llm_results = processor(ds_in)
-        # Sanitize internal columns at the dataset level
-        # Only drop columns that actually exist in the dataset
-        try:
-            # Get schema to check which columns exist
-            schema = ds_llm_results.schema()
-            if hasattr(schema, 'names'):
-                existing_cols = schema.names
-            else:
-                # Fallback: try to get from first batch
-                try:
-                    first_batch = next(iter(ds_llm_results.iter_batches(batch_size=1)))
-                    existing_cols = first_batch.column_names if hasattr(first_batch, 'column_names') else []
-                except Exception:
-                    existing_cols = []
-            # Filter to only columns that exist
-            cols_to_drop = [col for col in _INTERNAL_DROP_COLS if col in existing_cols]
-            if cols_to_drop:
-                ds_llm_results = ds_llm_results.drop_columns(cols_to_drop)
-        except Exception as e:
-            print(f"[classify] Warning: Failed to drop internal columns: {e}", flush=True)
-        # Drop risks_benefits specific columns if in that profile
-        if is_risks_benefits_profile:
-            try:
-                # Get schema to check which columns exist
-                schema = ds_llm_results.schema()
-                if hasattr(schema, 'names'):
-                    existing_cols = schema.names
-                else:
-                    try:
-                        first_batch = next(iter(ds_llm_results.iter_batches(batch_size=1)))
-                        existing_cols = first_batch.column_names if hasattr(first_batch, 'column_names') else []
-                    except Exception:
-                        existing_cols = []
-                # Filter to only columns that exist
-                cols_to_drop = [col for col in _RISKS_BENEFITS_DROP_COLS if col in existing_cols]
-                if cols_to_drop:
-                    ds_llm_results = ds_llm_results.drop_columns(cols_to_drop)
-            except Exception as e:
-                print(f"[classify] Warning: Failed to drop risks_benefits columns: {e}", flush=True)
-        
-        skip_merge_filtered = bool(getattr(cfg.runtime, "skip_merge_filtered", False))
-        print(
-            f"[classify] Checking merge conditions: ds_all={ds_all is not None}, ds_vague={ds_vague is not None}, skip_merge_filtered={skip_merge_filtered}",
-            flush=True,
-        )
-        if skip_merge_filtered:
-            df_llm = ds_llm_results.to_pandas().drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
-            if is_risks_benefits_profile:
-                df_llm = df_llm.drop(columns=_RISKS_BENEFITS_DROP_COLS, errors="ignore")
-            if is_eu_profile or is_risks_benefits_profile:
-                if "too_vague_to_process" not in df_llm.columns:
-                    df_llm["too_vague_to_process"] = False
-                else:
-                    df_llm["too_vague_to_process"] = df_llm["too_vague_to_process"].fillna(False)
-            print(f"[classify] skip_merge_filtered enabled; returning {len(df_llm)} rows without merging filtered/vague", flush=True)
-            return df_llm
-        if ds_all is not None or ds_vague is not None:
-            print(f"[classify] Starting merge process...", flush=True)
-            try:
-                # Convert to pandas for easier merging
-                df_llm = ds_llm_results.to_pandas()
-                df_all = ds_all.to_pandas() if ds_all is not None else None
-                
-                # Mark filtered articles and ensure consistent columns across profiles
-                def _mark_filtered(pdf: pd.DataFrame) -> pd.DataFrame:
-                    pdf = pdf.copy()
-                    pdf["classification_mode"] = "filtered_by_keyword"
-                    if is_eu_profile:
-                        # For EU profile, ensure eu_* columns exist with None defaults
-                        for col in ("eu_ai_desc", "eu_ai_label", "eu_ai_relevant_text", "eu_ai_reason", "eu_ai_raw_json"):
-                            if col not in pdf.columns:
-                                pdf[col] = None
-                    elif is_risks_benefits_profile:
-                        # For risks_benefits profile, ensure rb_* columns exist with None defaults
-                        for col in ("rb_desc", "rb_human_rights", "rb_sdgs", "rb_additional"):
-                            if col not in pdf.columns:
-                                pdf[col] = None
-                    else:
-                        pdf["is_relevant"] = False
-                        if "relevance_answer" not in pdf.columns:
-                            pdf["relevance_answer"] = None
-                    return pdf
-                
-                result_parts = [
-                    _normalize_profile_columns(df_llm, is_eu_profile, is_risks_benefits_profile)
-                ]
-                if df_all is not None:
-                    processed_ids = set(df_llm["article_id"].unique())
-                    # Exclude too-vague IDs from keyword-filtered to avoid duplication when merging back
-                    vague_ids: set[str] = set()
-                    try:
-                        if 'df_vague' in locals() and isinstance(df_vague, pd.DataFrame) and "article_id" in df_vague.columns:
-                            vague_ids = set(df_vague["article_id"].unique())
-                    except Exception:
-                        vague_ids = set()
-                    excluded_ids = processed_ids.union(vague_ids)
-                    df_filtered = df_all[~df_all["article_id"].isin(list(excluded_ids))].copy()
-                    df_filtered["classification_mode"] = "filtered_by_keyword"
-                    df_filtered = _normalize_profile_columns(df_filtered, is_eu_profile, is_risks_benefits_profile)
-                    if "matched_keywords" in df_filtered.columns:
-                        df_filtered["matched_keywords"] = df_filtered["matched_keywords"].apply(_to_json_str)
-                    result_parts.append(df_filtered)
-                if ds_vague is not None and (is_eu_profile or is_risks_benefits_profile):
-                    df_vague = ds_vague.to_pandas().copy()
-                    print(f"[classify] Merging back {len(df_vague)} too-vague rows to output", flush=True)
-                    df_vague["classification_mode"] = "too_vague_to_process"
-                    df_vague["too_vague_to_process"] = True
-                    df_vague = _normalize_profile_columns(df_vague, is_eu_profile, is_risks_benefits_profile)
-                    result_parts.append(df_vague)
-                else:
-                    print(f"[classify] No too-vague rows to merge (ds_vague is None: {ds_vague is None})", flush=True)
-                result_df = _merge_result_parts(result_parts)
-                # Only ensure too_vague column for EU/RB profiles
-                if is_eu_profile or is_risks_benefits_profile:
-                    if "too_vague_to_process" not in result_df.columns:
-                        result_df["too_vague_to_process"] = False
-                    else:
-                        result_df["too_vague_to_process"] = result_df["too_vague_to_process"].fillna(False)
-                # Drop internal columns before returning
-                try:
-                    result_df = result_df.drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
-                except Exception:
-                    pass
-                # Drop risks_benefits specific columns if in that profile
-                if is_risks_benefits_profile:
-                    try:
-                        result_df = result_df.drop(columns=_RISKS_BENEFITS_DROP_COLS, errors="ignore")
-                    except Exception:
-                        pass
-                
-                try:
-                    num_kw = len(df_filtered) if 'df_filtered' in locals() else 0
-                except Exception:
-                    num_kw = 0
-                try:
-                    num_vague = len(df_vague) if 'df_vague' in locals() else 0
-                except Exception:
-                    num_vague = 0
-                print(f"[classify] Merged results: {len(df_llm)} LLM-processed + {num_kw} keyword-filtered + {num_vague} too-vague = {len(result_df)} total", flush=True)
-                result_df = _prune_result_columns(result_df, is_eu_profile, is_risks_benefits_profile)
-                return result_df
-            except Exception as e:
-                print(f"[classify] ERROR: Failed to merge filtered articles back into results: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-                # Fall back to just LLM results
-                return ds_llm_results
-        
-        print(f"[classify] No merge needed, returning LLM results directly", flush=True)
-        return ds_llm_results
-
-    # Pandas path: build Ray Dataset directly and push prefilter/trim into maps
-    # Build a Ray Dataset with multiple blocks to enable true streaming.
-    # A single huge block (default from_pandas behavior) forces upstream UDFs
-    # like ChatTemplateUDF/TokenizeUDF to process the entire dataset before
-    # the vLLM stage sees any rows, causing large startup latency.
-    try:
-        total_rows = int(len(out))
-    except Exception:
-        total_rows = 0
-    try:
-        desired_rows_per_block = int(getattr(cfg.runtime, "rows_per_block", 2000) or 2000)
-    except Exception:
-        desired_rows_per_block = 2000
-    step = max(1, desired_rows_per_block)
-    if total_rows > step:
-        try:
-            dfs_list = [out.iloc[i:i + step] for i in range(0, total_rows, step)]
-            ds = ray.data.from_pandas(dfs_list)
-        except Exception:
-            ds = ray.data.from_pandas(out)
-    else:
-        ds = ray.data.from_pandas(out)
-
-    # Apply keyword flag + pre-gating and trimming in Ray maps (same as streaming path)
-    ds_in = ds
-
-    # Debug instrumentation for pandas path: capture schema prior to pruning
-    try:
-        schema = ds_in.schema()
-        cols = list(schema.names)
-        print(f"[classify] (pandas path) incoming dataset columns ({len(cols)}): {cols}", flush=True)
-        try:
-            import pyarrow as pa  # type: ignore
-            schema_desc = [
-                f"{field.name}:{field.type}" if isinstance(field, pa.Field) else str(field)
-                for field in schema
-            ]
-            print(
-                "[classify] (pandas path) incoming schema field types: "
-                + ", ".join(schema_desc),
-                flush=True,
-            )
-        except Exception:
-            pass
-    except Exception:
-        cols = []
-        schema = None
-
-    try:
-        current_cols = set(schema.names) if schema else set()
-    except Exception:
-        current_cols = set()
+    # Prune columns to required inputs
     allowed_columns = get_required_input_columns(is_eu_profile, is_risks_benefits_profile)
+    current_cols = set(out.columns)
     allowed_columns = allowed_columns & current_cols
     allowed_columns.update({col for col in ("article_id", "article_text") if col in current_cols})
-    try:
-        if allowed_columns and allowed_columns != current_cols:
-            ds_in = ds_in.select_columns(sorted(allowed_columns))
-            print(
-                f"[classify] (pandas path) pruned dataset columns to {sorted(allowed_columns)}",
-                flush=True,
-            )
-            try:
-                new_schema = ds_in.schema()
-                new_cols = list(new_schema.names)
-                print(
-                    f"[classify] (pandas path) columns after pruning ({len(new_cols)}): {new_cols}",
-                    flush=True,
-                )
-                try:
-                    import pyarrow as pa  # type: ignore
-                    new_schema_desc = [
-                        f"{field.name}:{field.type}" if isinstance(field, pa.Field) else str(field)
-                        for field in new_schema
-                    ]
-                    print(
-                        "[classify] (pandas path) post-prune schema field types: "
-                        + ", ".join(new_schema_desc),
-                        flush=True,
-                    )
-                except Exception:
-                    pass
-            except Exception:
-                pass
-    except Exception:
-        pass
+    if allowed_columns and allowed_columns != current_cols:
+        out = out[[col for col in out.columns if col in allowed_columns]].copy()
+        print(f"[classify] Pruned dataset columns to {sorted(allowed_columns)}", flush=True)
 
-    ds_all = None  # Track ALL articles (including filtered ones)
-    ds_vague = None  # Track too-vague EU rows
-    
+    # Keyword pre-gating for relevance profile
+    df_all = None  # Track ALL articles (including keyword-filtered ones)
     if prefilter_mode in ("pre_gating", "post_gating"):
-        # Add keyword information: binary flag, matched keywords list, and match count
-        def _add_keyword_info_pandas(r: Dict[str, Any]) -> Dict[str, Any]:
+        def _add_keyword_info_row(r: Dict[str, Any]) -> Dict[str, Any]:
             has_kw, matched_kws, match_count = _extract_matched_keywords(r.get("article_text"))
             return {
                 **r,
@@ -2795,73 +2200,74 @@ def run_classification_core(df: pd.DataFrame, cfg):
                 "matched_keywords": matched_kws,
                 "keyword_match_count": match_count,
             }
-        ds_in = ds_in.map(_add_keyword_info_pandas)
+        out = out.apply(lambda r: _add_keyword_info_row(r.to_dict()), axis=1, result_type="expand")
         if prefilter_mode == "pre_gating":
-            # Keep a copy of ALL articles before filtering
-            # Must materialize to cache the unfiltered data, otherwise ds_all will reference
-            # the same lazy execution plan as ds_in and both will be filtered
-            ds_all = ds_in.materialize()
-            # Filter to only articles WITH keywords for LLM processing
-            ds_in = ds_all.filter(lambda r: bool(r.get("relevant_keyword", True)))
-    # EU and risks_benefits: compute input completeness flags and split off too-vague rows before LLM
+            df_all = out.copy()
+            out = out[out["relevant_keyword"].astype(bool)].copy()
+
+    # EU and risks_benefits: compute input completeness flags and split off too-vague rows
+    df_vague = None
     if is_eu_profile or is_risks_benefits_profile:
         try:
-            ds_in = ds_in.map(_add_eu_vague_flags)
-            ds_vague = ds_in.filter(lambda r: bool(r.get("too_vague_to_process", False)))
-            ds_in = ds_in.filter(lambda r: not bool(r.get("too_vague_to_process", False)))
-            # Debug: count vague rows
-            try:
-                vague_count = ds_vague.count()
-                print(f"[classify] Filtered {vague_count} too-vague rows before LLM processing", flush=True)
-            except Exception:
-                pass
+            out = out.apply(lambda r: _add_eu_vague_flags(r.to_dict()), axis=1, result_type="expand")
+            for col in ["missing", "missing_fields", "eu_missing_fields"]:
+                if col in out.columns:
+                    out[col] = out[col].apply(
+                        lambda v: _to_json_str(v) if isinstance(v, (dict, list, tuple, set)) else v
+                    )
+            mask_vague = out["too_vague_to_process"].astype(bool)
+            df_vague = out[mask_vague].copy()
+            out = out[~mask_vague].copy()
+            print(f"[classify] Filtered {len(df_vague)} too-vague rows before LLM processing", flush=True)
         except Exception:
-            ds_vague = None
-    if enable_kw_buf and kw_regex is not None:
-        ds_in = ds_in.map(_attach_chunk_text)
-    sys_text = system_prompt
-    def _trim_row(r: Dict[str, Any]) -> Dict[str, Any]:
-        txt = r.get("chunk_text") or r.get("article_text")
-        # Use char-based trimming to avoid heavy tokenizer in Ray workers.
-        r["chunk_text"] = _trim_text_for_prompt(str(txt or ""), None, sys_text)
-        return r
-    ds_in = ds_in.map(_trim_row)
+            df_vague = None
 
-    processor = build_llm_processor(engine_config, preprocess=_pre, postprocess=_post)
-    # Avoid an extra materialize; converting to pandas will trigger execution.
-    out_df = processor(ds_in).to_pandas()
-    # Drop internal columns prior to any merging
+    # Attach chunk_text and trim for relevance profile
+    if enable_kw_buf and kw_regex is not None:
+        out = out.apply(lambda r: _attach_chunk_text(r.to_dict()), axis=1, result_type="expand")
+    sys_text = system_prompt
     try:
-        out_df = out_df.drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
+        col_to_trim = "chunk_text" if "chunk_text" in out.columns else "article_text"
+        out[col_to_trim] = out[col_to_trim].apply(
+            lambda txt: _trim_text_for_prompt(str(txt or ""), None, sys_text)
+        )
     except Exception:
         pass
-    # Drop risks_benefits specific columns if in that profile
-    if is_risks_benefits_profile:
-        try:
-            out_df = out_df.drop(columns=_RISKS_BENEFITS_DROP_COLS, errors="ignore")
-        except Exception:
-            pass
-    
-    # If we filtered articles, merge LLM results back with filtered articles
-    print(f"[classify] Checking merge conditions: ds_all={ds_all is not None}, ds_vague={ds_vague is not None}", flush=True)
-    if ds_all is not None or (ds_vague is not None and (is_eu_profile or is_risks_benefits_profile)):
+
+    # Run LLM inference
+    out_df = run_vllm_inference(out, cfg, _pre, _post, "classify")
+    out_df = out_df.drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
+    out_df = out_df.drop(columns=_RISKS_BENEFITS_DROP_COLS, errors="ignore")
+
+    # Merge filtered/vague rows back
+    skip_merge_filtered = bool(getattr(cfg.runtime, "skip_merge_filtered", False))
+    print(
+        f"[classify] Checking merge conditions: df_all={df_all is not None}, df_vague={df_vague is not None}, skip_merge_filtered={skip_merge_filtered}",
+        flush=True,
+    )
+    if skip_merge_filtered:
+        if is_eu_profile or is_risks_benefits_profile:
+            if "too_vague_to_process" not in out_df.columns:
+                out_df["too_vague_to_process"] = False
+            else:
+                out_df["too_vague_to_process"] = out_df["too_vague_to_process"].fillna(False)
+        print(f"[classify] skip_merge_filtered enabled; returning {len(out_df)} rows without merging filtered/vague", flush=True)
+        return _prune_result_columns(out_df, is_eu_profile, is_risks_benefits_profile)
+
+    if df_all is not None or (df_vague is not None and (is_eu_profile or is_risks_benefits_profile)):
         print(f"[classify] Starting merge process...", flush=True)
         try:
             df_llm = out_df
-            df_all = ds_all.to_pandas() if ds_all is not None else None
-            
-            result_parts = [
-                _normalize_profile_columns(df_llm, is_eu_profile, is_risks_benefits_profile)
-            ]
+            result_parts = [_normalize_profile_columns(df_llm, is_eu_profile, is_risks_benefits_profile)]
+
             if df_all is not None:
                 processed_ids = set(df_llm["article_id"].unique())
-                # Exclude too-vague IDs from keyword-filtered to avoid duplication when merging back
-                vague_ids: set[str] = set()
+                vague_ids: set = set()
                 try:
-                    if 'df_vague' in locals() and isinstance(df_vague, pd.DataFrame) and "article_id" in df_vague.columns:
+                    if df_vague is not None and "article_id" in df_vague.columns:
                         vague_ids = set(df_vague["article_id"].unique())
                 except Exception:
-                    vague_ids = set()
+                    pass
                 excluded_ids = processed_ids.union(vague_ids)
                 df_filtered = df_all[~df_all["article_id"].isin(list(excluded_ids))].copy()
                 df_filtered["classification_mode"] = "filtered_by_keyword"
@@ -2869,39 +2275,31 @@ def run_classification_core(df: pd.DataFrame, cfg):
                 if "matched_keywords" in df_filtered.columns:
                     df_filtered["matched_keywords"] = df_filtered["matched_keywords"].apply(_to_json_str)
                 result_parts.append(df_filtered)
-            if ds_vague is not None and (is_eu_profile or is_risks_benefits_profile):
-                df_vague = ds_vague.to_pandas().copy()
+
+            if df_vague is not None and (is_eu_profile or is_risks_benefits_profile):
                 print(f"[classify] Merging back {len(df_vague)} too-vague rows to output", flush=True)
                 df_vague["classification_mode"] = "too_vague_to_process"
                 df_vague["too_vague_to_process"] = True
                 df_vague = _normalize_profile_columns(df_vague, is_eu_profile, is_risks_benefits_profile)
                 result_parts.append(df_vague)
             else:
-                print(f"[classify] No too-vague rows to merge (ds_vague is None: {ds_vague is None})", flush=True)
+                print(f"[classify] No too-vague rows to merge", flush=True)
+
             out_df = _merge_result_parts(result_parts)
-            # Only ensure too_vague column for EU/RB profiles
             if is_eu_profile or is_risks_benefits_profile:
                 if "too_vague_to_process" not in out_df.columns:
                     out_df["too_vague_to_process"] = False
                 else:
                     out_df["too_vague_to_process"] = out_df["too_vague_to_process"].fillna(False)
+            out_df = out_df.drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
+            out_df = out_df.drop(columns=_RISKS_BENEFITS_DROP_COLS, errors="ignore")
+
             try:
-                out_df = out_df.drop(columns=_INTERNAL_DROP_COLS, errors="ignore")
-            except Exception:
-                pass
-            # Drop risks_benefits specific columns if in that profile
-            if is_risks_benefits_profile:
-                try:
-                    out_df = out_df.drop(columns=_RISKS_BENEFITS_DROP_COLS, errors="ignore")
-                except Exception:
-                    pass
-            
-            try:
-                num_kw = len(df_filtered) if 'df_filtered' in locals() else 0
+                num_kw = len(df_filtered) if "df_filtered" in locals() else 0
             except Exception:
                 num_kw = 0
             try:
-                num_vague = len(df_vague) if 'df_vague' in locals() else 0
+                num_vague = len(df_vague) if df_vague is not None else 0
             except Exception:
                 num_vague = 0
             print(f"[classify] Merged results: {len(df_llm)} LLM-processed + {num_kw} keyword-filtered + {num_vague} too-vague = {len(out_df)} total", flush=True)
@@ -2909,10 +2307,9 @@ def run_classification_core(df: pd.DataFrame, cfg):
             print(f"[classify] ERROR: Failed to merge filtered articles back into results: {e}", flush=True)
             import traceback
             traceback.print_exc()
-            # Fall back to just LLM results
     else:
         print(f"[classify] No merge needed, returning LLM results directly", flush=True)
-    
+
     # Stage-scoped logging is handled by the orchestrator
     out_df = _prune_result_columns(out_df, is_eu_profile, is_risks_benefits_profile)
     return out_df

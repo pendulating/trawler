@@ -1,19 +1,51 @@
-# Fix uvloop/Ray event loop conflict in Python 3.12+
-# Must be done before importing Ray or any async libraries
-import asyncio
-try:
-    _policy = asyncio.get_event_loop_policy()
-    if 'uvloop' in type(_policy).__module__:
-        asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
-except Exception:
-    pass
+# Norm extraction stage - tensor parallelism across 2 GPUs
+# Uses vLLM V0 engine (VLLM_USE_V1=0 set in launcher before Python starts)
 
 import pandas as pd
 import json
 import os
 from omegaconf import OmegaConf
 from typing import Any, Dict, List
-from ..schema import InstitutionalStatement
+
+from ..ci_schema import PrescriptiveNormExtractionResult
+
+
+def _clean_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean DataFrame to avoid PyArrow serialization issues.
+    
+    Removes or converts columns that cause parquet write errors:
+    - Empty struct columns (e.g., 'metadata' with {})
+    - Complex nested types that Arrow can't handle
+    """
+    # Columns that commonly cause issues - drop them
+    problematic_cols = [
+        "metadata", "reasoning_data", "raz_norms_raw",
+        "__inference_error__", "embeddings"
+    ]
+    
+    for col in problematic_cols:
+        if col in df.columns:
+            # Check if column contains empty dicts/structs
+            try:
+                sample = df[col].dropna().head(1)
+                if len(sample) > 0:
+                    val = sample.iloc[0]
+                    # Drop if it's an empty dict or list of empty dicts
+                    if val == {} or val == [] or (isinstance(val, list) and all(v == {} for v in val)):
+                        df = df.drop(columns=[col])
+                        print(f"[norm_extraction] Dropped empty struct column: {col}")
+                        continue
+            except Exception:
+                pass
+            
+            # Convert complex objects to JSON strings for safe parquet storage
+            try:
+                df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
+            except Exception:
+                df = df.drop(columns=[col])
+                print(f"[norm_extraction] Dropped problematic column: {col}")
+    
+    return df
 
 try:
     from json_repair import repair_json
@@ -21,172 +53,195 @@ try:
 except ImportError:
     _JSON_REPAIR_OK = False
 
-try:
-    import ray
-    from ray.data.llm import build_processor, vLLMEngineProcessorConfig
-    _RAY_OK = True
-except Exception:
-    _RAY_OK = False
 
-def _clean_dataframe_for_ray(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean DataFrame to avoid PyArrow schema conflicts in Ray Data.
-    
-    Ray Data uses Arrow internally, which requires consistent types across all rows.
-    This function:
-    1. Drops columns with complex/nested types that cause schema issues
-    2. Converts boolean columns to ensure no null/bool mismatches
-    3. Keeps only columns needed for extraction
+def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     """
-    # Columns needed for extraction
-    keep_cols = [
-        "article_text", "norm_snippet", "reasoning_trace", "potential_type",
-        "chunk_id", "gutenberg_id", "batch_uuid", "norm_index", "norm_count",
-        "has_norms", "is_historical_context_present"
-    ]
-    
-    # Drop problematic columns that cause Arrow type conflicts
-    drop_cols = [
-        "reasoning_data",  # Nested dict with varying array lengths
-        "json_repaired",   # Mixed null/bool
-        "embeddings",      # Large arrays
-        "generated_text", "generated_tokens", "prompt_token_ids",
-        "logprobs", "prompt_logprobs", "messages", "params", "prompt",
-        "metrics", "__inference_error__"
-    ]
-    
-    # Filter to keep columns that exist
-    cols_to_keep = [c for c in keep_cols if c in df.columns]
-    cols_to_drop = [c for c in drop_cols if c in df.columns]
-    
-    # If we have specific columns to keep, use those; otherwise drop problematic ones
-    if cols_to_keep:
-        df_clean = df[cols_to_keep].copy()
-    else:
-        df_clean = df.drop(columns=cols_to_drop, errors='ignore').copy()
-    
-    # Ensure boolean columns have consistent types (no null/bool mismatch)
-    bool_cols = ["has_norms", "is_historical_context_present"]
-    for col in bool_cols:
-        if col in df_clean.columns:
-            df_clean[col] = df_clean[col].fillna(False).astype(bool)
-    
-    return df_clean
+    Stage 2 of Norm Extraction: Raz Norm Tuple Extraction.
+    Uses constrained decoding to map reasoning traces to structured Raz norm tuples.
 
+    Architecture:
+    1. Launcher sets VLLM_USE_V1=0 in shell BEFORE Python starts
+    2. vLLM LLM class used directly with `distributed_executor_backend="mp"`
+    3. Multiprocessing executor handles tensor parallelism across GPUs
 
-def run_norm_extraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
+    Args:
+        df: Input pandas DataFrame
+        cfg: Configuration object
     """
-    Stage 2 of Norm Extraction: Parameterized IG 2.0 Extraction.
-    Uses constrained decoding to map reasoning traces to structured IG 2.0 objects.
-    """
-    is_ray_ds = hasattr(df, "map_batches") and hasattr(df, "count") and _RAY_OK
+    # STEP 1: Verify VLLM_USE_V1=0 is set
+    vllm_v1_env = os.environ.get("VLLM_USE_V1", "not set")
+    print(f"[norm_extraction] VLLM_USE_V1 = {vllm_v1_env}")
+    if vllm_v1_env != "0":
+        print("[norm_extraction] WARNING: VLLM_USE_V1 is not '0' - V1 engine may be used!")
     
-    # Prefer scoped prompt configuration if available
+    # Filter to rows that have a reasoning trace
+    df = df[df["reasoning_trace"].notna() & (df["reasoning_trace"] != "")]
+    if len(df) == 0:
+        print("[norm_extraction] No rows with reasoning traces, returning empty")
+        return df
+    
+    # STEP 4: Ensure V1 shared memory broadcast is NOT disabled, then import vLLM
+    os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
+    os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+    from vllm import LLM, SamplingParams
+    print(f"[norm_extraction] vLLM imported successfully")
+    
     prompt_cfg = OmegaConf.select(cfg, "prompt_extraction") or OmegaConf.select(cfg, "prompt")
+    if prompt_cfg is None:
+        raise RuntimeError(
+            "[norm_extraction] No prompt config found at 'prompt_extraction' or 'prompt'. "
+            "Check config.yaml defaults and pipeline overrides."
+        )
 
-    system_prompt = str(
-        OmegaConf.select(prompt_cfg, "system_prompt")
-        or "You are a formal logic and institutional grammar parser. Based on the provided text and reasoning trace, extract the institutional statement in valid IG 2.0 JSON format."
-    )
-    prompt_template = str(
-        OmegaConf.select(prompt_cfg, "prompt_template")
-        or "Source Text:\n{{article_text}}\n\nReasoning Trace:\n{{reasoning_trace}}\n\nExtract the IG 2.0 statement:"
-    )
+    system_prompt = OmegaConf.select(prompt_cfg, "system_prompt")
+    prompt_template = OmegaConf.select(prompt_cfg, "prompt_template")
+    if not system_prompt or not prompt_template:
+        raise RuntimeError(
+            f"[norm_extraction] Prompt config is missing required fields. "
+            f"system_prompt={'present' if system_prompt else 'MISSING'}, "
+            f"prompt_template={'present' if prompt_template else 'MISSING'}"
+        )
+    system_prompt = str(system_prompt)
+    prompt_template = str(prompt_template)
+    print(f"[norm_extraction] Loaded prompt from config "
+          f"(system_prompt: {len(system_prompt)} chars, prompt_template: {len(prompt_template)} chars)",
+          flush=True)
 
     def _format_prompt(row: Dict[str, Any]) -> str:
-        # Use the specific snippet from reasoning if available, otherwise fallback to full text
         text = str(row.get("norm_snippet") or row.get("article_text") or "")
         reasoning = str(row.get("reasoning_trace", ""))
         return (prompt_template
                 .replace("{{article_text}}", text)
                 .replace("{{reasoning_trace}}", reasoning))
 
-    # vLLM Engine Config
+    # Get model configuration
+    model_source = str(getattr(cfg.model, "model_source"))
     ek = dict(getattr(cfg.model, "engine_kwargs", {}))
-    ek.setdefault("max_model_len", 8192)
-    ek.setdefault("tensor_parallel_size", 2)
-    # Note: guided_decoding_backend was removed in vLLM 1.14+
-    # Guided decoding is now configured via sampling_params only
     
-    engine_config = vLLMEngineProcessorConfig(
-        model_source=str(getattr(cfg.model, "model_source")),
-        engine_kwargs=ek,
-        batch_size=getattr(cfg.model, "batch_size", 8),
-    )
-
-    # Prepare guided decoding schema
-    from ..schema import ExtractionResult
-    json_schema = ExtractionResult.model_json_schema()
-    schema_str = json.dumps(json_schema)
-
-    def _pre(row: Dict[str, Any]) -> Dict[str, Any]:
+    # vLLM V0 LLM class config for 72B AWQ model on 2x A6000
+    llm_kwargs = {
+        "model": model_source,
+        "tensor_parallel_size": ek.get("tensor_parallel_size", 2),
+        "max_model_len": ek.get("max_model_len", 8192),
+        "gpu_memory_utilization": ek.get("gpu_memory_utilization", 0.85),
+        "trust_remote_code": ek.get("trust_remote_code", True),
+        "enforce_eager": ek.get("enforce_eager", True),
+        # Use multiprocessing executor for single-node tensor parallelism.
+        # The "ray" backend deadlocks with vLLM V1 engine (vLLM #27249).
+        "distributed_executor_backend": "mp",
+    }
+    
+    # Add quantization for AWQ models
+    if "awq" in model_source.lower():
+        llm_kwargs["quantization"] = "awq"
+    
+    print(f"[norm_extraction] Initializing vLLM V0 with config: {llm_kwargs}")
+    
+    # Initialize vLLM LLM directly
+    llm = LLM(**llm_kwargs)
+    
+    # Prepare prompts with chat template
+    prompts = []
+    rows_list = df.to_dict('records')
+    
+    for row in rows_list:
         user_prompt = _format_prompt(row)
-        return {
-            **row,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "sampling_params": {
-                "max_tokens": 4096,  # Increased for complex IG 2.0 structures
-                "guided_decoding": {"json": schema_str}
-            }
-        }
-
-    def _post(row: Dict[str, Any]) -> Dict[str, Any]:
-        gen_text = row.get("generated_text", "{}")
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        
+        try:
+            prompt = llm.get_tokenizer().apply_chat_template(
+                messages, 
+                tokenize=False, 
+                add_generation_prompt=True
+            )
+        except Exception:
+            prompt = f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
+        
+        prompts.append(prompt)
+    
+    # Sampling parameters with JSON schema hint
+    sampling_params = SamplingParams(
+        max_tokens=ek.get("max_tokens", 4096),
+        temperature=0.0,
+    )
+    
+    json_schema = PrescriptiveNormExtractionResult.model_json_schema()
+    schema_hint = f"\n\nRespond with valid JSON matching this schema: {json.dumps(json_schema)}"
+    prompts = [p + schema_hint for p in prompts]
+    
+    print(f"[norm_extraction] Running inference on {len(prompts)} prompts...")
+    outputs = llm.generate(prompts, sampling_params)
+    
+    # Process outputs
+    results = []
+    for idx, row in enumerate(rows_list):
+        output = outputs[idx]
+        gen_text = output.outputs[0].text if output.outputs else "{}"
+        
+        # Try to extract JSON
         obj = None
         parse_error = None
+        json_text = gen_text
         
-        # First attempt: standard JSON parsing
+        if "{" in gen_text:
+            start = gen_text.find("{")
+            end = gen_text.rfind("}") + 1
+            if start < end:
+                json_text = gen_text[start:end]
+        
         try:
-            obj = json.loads(gen_text)
+            obj = json.loads(json_text)
         except json.JSONDecodeError as e:
             parse_error = e
-            # Second attempt: use json_repair for truncated/malformed JSON
             if _JSON_REPAIR_OK:
                 try:
-                    repaired = repair_json(gen_text, return_objects=True)
+                    repaired = repair_json(json_text, return_objects=True)
                     if isinstance(repaired, dict):
                         obj = repaired
-                        row["json_repaired"] = True
-                        print(f"JSON repaired successfully (original error: {parse_error})")
                 except Exception as repair_err:
                     print(f"JSON repair also failed: {repair_err}")
         
+        result_row = dict(row)
+        result_row["generated_text"] = gen_text
+        
         if obj is not None:
-            statements = obj.get("statements", [])
-            row["ig20_statements_raw"] = statements
-            row["ig20_count"] = len(statements)
-            
-            if statements:
-                # For backward compatibility, flatten the first statement
-                first = statements[0]
-                inner = first.get("statement", {})
-                for k, v in inner.items():
-                    row[f"ig20_{k}"] = v
-                row["ig20_confidence"] = first.get("confidence")
+            norms = obj.get("norms", [])
+            result_row["raz_norms_raw"] = norms
+            result_row["raz_norm_count"] = len(norms)
+
+            if norms:
+                first = norms[0]
+                norm_tuple = first.get("norm", {})
+                def _to_str(v):
+                    if v is None:
+                        return None
+                    if isinstance(v, list):
+                        return "; ".join(str(x) for x in v)
+                    return str(v)
+                for k, v in norm_tuple.items():
+                    result_row[f"raz_{k}"] = _to_str(v)
+                result_row["raz_normative_force"] = _to_str(first.get("normative_force"))
+                result_row["raz_norm_articulation"] = _to_str(first.get("norm_articulation"))
+                result_row["raz_norm_source"] = _to_str(first.get("norm_source"))
+                result_row["raz_governs_info_flow"] = first.get("governs_information_flow")
+                result_row["raz_info_flow_note"] = _to_str(first.get("information_flow_note"))
+                result_row["raz_confidence_qual"] = _to_str(first.get("confidence_qual"))
+                result_row["raz_confidence_quant"] = first.get("confidence_quant")
+                result_row["raz_context"] = _to_str(first.get("context"))
         else:
             print(f"Error parsing generated JSON: {parse_error}")
-            row["extraction_error"] = str(parse_error)
-            
-        return row
-
-    processor = build_processor(engine_config, preprocess=_pre, postprocess=_post)
-    
-    if is_ray_ds:
-        # Filter rows that have a reasoning trace
-        df = df.filter(lambda row: bool(row.get("reasoning_trace")))
-        return processor(df)
-    
-    # Filter pandas df
-    df = df[df["reasoning_trace"].notna() & (df["reasoning_trace"] != "")]
-    if len(df) == 0:
-        return df
-    
-    # Clean DataFrame to avoid PyArrow schema conflicts
-    df = _clean_dataframe_for_ray(df)
+            result_row["extraction_error"] = str(parse_error)
         
-    ds = ray.data.from_pandas(df)
-    out_ds = processor(ds).materialize()
-    return out_ds.to_pandas()
-
+        results.append(result_row)
+    
+    print(f"[norm_extraction] Completed inference, {len(results)} results")
+    
+    # Clean DataFrame for parquet serialization
+    result_df = pd.DataFrame(results)
+    result_df = _clean_for_parquet(result_df)
+    
+    return result_df

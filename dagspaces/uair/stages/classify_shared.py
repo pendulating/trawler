@@ -143,7 +143,7 @@ def ensure_profile(cfg, profile: str) -> None:
 
 def inject_prompt_from_file(cfg, prompt_filename: str) -> None:
     """Inject prompt from YAML file into cfg.prompt.
-    
+
     Supports subdirectory paths like 'general_ai/classify.yaml' or just 'classify.yaml'.
     """
     try:
@@ -198,197 +198,6 @@ def maybe_silence_vllm_logs() -> None:
         if os.environ.get("RULE_TUPLES_SILENT"):
             lg.setLevel(logging.ERROR)
         _VLLM_LOGS_SILENCED = True
-    except Exception:
-        pass
-
-
-def read_int_file(path: str) -> int:
-    """Read an integer from a file."""
-    try:
-        with open(path, "r") as f:
-            s = f.read().strip()
-        if s.lower() == "max":
-            return -1
-        return int(s)
-    except Exception:
-        return -1
-
-
-def detect_cgroup_mem_limit_bytes() -> int:
-    """Return cgroup memory limit in bytes when available; otherwise -1."""
-    # cgroup v2
-    v2 = "/sys/fs/cgroup/memory.max"
-    lim = read_int_file(v2)
-    if lim > 0:
-        try:
-            if lim > (1 << 56):
-                return -1
-        except Exception:
-            pass
-        return lim
-    # cgroup v1
-    v1 = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
-    lim = read_int_file(v1)
-    if lim > 0:
-        try:
-            if lim > (1 << 56):
-                return -1
-        except Exception:
-            pass
-        return lim
-    return -1
-
-
-def parse_int(val: str) -> int:
-    """Parse an integer from a string."""
-    try:
-        return int(val)
-    except Exception:
-        return -1
-
-
-def parse_cpus_on_node(val: str) -> int:
-    """Parse SLURM_CPUS_ON_NODE value."""
-    if not isinstance(val, str):
-        return -1
-    try:
-        v = val.strip()
-        if "(x" in v and v.endswith(")"):
-            import re as _re
-            m = _re.match(r"^(\d+)\(x(\d+)\)$", v)
-            if m:
-                a = int(m.group(1))
-                b = int(m.group(2))
-                return max(1, a * b)
-        if "," in v:
-            parts = [p for p in v.split(",") if p.strip()]
-            acc = 0
-            for p in parts:
-                try:
-                    acc += int(p)
-                except Exception:
-                    return -1
-            return max(1, acc)
-        return max(1, int(v))
-    except Exception:
-        return -1
-
-
-def detect_slurm_job_mem_bytes() -> int:
-    """Infer SLURM job memory allocation in bytes from env vars."""
-    try:
-        mem_per_node_mb = os.environ.get("SLURM_MEM_PER_NODE")
-        if mem_per_node_mb:
-            mb = parse_int(mem_per_node_mb)
-            if mb > 0:
-                return mb * 1024 * 1024
-    except Exception:
-        pass
-    try:
-        mem_per_cpu_mb = os.environ.get("SLURM_MEM_PER_CPU")
-        cpus_on_node = os.environ.get("SLURM_CPUS_ON_NODE")
-        if mem_per_cpu_mb and cpus_on_node:
-            mb = parse_int(mem_per_cpu_mb)
-            cpus = parse_cpus_on_node(cpus_on_node)
-            if mb > 0 and cpus > 0:
-                return mb * cpus * 1024 * 1024
-    except Exception:
-        pass
-    return -1
-
-
-def effective_total_memory_bytes() -> int:
-    """Best-effort job-aware total memory for sizing Ray object store."""
-    cg = detect_cgroup_mem_limit_bytes()
-    if cg > 0:
-        return cg
-    sj = detect_slurm_job_mem_bytes()
-    if sj > 0:
-        return sj
-    try:
-        import psutil  # type: ignore
-        tot = int(getattr(psutil.virtual_memory(), "total", 0))
-        if tot > 0:
-            return tot
-    except Exception:
-        pass
-    try:
-        return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
-    except Exception:
-        pass
-    return -1
-
-
-def ensure_ray_init(cfg) -> None:
-    """Ensure Ray is initialized with proper configuration."""
-    try:
-        import ray  # type: ignore
-        if not ray.is_initialized():
-            cpus_alloc = None
-            try:
-                cpt = os.environ.get("SLURM_CPUS_PER_TASK")
-                if cpt is not None and str(cpt).strip() != "":
-                    cpus_alloc = int(cpt)
-                else:
-                    con = os.environ.get("SLURM_CPUS_ON_NODE")
-                    if con is not None and str(con).strip() != "":
-                        cpus_alloc = parse_cpus_on_node(con)
-            except Exception:
-                cpus_alloc = None
-            
-            obj_store_bytes = None
-            try:
-                prop = getattr(cfg.runtime, "object_store_proportion", None)
-                prop = float(prop) if prop is not None else None
-            except Exception:
-                prop = None
-            try:
-                if prop is None:
-                    env_prop = os.environ.get("RAY_DEFAULT_OBJECT_STORE_MEMORY_PROPORTION")
-                    if env_prop is not None and str(env_prop).strip() != "":
-                        prop = float(env_prop)
-            except Exception:
-                pass
-            if prop is not None and 0.0 < prop <= 0.95:
-                try:
-                    total_bytes = effective_total_memory_bytes()
-                    if total_bytes:
-                        obj_store_bytes = int(total_bytes * float(prop))
-                except Exception:
-                    obj_store_bytes = None
-            if obj_store_bytes is None:
-                try:
-                    slurm_bytes = detect_slurm_job_mem_bytes()
-                    if slurm_bytes > 0:
-                        job_mem_gb = max(1, int(slurm_bytes / (1024 ** 3)))
-                    else:
-                        job_mem_gb = int(getattr(cfg.runtime, "job_memory_gb", 64) or 64)
-                except Exception:
-                    job_mem_gb = 64
-                try:
-                    job_mem_gb = int(getattr(cfg.runtime, "job_memory_gb", 64) or 64)
-                except Exception:
-                    job_mem_gb = 64
-                try:
-                    obj_store_bytes = int(max(1, job_mem_gb) * (1024 ** 3) * 0.90)
-                except Exception:
-                    obj_store_bytes = int(64 * (1024 ** 3) * 0.90)
-            try:
-                if cpus_alloc is not None and int(cpus_alloc) > 0:
-                    ray.init(log_to_driver=True, object_store_memory=int(obj_store_bytes), num_cpus=int(cpus_alloc))
-                else:
-                    ray.init(log_to_driver=True, object_store_memory=int(obj_store_bytes))
-            except Exception:
-                try:
-                    ray.init(log_to_driver=True)
-                except Exception:
-                    pass
-            try:
-                if cpus_alloc is not None and int(cpus_alloc) > 0:
-                    ctx = ray.data.DataContext.get_current()
-                    ctx.execution_options.resource_limits = ctx.execution_options.resource_limits.copy(cpu=int(cpus_alloc))
-            except Exception:
-                pass
     except Exception:
         pass
 
@@ -599,6 +408,47 @@ def detect_num_gpus() -> int:
     except Exception:
         pass
     return 1
+
+
+def apply_pcie_gpu_fixes(engine_kwargs: Dict[str, Any]) -> None:
+    """Apply vLLM engine fixes for PCIe-only GPUs (no NVLink).
+
+    RTX A6000 and similar GPUs without NVLink interconnect require these settings
+    to prevent hangs during tensor parallel inference:
+
+    1. enforce_eager=True: Disable CUDA graphs which can hang on PCIe
+    2. These should be combined with NCCL env vars in the launcher/runtime_env
+
+    Args:
+        engine_kwargs: vLLM engine configuration dict (modified in place)
+    """
+    # Disable CUDA graphs - critical for PCIe-only GPUs like RTX A6000
+    # Without this, tensor parallelism can hang after model loading
+    engine_kwargs.setdefault("enforce_eager", True)
+
+
+def get_pcie_nccl_env_vars() -> Dict[str, str]:
+    """Get NCCL environment variables required for PCIe-only GPUs.
+
+    RTX A6000 and similar GPUs without NVLink require these NCCL settings
+    to prevent communication hangs during tensor parallel inference.
+
+    Returns:
+        Dict of environment variable names and values
+    """
+    return {
+        # Disable P2P and InfiniBand which can cause hangs on PCIe
+        "NCCL_P2P_DISABLE": "1",
+        "NCCL_IB_DISABLE": "1",
+        # Disable SHM transport which can hang on PCIe
+        "NCCL_SHM_DISABLE": "1",
+        # Disable CUMEM for PCIe (fixes 'peer access not supported' errors)
+        "NCCL_CUMEM_HOST_ENABLE": "0",
+        # Enable warnings for debugging
+        "NCCL_DEBUG": "WARN",
+        # Use spawn for multiprocessing in vLLM workers
+        "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
+    }
 
 
 def detect_gpu_type() -> str:
@@ -932,5 +782,3 @@ def normalize_profile_columns(df: pd.DataFrame, is_eu_profile: bool, is_risks_be
             if col in df.columns:
                 df[col] = df[col].apply(lambda v: to_json_str(v) if not isinstance(v, str) else v)
     return df
-
-

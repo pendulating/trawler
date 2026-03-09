@@ -10,16 +10,10 @@ import logging
 import os
 
 import pandas as pd
-import pyarrow as pa
 from omegaconf import OmegaConf
 
-try:
-    import ray  # type: ignore
-    from ray.data.llm import build_llm_processor, vLLMEngineProcessorConfig  # type: ignore
 
-    _RAY_OK = True
-except Exception:
-    _RAY_OK = False
+from dagspaces.common.vllm_inference import run_vllm_inference
 
 
 _VLLM_LOGS_SILENCED = False
@@ -139,161 +133,6 @@ def _maybe_silence_vllm_logs() -> None:
         pass
 
 
-def _parse_cpus_on_node(val: str) -> int:
-    try:
-        body = val.strip()
-        if "(x" in body and body.endswith(")"):
-            import re as _re
-
-            match = _re.match(r"^(\d+)\(x(\d+)\)$", body)
-            if match:
-                return max(1, int(match.group(1)) * int(match.group(2)))
-        if "," in body:
-            return max(1, sum(int(part) for part in body.split(",") if part.strip()))
-        return max(1, int(body))
-    except Exception:
-        return -1
-
-
-def _ensure_ray_init(cfg) -> None:
-    """Initialize Ray once with SLURM-aware CPU caps."""
-    if not _RAY_OK:
-        return
-    try:
-        if ray.is_initialized():
-            return
-    except Exception:
-        return
-    cpus_alloc = None
-    try:
-        cpt = os.environ.get("SLURM_CPUS_PER_TASK")
-        if cpt and cpt.strip():
-            cpus_alloc = int(cpt)
-        else:
-            con = os.environ.get("SLURM_CPUS_ON_NODE")
-            if con and con.strip():
-                cpus_alloc = _parse_cpus_on_node(con)
-    except Exception:
-        cpus_alloc = None
-
-    try:
-        job_mem_gb = int(getattr(cfg.runtime, "job_memory_gb", 64) or 64)
-    except Exception:
-        job_mem_gb = 64
-    try:
-        obj_store_bytes = int(max(1, job_mem_gb) * (1024**3) * 0.90)
-    except Exception:
-        obj_store_bytes = int(64 * (1024**3) * 0.90)
-
-    try:
-        if cpus_alloc and int(cpus_alloc) > 0:
-            ray.init(log_to_driver=True, object_store_memory=obj_store_bytes, num_cpus=int(cpus_alloc))
-        else:
-            ray.init(log_to_driver=True, object_store_memory=obj_store_bytes)
-    except Exception:
-        try:
-            ray.init(log_to_driver=True)
-        except Exception:
-            return
-
-    try:
-        if cpus_alloc and int(cpus_alloc) > 0:
-            ctx = ray.data.DataContext.get_current()
-            ctx.execution_options.resource_limits = ctx.execution_options.resource_limits.copy(cpu=int(cpus_alloc))
-    except Exception:
-        pass
-
-
-def _detect_num_gpus() -> int:
-    """Detect allocated GPU count."""
-    try:
-        cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-        if cuda_visible and cuda_visible.strip():
-            ids = [part.strip() for part in cuda_visible.split(",") if part.strip()]
-            if ids:
-                return len(ids)
-    except Exception:
-        pass
-    try:
-        slurm_val = os.environ.get("SLURM_GPUS_PER_NODE") or os.environ.get("SLURM_GPUS_ON_NODE")
-        if slurm_val:
-            if ":" in slurm_val:
-                return int(slurm_val.split(":")[-1])
-            return int(slurm_val)
-    except Exception:
-        pass
-    try:
-        import torch  # type: ignore
-
-        if torch.cuda.is_available():
-            count = torch.cuda.device_count()
-            if count > 0:
-                return count
-    except Exception:
-        pass
-    return 1
-
-
-def _detect_gpu_type() -> str:
-    try:
-        import torch  # type: ignore
-
-        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-            name = torch.cuda.get_device_name(0).lower()
-            if "a6000" in name:
-                return "rtx_a6000"
-            if "a5000" in name:
-                return "rtx_a5000"
-            if "a100" in name:
-                return "a100"
-            if "v100" in name:
-                return "v100"
-            if "a40" in name:
-                return "a40"
-    except Exception:
-        pass
-    return "unknown"
-
-
-def _apply_gpu_aware_batch_settings(engine_kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    gpu_defaults = {
-        "rtx_a6000": {"batch_size": 4, "max_num_seqs": 4},
-        "rtx_a5000": {"batch_size": 2, "max_num_seqs": 2},
-        "a100": {"batch_size": 8, "max_num_seqs": 8},
-        "v100": {"batch_size": 4, "max_num_seqs": 4},
-        "a40": {"batch_size": 4, "max_num_seqs": 4},
-    }
-    gpu_type = _detect_gpu_type()
-    defaults = gpu_defaults.get(gpu_type, {})
-    if defaults and "max_num_seqs" not in engine_kwargs:
-        engine_kwargs["max_num_seqs"] = defaults["max_num_seqs"]
-        if not os.environ.get("RULE_TUPLES_SILENT"):
-            print(f"[grounded_summary] Auto-set max_num_seqs={defaults['max_num_seqs']} for {gpu_type}", flush=True)
-    return defaults
-
-
-def _filter_vllm_engine_kwargs(engine_kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop unsupported vLLM engine kwargs."""
-    try:
-        import vllm as _v  # type: ignore
-
-        accepted = None
-        fields = getattr(getattr(_v, "AsyncEngineArgs", None), "__dataclass_fields__", None)
-        if isinstance(fields, dict) and fields:
-            accepted = set(fields.keys())
-        if accepted is None:
-            import inspect
-
-            sig = inspect.signature(_v.AsyncEngineArgs.__init__)
-            accepted = {name for name in sig.parameters.keys() if name != "self"}
-        if accepted:
-            filtered = {k: v for k, v in engine_kwargs.items() if k in accepted}
-            return filtered
-    except Exception:
-        pass
-    ek = dict(engine_kwargs)
-    ek.pop("use_v2_block_manager", None)
-    return ek
 
 
 def _to_json_str(value: Any) -> Optional[str]:
@@ -640,71 +479,6 @@ def _prepare_sampling_params(cfg, schema: Dict[str, Any]) -> Dict[str, Any]:
     return sampling_params
 
 
-def _build_engine_config(cfg) -> tuple[vLLMEngineProcessorConfig | None, Dict[str, Any]]:
-    if not _RAY_OK:
-        return None, {}
-    engine_kwargs = dict(getattr(cfg.model, "engine_kwargs", {}))
-    engine_kwargs.setdefault("max_model_len", 6144)
-    engine_kwargs.setdefault("gpu_memory_utilization", 0.85)
-    tp_env = os.environ.get("UAIR_TENSOR_PARALLEL_SIZE")
-    if "tensor_parallel_size" not in engine_kwargs and tp_env:
-        try:
-            engine_kwargs["tensor_parallel_size"] = max(1, int(tp_env))
-            if not os.environ.get("RULE_TUPLES_SILENT"):
-                print(f"[grounded_summary] Using tensor_parallel_size={engine_kwargs['tensor_parallel_size']} from env", flush=True)
-        except Exception:
-            pass
-    if "tensor_parallel_size" not in engine_kwargs:
-        try:
-            engine_kwargs["tensor_parallel_size"] = _detect_num_gpus()
-        except Exception:
-            engine_kwargs.setdefault("tensor_parallel_size", 1)
-    gpu_defaults = _apply_gpu_aware_batch_settings(engine_kwargs)
-    engine_kwargs.setdefault("enable_prefix_caching", True)
-    engine_kwargs.setdefault("tokenizer_mode", "auto")
-    engine_kwargs.setdefault("trust_remote_code", True)
-    engine_kwargs.setdefault("dtype", "auto")
-    engine_kwargs.setdefault("kv_cache_dtype", "auto")
-    engine_kwargs.setdefault("guided_decoding_backend", "xgrammar")
-    engine_kwargs = _filter_vllm_engine_kwargs(engine_kwargs)
-
-    try:
-        batch_size_cfg = getattr(cfg.model, "batch_size", None)
-        if batch_size_cfg is not None:
-            batch_size = int(batch_size_cfg)
-        elif gpu_defaults and "batch_size" in gpu_defaults:
-            batch_size = gpu_defaults["batch_size"]
-        else:
-            batch_size = 4
-    except Exception:
-        batch_size = 4
-
-    try:
-        concurrency = int(getattr(cfg.model, "concurrency", 1) or 1)
-    except Exception:
-        concurrency = 1
-
-    try:
-        engine_config = vLLMEngineProcessorConfig(
-            model_source=str(getattr(cfg.model, "model_source")),
-            runtime_env={
-                "env_vars": {
-                    "VLLM_LOGGING_LEVEL": str(os.environ.get("VLLM_LOGGING_LEVEL", "WARNING")),
-                    "WANDB_DISABLE_SERVICE": str(os.environ.get("WANDB_DISABLE_SERVICE", "true")),
-                    "WANDB_SILENT": str(os.environ.get("WANDB_SILENT", "true")),
-                }
-            },
-            engine_kwargs=engine_kwargs,
-            concurrency=concurrency,
-            batch_size=batch_size,
-        )
-        return engine_config, engine_kwargs
-    except Exception as exc:
-        try:
-            print(f"[grounded_summary] Failed to construct engine config: {exc}", flush=True)
-        except Exception:
-            pass
-        return None, engine_kwargs
 
 
 def _build_preprocessor(
@@ -866,26 +640,6 @@ def _extract_schema_fields(schema: Dict[str, Any]) -> Iterable[str]:
     return list(props.keys())
 
 
-def _build_arrow_schema_for_dataframe(df: pd.DataFrame) -> pa.Schema:
-    """Build Arrow schema for DataFrame, making fields nullable if they contain nulls.
-    
-    This ensures compatibility when Ray Data combines batches that may have
-    different null patterns (e.g., some batches have all nulls for a field).
-    """
-    fields: list[pa.Field] = []
-    for col in df.columns:
-        # Check if column contains any null values
-        has_nulls = df[col].isna().any() if len(df) > 0 else True
-        
-        if col in BOOL_COLUMNS:
-            fields.append(pa.field(col, pa.bool_(), nullable=has_nulls))
-        elif col in FLOAT_COLUMNS:
-            fields.append(pa.field(col, pa.float64(), nullable=has_nulls))
-        else:
-            # String fields: make nullable if they have nulls, or if we can't determine
-            # (safer to make nullable by default for string fields that might have nulls)
-            fields.append(pa.field(col, pa.string(), nullable=True))
-    return pa.schema(fields)
 
 
 def run_grounded_summary_stage(
@@ -1030,48 +784,11 @@ def run_grounded_summary_stage(
     schema_fields = _extract_schema_fields(schema)
 
     use_llm = bool(getattr(cfg.runtime, "use_llm_grounded_summary", True))
-    _ensure_ray_init(cfg)
 
-    engine_config, engine_kwargs = _build_engine_config(cfg)
-    can_use_llm = use_llm and _RAY_OK and engine_config is not None
-
-    if can_use_llm:
-        try:
-            if bool(getattr(cfg.runtime, "debug", False)):
-                _debug_dataframe_schema(base_df, "ray_input_dataframe")
-        except Exception:
-            pass
-        arrow_schema = _build_arrow_schema_for_dataframe(base_df)
-        # Normalize None values to empty strings for string columns before creating Arrow table
-        # This prevents PyArrow from inferring null type when batches have all None values
-        base_df_normalized = base_df.copy()
-        for col in base_df_normalized.columns:
-            if col not in BOOL_COLUMNS and col not in FLOAT_COLUMNS:
-                base_df_normalized[col] = base_df_normalized[col].fillna("")
-        # Create table with explicit nullable schema to ensure compatibility
-        # when Ray Data combines batches that may have different null patterns
-        arrow_table = pa.Table.from_pandas(base_df_normalized, schema=arrow_schema, preserve_index=False)
-        if bool(getattr(cfg.runtime, "debug", False)):
-            try:
-                print(f"[grounded_summary][DEBUG] Arrow schema: {arrow_table.schema}", flush=True)
-            except Exception:
-                pass
-        ds = ray.data.from_arrow(arrow_table)
-        if bool(getattr(cfg.runtime, "debug", False)):
-            try:
-                schema = ds.schema()
-                print(f"[grounded_summary][DEBUG] Ray dataset schema: {schema}", flush=True)
-                first_batch = ds.take(1)
-                if first_batch:
-                    print(f"[grounded_summary][DEBUG] Ray dataset sample row: {first_batch[0]}", flush=True)
-            except Exception as exc:
-                print(f"[grounded_summary][DEBUG] Failed to log Ray dataset schema: {exc}", flush=True)
-        processor = build_llm_processor(
-            engine_config,
-            preprocess=_build_preprocessor(system_prompt, user_template, schema, sampling_params),
-            postprocess=_build_postprocessor(schema_fields),
-        )
-        result_df = processor(ds).to_pandas()
+    if use_llm:
+        _pre = _build_preprocessor(system_prompt, user_template, schema, sampling_params)
+        _post = _build_postprocessor(schema_fields)
+        result_df = run_vllm_inference(base_df, cfg, _pre, _post, "grounded_summary")
         result_df = result_df.drop(columns=["messages", "sampling_params"], errors="ignore")
         result_df["generation_mode"] = "llm"
     else:

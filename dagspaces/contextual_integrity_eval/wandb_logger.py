@@ -1,4 +1,4 @@
-"""Centralized W&B logging for the historical_norms dagspace.
+"""Centralized W&B logging for contextual_integrity_eval dagspace.
 
 This module provides a unified interface for W&B logging across all pipeline stages,
 handling distributed execution (Ray, SLURM) and run lifecycle management.
@@ -34,12 +34,12 @@ References:
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from functools import lru_cache
 from typing import Any, Dict, List, Optional
 import json
 import platform
@@ -55,7 +55,7 @@ def _ensure_local_tmpdir():
     current_tmp = os.environ.get("TMPDIR", "")
     if not current_tmp or current_tmp.startswith("/share"):
         local_base = "/scratch" if os.path.exists("/scratch") else "/tmp"
-        new_tmp = os.path.join(local_base, getpass.getuser(), "historical_norms")
+        new_tmp = os.path.join(local_base, getpass.getuser(), "contextual_integrity_eval")
         try:
             os.makedirs(new_tmp, exist_ok=True)
             os.environ["TMPDIR"] = new_tmp
@@ -126,7 +126,7 @@ class WandbConfig:
     """W&B configuration extracted from Hydra config."""
     
     enabled: bool = False
-    project: str = "historical-norms-extraction"
+    project: str = "nov10-workshop"
     entity: Optional[str] = None
     group: Optional[str] = None
     tags: List[str] = field(default_factory=list)
@@ -144,7 +144,7 @@ class WandbConfig:
             if wandb_cfg is None:
                 return cls(
                     enabled=False,
-                    project=(env_project or "historical-norms-extraction"),
+                    project=(env_project or "nov10-workshop"),
                     entity=(env_entity if env_entity and env_entity.strip() else None),
                     group=_get_group_from_config(cfg),
                     tags=[],
@@ -155,9 +155,9 @@ class WandbConfig:
             # Resolve project with fallback to environment, then default
             proj_attr = getattr(wandb_cfg, "project", None)
             if proj_attr is None or str(proj_attr).strip() == "":
-                project = env_project or "historical-norms-extraction"
+                project = env_project or "nov10-workshop"
             else:
-                project = str(proj_attr or "historical-norms-extraction")
+                project = str(proj_attr or "nov10-workshop")
             # Resolve entity with fallback to environment
             entity_cfg = _get_optional_str(wandb_cfg, "entity")
             entity = entity_cfg or (env_entity if env_entity and env_entity.strip() else None)
@@ -234,31 +234,42 @@ def _get_group_from_config(cfg) -> Optional[str]:
     return None
 
 
+def _nvidia_smi_query(*fields: str) -> Optional[str]:
+    """Run nvidia-smi --query-gpu and return stdout, or None on failure.
+
+    IMPORTANT: This avoids importing torch / initializing CUDA in the
+    orchestrator process, which would poison forked subprocess GPU visibility
+    (PyTorch caches cudaGetDeviceCount in a C++ static, and the NVML-based
+    device_count() can disagree with it in child processes).
+    """
+    try:
+        return subprocess.check_output(
+            ["nvidia-smi", f"--query-gpu={','.join(fields)}",
+             "--format=csv,noheader,nounits"],
+            text=True, timeout=10,
+        ).strip()
+    except Exception:
+        return None
+
+
 def _detect_num_gpus() -> int:
     """Detect the number of GPUs allocated to this job.
-    
-    Priority order:
-    1. CUDA_VISIBLE_DEVICES environment variable (set by launcher)
-    2. SLURM_GPUS_PER_NODE or SLURM_GPUS_ON_NODE
-    3. `nvidia-smi` inventory (does not initialize CUDA in-process)
-    4. Return 0 if no GPUs detected
+
+    Uses only environment variables and nvidia-smi — never imports torch
+    so that CUDA is not initialized in the orchestrator process.
     """
-    # Priority 1: CUDA_VISIBLE_DEVICES (most reliable for actual allocation)
     try:
         cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if cuda_visible and cuda_visible.strip():
-            # Parse comma-separated GPU indices (e.g., "0,1,2,3" -> 4 GPUs)
             gpu_indices = [x.strip() for x in cuda_visible.split(",") if x.strip()]
             if gpu_indices:
                 return len(gpu_indices)
     except Exception:
         pass
-    
-    # Priority 2: SLURM environment variables
+
     try:
         slurm_gpus = os.environ.get("SLURM_GPUS_PER_NODE") or os.environ.get("SLURM_GPUS_ON_NODE")
         if slurm_gpus:
-            # Can be a number like "4" or format like "gpu:4"
             try:
                 if ":" in slurm_gpus:
                     return int(slurm_gpus.split(":")[-1])
@@ -267,25 +278,19 @@ def _detect_num_gpus() -> int:
                 pass
     except Exception:
         pass
-    
-    # Priority 3: GPU inventory from nvidia-smi
-    gpu_details = _collect_gpu_details()
-    if gpu_details:
-        return len(gpu_details)
-    
+
+    smi = _nvidia_smi_query("index")
+    if smi:
+        return len(smi.splitlines())
+
     return 0
 
 
 def _detect_gpu_type() -> Optional[str]:
-    """Detect the GPU type/model name.
-    
-    Returns a normalized GPU type string (e.g., 'NVIDIA RTX A6000', 'NVIDIA RTX A5000').
-    """
-    gpu_details = _collect_gpu_details()
-    if gpu_details:
-        gpu_name = gpu_details[0].get("name")
-        if gpu_name:
-            return str(gpu_name)
+    """Detect the GPU type/model name via nvidia-smi (no torch import)."""
+    smi = _nvidia_smi_query("name")
+    if smi:
+        return smi.splitlines()[0].strip()
     return None
 
 
@@ -454,70 +459,28 @@ def _detect_memory_gb() -> Optional[float]:
     return None
 
 
-@lru_cache(maxsize=1)
-def _query_nvidia_smi_inventory() -> List[Dict[str, Any]]:
-    """Query GPU inventory via `nvidia-smi` without touching torch.cuda.
-
-    Best practice for pre-fork multiprocessing is to avoid initializing CUDA in the
-    parent process. Scheduler env vars and `nvidia-smi` provide the same inventory
-    data without poisoning a later fork-based worker launch.
-    """
-    field_sets = [
-        ["index", "uuid", "name", "memory.total", "compute_cap"],
-        ["index", "uuid", "name", "memory.total"],
-    ]
-    try:
-        proc = None
-        fields: List[str] = []
-        for candidate_fields in field_sets:
-            proc = subprocess.run(
-                [
-                    "nvidia-smi",
-                    f"--query-gpu={','.join(candidate_fields)}",
-                    "--format=csv,noheader,nounits",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-            if proc.returncode == 0:
-                fields = candidate_fields
-                break
-        if proc is None or proc.returncode != 0:
-            return []
-
-        gpus: List[Dict[str, Any]] = []
-        for line in proc.stdout.splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) != len(fields):
-                continue
-            gpu_info: Dict[str, Any] = {
-                "index": int(parts[0]),
-                "uuid": parts[1],
-                "name": parts[2],
-            }
-            try:
-                gpu_info["total_memory_gb"] = round(float(parts[3]) / 1024.0, 2)
-            except Exception:
-                pass
-            if len(parts) > 4 and parts[4]:
-                gpu_info["compute_capability"] = parts[4]
-                try:
-                    major_s, minor_s = parts[4].split(".", 1)
-                    gpu_info["major"] = int(major_s)
-                    gpu_info["minor"] = int(minor_s)
-                except Exception:
-                    pass
-            gpus.append(gpu_info)
-        return gpus
-    except Exception:
-        return []
-
-
 def _collect_gpu_details() -> List[Dict[str, Any]]:
-    """Collect detailed GPU info without initializing CUDA in-process."""
-    return _query_nvidia_smi_inventory().copy()
+    """Collect detailed information for each GPU via nvidia-smi (no torch).
+
+    Avoids CUDA initialization in the orchestrator process, which would
+    cache a stale device count and poison subprocess GPU visibility.
+    """
+    gpus: List[Dict[str, Any]] = []
+    smi = _nvidia_smi_query("index", "name", "memory.total")
+    if not smi:
+        return gpus
+    for line in smi.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 3:
+            try:
+                gpus.append({
+                    "index": int(parts[0]),
+                    "name": parts[1],
+                    "total_memory_gb": round(float(parts[2]) / 1024.0, 2),
+                })
+            except (ValueError, IndexError):
+                pass
+    return gpus
 
 
 def collect_compute_metadata(cfg=None) -> Dict[str, Any]:
@@ -578,31 +541,6 @@ def collect_compute_metadata(cfg=None) -> Dict[str, Any]:
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
     if cuda_visible:
         metadata["compute.cuda_visible_devices"] = [d.strip() for d in cuda_visible.split(",") if d.strip()]
-
-    dropped = os.environ.get("HISTORICAL_NORMS_SANITIZED_DROPPED_GPUS")
-    original = os.environ.get("HISTORICAL_NORMS_GPU_SANITIZE_ORIGINAL")
-    reason = os.environ.get("HISTORICAL_NORMS_GPU_SANITIZE_REASON")
-    ts = os.environ.get("HISTORICAL_NORMS_GPU_SANITIZE_TS")
-    sanitize_tp = os.environ.get("HISTORICAL_NORMS_TENSOR_PARALLEL_SIZE")
-    sanitize_meta: Dict[str, Any] = {}
-    if original:
-        sanitize_meta["original"] = [d.strip() for d in original.split(",") if d.strip()]
-    if dropped:
-        sanitize_meta["dropped"] = [d.strip() for d in dropped.split(",") if d.strip()]
-    if reason:
-        sanitize_meta["reason"] = reason
-    if ts:
-        try:
-            sanitize_meta["timestamp"] = int(ts)
-        except Exception:
-            sanitize_meta["timestamp"] = ts
-    if sanitize_tp:
-        try:
-            sanitize_meta["tensor_parallel_size"] = int(sanitize_tp)
-        except Exception:
-            sanitize_meta["tensor_parallel_size"] = sanitize_tp
-    if sanitize_meta:
-        metadata["compute.gpu_sanitize"] = sanitize_meta
 
     # Memory info
     mem_gb = _detect_memory_gb()
@@ -694,6 +632,10 @@ def collect_compute_metadata(cfg=None) -> Dict[str, Any]:
                     "sample_n",
                     "job_memory_gb",
                     "rows_per_block",
+                    "use_llm_classify",
+                    "use_llm_decompose",
+                    "prefilter_mode",
+                    "keyword_buffering",
                 ]:
                     try:
                         val = getattr(runtime_cfg, key, None)
@@ -714,15 +656,15 @@ class WandbLogger:
     
     Usage:
         # As context manager (recommended)
-        with WandbLogger(cfg, stage="norm_reasoning", run_id="norm_reasoning-001") as logger:
-            logger.log_metrics({"norm_count": 42})
+        with WandbLogger(cfg, stage="classify", run_id="classify-001") as logger:
+            logger.log_metrics({"accuracy": 0.95})
             logger.log_table(df, "results")
         
         # Manual lifecycle
-        logger = WandbLogger(cfg, stage="ci_extraction", run_id="ci_extraction-001")
+        logger = WandbLogger(cfg, stage="classify", run_id="classify-001")
         logger.start()
         try:
-            logger.log_metrics({"ci_flow_count": 10})
+            logger.log_metrics({"accuracy": 0.95})
         finally:
             logger.finish()
     """
@@ -773,9 +715,9 @@ class WandbLogger:
     def _get_run_name(self) -> str:
         """Generate run name."""
         try:
-            exp_name = str(getattr(self.cfg.experiment, "name", "historical_norms") or "historical_norms")
+            exp_name = str(getattr(self.cfg.experiment, "name", "UAIR") or "UAIR")
         except Exception:
-            exp_name = "historical_norms"
+            exp_name = "UAIR"
         
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         # Derive pipeline name from Hydra overrides (e.g., pipeline=topic_with_synthesis)
@@ -795,12 +737,24 @@ class WandbLogger:
             # Fallback: allow explicit pipeline name via env if provided
             pipeline_name = os.environ.get("UAIR_PIPELINE_NAME") or None
 
-        # Build name: [pipeline-]experiment-stage-timestamp
+        # Variant for classify stage (e.g., classification_profile: eu_ai_act)
+        variant = None
+        try:
+            if self.stage == "classify":
+                var = getattr(getattr(self.cfg, "runtime", object()), "classification_profile", None)
+                if var is not None and str(var).strip() != "":
+                    variant = str(var).strip()
+        except Exception:
+            variant = None
+
+        # Build name: [pipeline-]experiment-stage-variant?-timestamp
         parts = []
         if pipeline_name:
             parts.append(pipeline_name)
         parts.append(exp_name)
         parts.append(self.stage)
+        if variant:
+            parts.append(variant)
         parts.append(timestamp)
 
         return "-".join(parts)
@@ -1065,8 +1019,13 @@ class WandbLogger:
                         "reasoning_data",  # Contains nested 'norms' array with varying lengths
                         "ci_flows_raw",  # Contains nested CI flow objects with varying lengths
                     }
-                    pattern_prefixes: list[str] = []
-                    pattern_names: set[str] = set()
+                    # Pattern-based exclusions
+                    pattern_prefixes = [
+                        "eu_ai_raw_json",
+                    ]
+                    pattern_names = {
+                        "llm_json",
+                    }
                     cols_present = [c for c in internal_cols if c in df_in.columns]
                     # Add pattern matches
                     for c in list(df_in.columns):
@@ -1088,7 +1047,7 @@ class WandbLogger:
             df_local = _drop_internal_llm_columns(df_local)
 
             # Select columns
-            # For pipeline stages, log ALL available columns in inspect_results table,
+            # For decompose stage, log ALL available columns in inspect_results table,
             # but drop heavy ndarray/list-like columns that cause schema issues.
             def _filter_heavy_columns(df_local, candidate_cols):
                 keep = []
@@ -1114,22 +1073,38 @@ class WandbLogger:
                 return keep
 
             if (
+                (
+                    self.stage in ("decompose", "decompose_nbl", "verify_nbl")
+                    and (
+                        panel_group == "inspect_results"
+                        or key.startswith("decompose/")
+                        or key.startswith("decompose_nbl/")
+                        or key.startswith("verify_nbl/")
+                    )
+                )
+            or (
                 self.stage in {
+                    "classify",
+                    "classify_eu_act",
+                    "classify_risk_and_benefits",
+                    "reasoning",
+                    "extraction",
                     "norm_reasoning",
                     "norm_extraction",
                     "ci_reasoning",
                     "ci_extraction",
-                    "fetch_gutenberg",
-                    "norm_reasoning_clean",
                 }
                 and (
-                    panel_group == "inspect_results"
+                    panel_group == "inspect_results" 
+                    or key.startswith("classify/")
+                    or key.startswith("reasoning/")
+                    or key.startswith("extraction/")
                     or key.startswith("norm_reasoning/")
                     or key.startswith("norm_extraction/")
                     or key.startswith("ci_reasoning/")
                     or key.startswith("ci_extraction/")
-                    or key.startswith("fetch_gutenberg/")
                 )
+            )
             ):
                 cols = _filter_heavy_columns(df_local, list(df_local.columns))
             else:
@@ -1162,7 +1137,13 @@ class WandbLogger:
                 "token_counts",
             }
             def _is_universal_excluded(name: str) -> bool:
-                return name in universal_exclude
+                if name in universal_exclude:
+                    return True
+                if name == "llm_json":
+                    return True
+                if name.startswith("eu_ai_raw_json"):
+                    return True
+                return False
             cols = [c for c in cols if not _is_universal_excluded(c)]
             
             # Sample if needed (always use random sampling, not head())

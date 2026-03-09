@@ -652,7 +652,6 @@ def collect_compute_metadata(cfg=None) -> Dict[str, Any]:
                     "sample_n",
                     "job_memory_gb",
                     "rows_per_block",
-                    "streaming_io",
                     "use_llm_classify",
                     "use_llm_decompose",
                     "prefilter_mode",
@@ -866,37 +865,11 @@ class WandbLogger:
             pass
         return snapshot
     
-    def _is_ray_worker(self) -> bool:
-        """Check if running inside a Ray worker.
-        
-        Ray workers should not initialize wandb to avoid socket conflicts.
-        Only the main process or rank 0 worker should init wandb.
-        """
-        try:
-            import ray
-            # Check if ray is initialized and we're in a worker
-            if ray.is_initialized():
-                # Check if we're in a worker context (not the driver)
-                try:
-                    worker = ray._private.worker.global_worker
-                    # If we're a worker (not driver), skip wandb init
-                    return worker.mode == ray.WORKER_MODE
-                except Exception:
-                    pass
-        except ImportError:
-            pass
-        return False
-    
     def start(self) -> None:
         """Start wandb run."""
         if not self.enabled:
             return
-        
-        # Skip wandb initialization in Ray workers to avoid socket conflicts
-        if self._is_ray_worker():
-            print(f"[wandb] Skipping initialization in Ray worker for {self.stage}", flush=True)
-            return
-        
+
         if self._run is not None:
             print(f"[wandb] Warning: Run already started for {self.stage}", file=sys.stderr)
             return

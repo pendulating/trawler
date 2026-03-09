@@ -11,13 +11,7 @@ try:
 except Exception:
     yaml = None  # type: ignore
 
-try:
-    import ray  # noqa: F401
-    from ray.data.llm import build_llm_processor, vLLMEngineProcessorConfig  # type: ignore
-    _RAY_OK = True
-except Exception:
-    _RAY_OK = False
-# Note: Ray Data expects guided_decoding as a mapping; do not pass objects here.
+from dagspaces.common.vllm_inference import run_vllm_inference
 
 _VLLM_LOGS_SILENCED = False
 
@@ -46,66 +40,6 @@ def _maybe_silence_vllm_logs() -> None:
         pass
 
 
-def _ensure_ray_init(cfg) -> None:
-    try:
-        import ray  # type: ignore
-        if not ray.is_initialized():
-            # Detect SLURM CPU allocation
-            cpus_alloc = None
-            try:
-                cpt = os.environ.get("SLURM_CPUS_PER_TASK")
-                if cpt is not None and str(cpt).strip() != "":
-                    cpus_alloc = int(cpt)
-                else:
-                    con = os.environ.get("SLURM_CPUS_ON_NODE")
-                    if con is not None and str(con).strip() != "":
-                        # Reuse simple parser from classify
-                        def _parse_cpus_on_node(val: str) -> int:
-                            try:
-                                v = val.strip()
-                                if "(x" in v and v.endswith(")"):
-                                    import re as _re
-                                    m = _re.match(r"^(\d+)\(x(\d+)\)$", v)
-                                    if m:
-                                        return max(1, int(m.group(1)) * int(m.group(2)))
-                                if "," in v:
-                                    acc = 0
-                                    for p in v.split(","):
-                                        acc += int(p)
-                                    return max(1, acc)
-                                return max(1, int(v))
-                            except Exception:
-                                return -1
-                        cpus_alloc = _parse_cpus_on_node(con)
-            except Exception:
-                cpus_alloc = None
-            try:
-                job_mem_gb = int(getattr(cfg.runtime, "job_memory_gb", 64) or 64)
-            except Exception:
-                job_mem_gb = 64
-            try:
-                obj_store_bytes = int(max(1, job_mem_gb) * (1024 ** 3) * 0.90)
-            except Exception:
-                obj_store_bytes = int(64 * (1024 ** 3) * 0.90)
-            try:
-                if cpus_alloc is not None and int(cpus_alloc) > 0:
-                    ray.init(log_to_driver=True, object_store_memory=obj_store_bytes, num_cpus=int(cpus_alloc))
-                else:
-                    ray.init(log_to_driver=True, object_store_memory=obj_store_bytes)
-            except Exception:
-                try:
-                    ray.init(log_to_driver=True)
-                except Exception:
-                    pass
-            # Constrain Ray Data CPU limits to SLURM allocation when available
-            try:
-                if cpus_alloc is not None and int(cpus_alloc) > 0:
-                    ctx = ray.data.DataContext.get_current()
-                    ctx.execution_options.resource_limits = ctx.execution_options.resource_limits.copy(cpu=int(cpus_alloc))
-            except Exception:
-                pass
-    except Exception:
-        pass
 
 def _build_relevant_regex() -> re.Pattern:
     phrases = [
@@ -154,144 +88,6 @@ def _generate_relevant_blocks(text: str, compiled_regex: re.Pattern, window_word
     return [text[s:e] for s, e in merged]
 
 
-def _detect_num_gpus() -> int:
-    """Detect the number of GPUs allocated to this job.
-    
-    Priority order:
-    1. CUDA_VISIBLE_DEVICES environment variable (set by launcher)
-    2. SLURM_GPUS_PER_NODE or SLURM_GPUS_ON_NODE
-    3. torch.cuda.device_count() if CUDA is available
-    4. Return 1 as safe fallback
-    """
-    # Priority 1: CUDA_VISIBLE_DEVICES (most reliable for actual allocation)
-    try:
-        cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-        if cuda_visible and cuda_visible.strip():
-            # Parse comma-separated GPU indices (e.g., "0,1,2,3" -> 4 GPUs)
-            gpu_indices = [x.strip() for x in cuda_visible.split(",") if x.strip()]
-            if gpu_indices:
-                return len(gpu_indices)
-    except Exception:
-        pass
-    
-    # Priority 2: SLURM environment variables
-    try:
-        slurm_gpus = os.environ.get("SLURM_GPUS_PER_NODE") or os.environ.get("SLURM_GPUS_ON_NODE")
-        if slurm_gpus:
-            # Can be a number like "4" or format like "gpu:4"
-            try:
-                if ":" in slurm_gpus:
-                    return int(slurm_gpus.split(":")[-1])
-                return int(slurm_gpus)
-            except Exception:
-                pass
-    except Exception:
-        pass
-    
-    # Priority 3: Torch CUDA device count
-    try:
-        import torch  # type: ignore
-        if torch.cuda.is_available():
-            count = torch.cuda.device_count()
-            if count > 0:
-                return count
-    except Exception:
-        pass
-    
-    # Fallback: 1 GPU
-    return 1
-
-
-def _detect_gpu_type() -> str:
-    """Detect the GPU type/model name.
-    
-    Returns a normalized GPU type string (e.g., 'rtx_a6000', 'rtx_a5000', 'unknown').
-    """
-    try:
-        import torch  # type: ignore
-        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-            # Get the name of the first GPU (assuming homogeneous GPUs)
-            gpu_name = torch.cuda.get_device_name(0).lower()
-            
-            # Normalize common GPU names
-            if "a6000" in gpu_name:
-                return "rtx_a6000"
-            elif "a5000" in gpu_name:
-                return "rtx_a5000"
-            elif "a100" in gpu_name:
-                return "a100"
-            elif "v100" in gpu_name:
-                return "v100"
-            elif "a40" in gpu_name:
-                return "a40"
-            elif "rtx" in gpu_name:
-                # Generic RTX
-                return "rtx_generic"
-            
-            return "unknown"
-    except Exception:
-        pass
-    
-    return "unknown"
-
-
-def _apply_gpu_aware_batch_settings(engine_kwargs: Dict[str, Any], cfg) -> Dict[str, Any]:
-    """Apply GPU-type-aware batch size and max_num_seqs if not explicitly set.
-    
-    GPU-specific defaults (can be overridden in config):
-    - RTX A6000: batch_size=4, max_num_seqs=4
-    - RTX A5000: batch_size=2, max_num_seqs=2
-    - Others: Use config defaults or fallback values
-    """
-    # GPU-aware defaults mapping
-    GPU_BATCH_SETTINGS = {
-        "rtx_a6000": {"batch_size": 4, "max_num_seqs": 4},
-        "rtx_a5000": {"batch_size": 2, "max_num_seqs": 2},
-        "a100": {"batch_size": 8, "max_num_seqs": 8},
-        "v100": {"batch_size": 4, "max_num_seqs": 4},
-        "a40": {"batch_size": 4, "max_num_seqs": 4},
-    }
-    
-    gpu_type = _detect_gpu_type()
-    gpu_settings = GPU_BATCH_SETTINGS.get(gpu_type, {})
-    
-    # Apply max_num_seqs from GPU settings if not in engine_kwargs and GPU type is recognized
-    if "max_num_seqs" not in engine_kwargs and gpu_settings:
-        try:
-            engine_kwargs["max_num_seqs"] = gpu_settings["max_num_seqs"]
-            if not os.environ.get("RULE_TUPLES_SILENT"):
-                print(f"Auto-set max_num_seqs={gpu_settings['max_num_seqs']} for {gpu_type}")
-        except Exception:
-            pass
-    
-    return gpu_settings
-
-
-def _filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        import vllm as _v
-        accepted = None
-        try:
-            fields = getattr(getattr(_v, "AsyncEngineArgs", None), "__dataclass_fields__", None)
-            if isinstance(fields, dict) and fields:
-                accepted = set(fields.keys())
-        except Exception:
-            accepted = None
-        if accepted is None:
-            try:
-                import inspect as _inspect
-                sig = _inspect.signature(_v.AsyncEngineArgs.__init__)
-                accepted = set(k for k in sig.parameters.keys() if k != "self")
-            except Exception:
-                accepted = None
-        if accepted:
-            return {k: v for k, v in ek.items() if k in accepted}
-    except Exception:
-        pass
-    ek = dict(ek)
-    for k in ("use_v2_block_manager",):
-        ek.pop(k, None)
-    return ek
 
 
 def _get_tokenizer(model_source: str):
@@ -348,12 +144,12 @@ def _trim_text_for_prompt(text: str, tokenizer, system_text: str, cfg) -> str:
 
 
 def run_taxonomy_stage(df, cfg):
-    _ensure_ray_init(cfg)
-    is_ray_ds = hasattr(df, "map_batches") and hasattr(df, "count") and _RAY_OK
-    if not is_ray_ds:
-        if df is None or len(df) == 0:
-            return pd.DataFrame(columns=["article_id","article_path","chunk_text","answer","chunk_label"])  # minimal
-        out = df.copy()
+    # Convert to pandas if needed
+    if hasattr(df, "to_pandas") and not isinstance(df, pd.DataFrame):
+        df = df.to_pandas()
+    if df is None or len(df) == 0:
+        return pd.DataFrame(columns=["article_id", "article_path", "chunk_text", "answer", "chunk_label"])
+    out = df.copy()
 
     # Controls
     try:
@@ -422,95 +218,6 @@ def run_taxonomy_stage(df, cfg):
             chunk_text=row.get("chunk_text", ""),
         )
 
-    # vLLM engine config
-    ek = dict(getattr(cfg.model, "engine_kwargs", {}))
-    ek.setdefault("enable_chunked_prefill", True)
-    ek.setdefault("max_model_len", 4096)
-    ek.setdefault("max_num_seqs", 4)
-    ek.setdefault("gpu_memory_utilization", 0.7)
-    tp_env = os.environ.get("UAIR_TENSOR_PARALLEL_SIZE")
-    if "tensor_parallel_size" not in ek and tp_env:
-        try:
-            tp_val = max(1, int(tp_env))
-            ek["tensor_parallel_size"] = tp_val
-            if not os.environ.get("RULE_TUPLES_SILENT"):
-                print(f"Using tensor_parallel_size={tp_val} from UAIR_TENSOR_PARALLEL_SIZE")
-        except Exception:
-            pass
-    # Auto-detect tensor_parallel_size from allocated GPUs if not explicitly set
-    if "tensor_parallel_size" not in ek:
-        try:
-            num_gpus = _detect_num_gpus()
-            ek["tensor_parallel_size"] = num_gpus
-            if not os.environ.get("RULE_TUPLES_SILENT"):
-                print(f"Auto-detected {num_gpus} GPU(s) for tensor parallelism")
-        except Exception:
-            ek.setdefault("tensor_parallel_size", 1)
-    # Apply GPU-type-aware batch settings (max_num_seqs and batch_size)
-    gpu_settings = _apply_gpu_aware_batch_settings(ek, cfg)
-    ek.setdefault("enable_prefix_caching", True)
-    ek.setdefault("use_v2_block_manager", True)
-    ek.setdefault("tokenizer_mode", "auto")
-    ek.setdefault("trust_remote_code", True)
-    ek.setdefault("dtype", "auto")
-    ek.setdefault("kv_cache_dtype", "auto")
-    ek = _filter_vllm_engine_kwargs(ek)
-    # Bound concurrency to available CPUs when no GPUs are being used
-    try:
-        cpus_alloc = None
-        cpt = os.environ.get("SLURM_CPUS_PER_TASK")
-        if cpt is not None and str(cpt).strip() != "":
-            cpus_alloc = int(cpt)
-        elif os.environ.get("SLURM_CPUS_ON_NODE"):
-            # Simple parse (best-effort)
-            v = os.environ.get("SLURM_CPUS_ON_NODE")
-            try:
-                if v and "," in v:
-                    cpus_alloc = sum(int(p) for p in v.split(",") if p.strip())
-                elif v and "(x" in v and v.endswith(")"):
-                    import re as _re
-                    m = _re.match(r"^(\d+)\(x(\d+)\)$", v)
-                    if m:
-                        cpus_alloc = int(m.group(1)) * int(m.group(2))
-                elif v:
-                    cpus_alloc = int(v)
-            except Exception:
-                cpus_alloc = None
-    except Exception:
-        cpus_alloc = None
-    desired_conc = int(getattr(cfg.model, "concurrency", 1) or 1)
-    if cpus_alloc is not None and int(cpus_alloc) > 0:
-        try:
-            desired_conc = max(1, min(desired_conc, int(cpus_alloc)))
-        except Exception:
-            pass
-    # Determine batch_size: explicit config > GPU-aware default > fallback
-    try:
-        batch_size_cfg = getattr(cfg.model, "batch_size", None)
-        if batch_size_cfg is not None:
-            batch_size = int(batch_size_cfg)
-        elif gpu_settings and "batch_size" in gpu_settings:
-            batch_size = gpu_settings["batch_size"]
-            if not os.environ.get("RULE_TUPLES_SILENT"):
-                print(f"Auto-set batch_size={batch_size} for {_detect_gpu_type()}")
-        else:
-            batch_size = 16
-    except Exception:
-        batch_size = 16
-    engine_config = vLLMEngineProcessorConfig(
-        model_source=str(getattr(cfg.model, "model_source")),
-        runtime_env={
-            "env_vars": {
-                "VLLM_LOGGING_LEVEL": str(os.environ.get("VLLM_LOGGING_LEVEL", "WARNING")),
-                # Propagate wandb config to Ray workers (uses in-process mode)
-                "WANDB_DISABLE_SERVICE": str(os.environ.get("WANDB_DISABLE_SERVICE", "true")),
-                "WANDB_SILENT": str(os.environ.get("WANDB_SILENT", "true")),
-            }
-        },
-        engine_kwargs=ek,
-        concurrency=int(desired_conc),
-        batch_size=int(batch_size),
-    )
 
     # Sampling params
     try:
@@ -644,53 +351,6 @@ def run_taxonomy_stage(df, cfg):
             pass
         return {"name": None, "index": None}
 
-    # Streaming path
-    if is_ray_ds:
-        ds_in = df
-        # Gate on is_relevant when present
-        if gate_on_rel:
-            try:
-                cols = [f.name for f in ds_in.schema().fields]
-            except Exception:
-                cols = []
-            if "is_relevant" in cols:
-                ds_in = ds_in.filter(lambda r: bool(r.get("is_relevant", False)))
-        # fake_llm: synthesize labels without vLLM for CI / offline
-        try:
-            fake_llm = bool(getattr(cfg.runtime, "fake_llm", False))
-        except Exception:
-            fake_llm = False
-        # Prefilter gating
-        if prefilter_mode in ("pre_gating", "post_gating"):
-            ds_in = ds_in.map(lambda r: {**r, "relevant_keyword": _kw_flag(r.get("chunk_text") or r.get("article_text"))})
-            if prefilter_mode == "pre_gating":
-                ds_in = ds_in.filter(lambda r: bool(r.get("relevant_keyword", True)))
-        # Build inputs
-        if fake_llm:
-            ds_in = ds_in.map(lambda r: _ensure_ids(_trim_row(_attach_chunk_text(dict(r)))))
-            import hashlib as _h
-            def _fake_answer(row: Dict[str, Any]) -> Dict[str, Any]:
-                txt = str(row.get("chunk_text", ""))
-                h = int(_h.sha1(txt.encode("utf-8")).hexdigest(), 16)
-                row["answer"] = str((h % 5) + 1)
-                return row
-            ds_out = ds_in.map(_fake_answer)
-        else:
-            # W&B progress marker: add lightweight row counter after LLM to feed orchestrator usage logging
-            processor = build_llm_processor(engine_config, preprocess=_pre, postprocess=_post)
-            ds_out = processor(ds_in)
-        # Parse labels at chunk-level (name + index)
-        def _label_row(r: Dict[str, Any]) -> Dict[str, Any]:
-            ans = str(r.get("answer", ""))
-            res = _parse_answer_name_index(ans)
-            name = res.get("name")
-            idx = res.get("index")
-            return {**r, "chunk_label_name": (name if name else "None"), "chunk_label": (str(idx) if isinstance(idx, int) else "None"), "_progress_row": 1}
-        ds_labeled = ds_out.map(_label_row)
-        return ds_labeled
-
-    # Pandas path
-    out = out.copy()
     # Gate on is_relevant when present
     try:
         if gate_on_rel and "is_relevant" in out.columns:
@@ -708,7 +368,6 @@ def run_taxonomy_stage(df, cfg):
             out["relevant_keyword"] = True
         if prefilter_mode == "pre_gating":
             out = out[out["relevant_keyword"] == True]
-    ds = ray.data.from_pandas(out)
     if fake_llm:
         import hashlib as _h
         def _fake_answer_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -717,11 +376,9 @@ def run_taxonomy_stage(df, cfg):
             h = int(_h.sha1(txt.encode("utf-8")).hexdigest(), 16)
             row["answer"] = str((h % 5) + 1)
             return row
-        out_ds = ds.map(_fake_answer_row).materialize()
+        out_df = pd.DataFrame([_fake_answer_row(r) for r in out.to_dict("records")])
     else:
-        processor = build_llm_processor(engine_config, preprocess=_pre, postprocess=_post)
-        out_ds = processor(ds).materialize()
-    out_df = out_ds.to_pandas()
+        out_df = run_vllm_inference(out, cfg, _pre, _post, "taxonomy")
     if len(out_df):
         try:
             def _apply_label(s: Any) -> Dict[str, Any]:

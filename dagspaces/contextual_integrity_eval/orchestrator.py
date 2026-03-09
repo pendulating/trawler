@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -30,175 +31,9 @@ except Exception:
     submitit = None  # type: ignore
     _SUBMITIT_AVAILABLE = False
 
-_GPU_SANITIZE_PREFIX = "HISTORICAL_NORMS"
 
-
-def _probe_single_gpu(device: str) -> bool:
-    """Probe a single logical GPU in a subprocess.
-
-    Using a subprocess keeps CUDA initialization out of the orchestrator/stage
-    parent process, which is important before vLLM chooses its multiprocessing
-    strategy.
-    """
-    env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = device
-    code = (
-        "import sys\n"
-        "try:\n"
-        "    import torch\n"
-        "except Exception:\n"
-        "    sys.exit(1)\n"
-        "available = torch.cuda.is_available()\n"
-        "count = torch.cuda.device_count() if available else 0\n"
-        "if not (available and count >= 1):\n"
-        "    sys.exit(1)\n"
-        "try:\n"
-        "    torch.cuda.set_device(0)\n"
-        "    x = torch.randn((8, 8), device='cuda')\n"
-        "    y = torch.randn((8, 8), device='cuda')\n"
-        "    _ = torch.mm(x, y)\n"
-        "    torch.cuda.synchronize()\n"
-        "except Exception:\n"
-        "    sys.exit(2)\n"
-        "sys.exit(0)\n"
-    )
-    try:
-        result = subprocess.run(
-            [sys.executable or "python", "-c", code],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=15,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
-
-
-def _update_slurm_gpu_envs(valid_devices: list[str]) -> None:
-    count = len(valid_devices)
-    if count <= 0:
-        return
-    gpu_list = ",".join(valid_devices)
-    for var in ("SLURM_JOB_GPUS", "SLURM_STEP_GPUS", "SLURM_GPUS_ON_NODE"):
-        val = os.environ.get(var)
-        if not val:
-            continue
-        if "," in val:
-            os.environ[var] = gpu_list
-        elif ":" in val:
-            prefix = val.split(":", 1)[0]
-            os.environ[var] = f"{prefix}:{count}"
-        else:
-            try:
-                int(val)
-                os.environ[var] = str(count)
-            except Exception:
-                os.environ[var] = gpu_list
-
-
-def _gpu_sanitize_env_name(suffix: str) -> str:
-    return f"{_GPU_SANITIZE_PREFIX}_{suffix}"
-
-
-def _log_gpu_environment(reason: str) -> None:
-    try:
-        cuda_visible = [d.strip() for d in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if d.strip()]
-        dropped = [
-            d.strip()
-            for d in os.environ.get(_gpu_sanitize_env_name("SANITIZED_DROPPED_GPUS"), "").split(",")
-            if d.strip()
-        ]
-        original = [
-            d.strip()
-            for d in os.environ.get(_gpu_sanitize_env_name("GPU_SANITIZE_ORIGINAL"), "").split(",")
-            if d.strip()
-        ]
-        payload: Dict[str, Any] = {
-            "reason": reason,
-            "cuda_visible_devices": cuda_visible,
-        }
-        if original:
-            payload["sanitized_original"] = original
-        if dropped:
-            payload["sanitized_dropped"] = dropped
-        _print_status({"gpu_env": payload})
-    except Exception:
-        pass
-
-
-def _adjust_cfg_tensor_parallel_size(cfg: DictConfig, valid_count: int) -> None:
-    """Clamp TP size to the sanitized GPU count."""
-    if valid_count <= 0:
-        return
-    try:
-        current = OmegaConf.select(cfg, "model.engine_kwargs.tensor_parallel_size")
-        if current is None:
-            return
-        current_int = max(1, int(current))
-        if current_int > valid_count:
-            OmegaConf.update(cfg, "model.engine_kwargs.tensor_parallel_size", valid_count, merge=True)
-            os.environ[_gpu_sanitize_env_name("TENSOR_PARALLEL_SIZE")] = str(valid_count)
-    except Exception:
-        pass
-
-
-def _sanitize_cuda_visible_devices(cfg: Optional[DictConfig] = None, reason: str = "") -> None:
-    """Remove bad logical GPUs from CUDA_VISIBLE_DEVICES before stage startup."""
-    current = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if not current:
-        return
-    devices = [d.strip() for d in current.split(",") if d.strip()]
-    if len(devices) <= 1:
-        _log_gpu_environment(reason or "stage_start")
-        return
-
-    normalized = ",".join(devices)
-    valid: list[str] = []
-    invalid: list[str] = []
-    for dev in devices:
-        if _probe_single_gpu(dev):
-            valid.append(dev)
-        else:
-            invalid.append(dev)
-
-    if not invalid:
-        _log_gpu_environment(reason or "stage_start")
-        return
-
-    if not valid:
-        _print_status(
-            {
-                "gpu_sanitize": {
-                    "reason": reason or "stage_start",
-                    "original": normalized,
-                    "error": "all_devices_failed",
-                }
-            }
-        )
-        return
-
-    new_devices = ",".join(valid)
-    os.environ["CUDA_VISIBLE_DEVICES"] = new_devices
-    os.environ[_gpu_sanitize_env_name("SANITIZED_DROPPED_GPUS")] = ",".join(invalid)
-    os.environ[_gpu_sanitize_env_name("GPU_SANITIZE_ORIGINAL")] = normalized
-    os.environ[_gpu_sanitize_env_name("GPU_SANITIZE_REASON")] = reason or "stage_start"
-    os.environ[_gpu_sanitize_env_name("GPU_SANITIZE_TS")] = str(int(time.time()))
-    _update_slurm_gpu_envs(valid)
-    if cfg is not None:
-        _adjust_cfg_tensor_parallel_size(cfg, len(valid))
-    _print_status(
-        {
-            "gpu_sanitize": {
-                "reason": reason or "stage_start",
-                "original": normalized,
-                "sanitized": new_devices,
-                "dropped": ",".join(invalid),
-            }
-        }
-    )
-    _log_gpu_environment(reason or "stage_start")
-
+_GPU_BUNDLE_STAGE_KEYS = ("qa_probe_eval", "agent_action_eval")
+_GPU_BUNDLE_LAUNCHERS = {"g2_slurm_pierson_clean"}
 
 
 class _NoOpLogger:
@@ -267,17 +102,48 @@ def _clean_df_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
     
     # Columns that commonly cause Arrow issues with empty structs
     problematic_cols = [
-        "metadata", "reasoning_data", "ig20_statements_raw", "raz_norms_raw",
+        "metadata", "reasoning_data", "ig20_statements_raw",
         "__inference_error__", "embeddings", "params", "metrics",
         "prompt_token_ids", "logprobs", "prompt_logprobs"
     ]
     
+    def _json_fallback(value: Any) -> Any:
+        """Convert non-JSON-native values (e.g., numpy) into serializable objects."""
+        try:
+            import numpy as np  # type: ignore
+            if isinstance(value, np.ndarray):
+                return value.tolist()
+            if isinstance(value, np.generic):
+                return value.item()
+        except Exception:
+            pass
+
+        if isinstance(value, (set, tuple)):
+            return list(value)
+        if isinstance(value, bytes):
+            try:
+                return value.decode("utf-8", errors="replace")
+            except Exception:
+                return str(value)
+        if hasattr(value, "tolist"):
+            try:
+                return value.tolist()
+            except Exception:
+                pass
+        if hasattr(value, "isoformat"):
+            try:
+                return value.isoformat()
+            except Exception:
+                pass
+        return str(value)
+
     for col in list(df.columns):
         if col in problematic_cols:
             df = df.drop(columns=[col], errors='ignore')
             continue
         
-        # Check for any column with dict/list values and convert to JSON strings
+        # Check for any column with dict/list values and convert to JSON strings.
+        # Never drop a whole semantic column (e.g., T trajectory) due to nested types.
         try:
             sample = df[col].dropna().head(5)
             if len(sample) > 0:
@@ -285,14 +151,24 @@ def _clean_df_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
                 has_complex = any(isinstance(v, (dict, list)) for v in sample)
                 if has_complex:
                     df[col] = df[col].apply(
-                        lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x
+                        lambda x: json.dumps(x, default=_json_fallback)
+                        if isinstance(x, (dict, list))
+                        else x
                     )
         except Exception:
-            # If we can't process the column, try to drop it
             try:
-                df = df.drop(columns=[col])
+                # Last-resort value-level coercion; keep the column.
+                df[col] = df[col].apply(
+                    lambda x: json.dumps(x, default=_json_fallback)
+                    if isinstance(x, (dict, list))
+                    else x
+                )
             except Exception:
-                pass
+                # Only coerce to plain strings if serialization still fails.
+                try:
+                    df[col] = df[col].astype(str)
+                except Exception:
+                    pass
     
     return df
 
@@ -311,10 +187,10 @@ def _save_stage_outputs(out: pd.DataFrame, output_paths: Dict[str, str]) -> None
             except Exception as parquet_err:
                 print(f"[orchestrator] Parquet save failed: {parquet_err}")
                 
-                # Fallback to CSV (use cleaned DataFrame, not raw)
+                # Fallback to CSV
                 csv_path = output_path.replace(".parquet", ".csv")
                 try:
-                    out_clean.to_csv(csv_path, index=False)
+                    out.to_csv(csv_path, index=False)
                     print(f"[orchestrator] CSV fallback saved to {csv_path}")
                 except Exception as csv_err:
                     print(f"[orchestrator] CSV fallback also failed: {csv_err}")
@@ -344,6 +220,7 @@ def _safe_log_table(
             print(f"Warning: Failed to log {key} to wandb: {e}", flush=True)
 
 
+# _compute_doc_level_verification moved to .runners.base
 
 
 def _inject_prompt_from_file(cfg: DictConfig, prompt_filename: str) -> None:
@@ -495,8 +372,6 @@ def _load_parquet_dataset(parquet_path: str, columns: Mapping[str, str], debug: 
     return df
 
 
-
-
 def prepare_stage_input(cfg: DictConfig, dataset_path: str, stage: str) -> tuple[Optional[pd.DataFrame], Optional[Any], bool]:
     """Load stage input as a pandas DataFrame.
 
@@ -520,21 +395,11 @@ def _collect_outputs(context: StageExecutionContext, optional: Mapping[str, bool
         if os.path.exists(path):
             resolved[key] = path
         else:
-            # Check fallback extensions written by _save_stage_outputs
-            found = False
-            for alt_ext in (".csv", ".pkl"):
-                alt_path = path.replace(".parquet", alt_ext) if path.endswith(".parquet") else None
-                if alt_path and os.path.exists(alt_path):
-                    resolved[key] = alt_path
-                    print(f"[orchestrator] Using fallback output for '{key}': {alt_path}")
-                    found = True
-                    break
-            if not found:
-                if optional.get(key, False):
-                    continue
-                raise FileNotFoundError(
-                    f"Expected output '{key}' for node '{context.node.key}' at '{path}' not found"
-                )
+            if optional.get(key, False):
+                continue
+            raise FileNotFoundError(
+                f"Expected output '{key}' for node '{context.node.key}' at '{path}' not found"
+            )
     return resolved
 
 
@@ -643,9 +508,214 @@ def _create_submitit_executor(launcher_cfg: DictConfig, job_name: str, log_folde
         name=job_name,
         slurm_additional_parameters=launcher_cfg.get("additional_parameters", {}),
         slurm_setup=launcher_cfg.get("setup", []),
+        slurm_use_srun=False,
     )
     
     return executor
+
+
+def _runtime_ray_mode(cfg: DictConfig) -> str:
+    return str(OmegaConf.select(cfg, "runtime.ray.mode", default="per_stage")).strip().lower()
+
+
+def _runtime_gpu_execution_mode(cfg: DictConfig) -> str:
+    return str(OmegaConf.select(cfg, "runtime.gpu.execution_mode", default="mixed")).strip().lower()
+
+
+def _runtime_gpu_bundle_stage_keys(cfg: DictConfig) -> List[str]:
+    keys = OmegaConf.select(cfg, "runtime.gpu.bundle_stage_keys", default=None)
+    if isinstance(keys, list) and keys:
+        return [str(k).strip() for k in keys if str(k).strip()]
+    return list(_GPU_BUNDLE_STAGE_KEYS)
+
+
+def _runtime_gpu_bundle_launchers(cfg: DictConfig) -> set[str]:
+    launchers = OmegaConf.select(cfg, "runtime.gpu.bundle_launchers", default=None)
+    if isinstance(launchers, list) and launchers:
+        return {str(v).strip() for v in launchers if str(v).strip()}
+    return set(_GPU_BUNDLE_LAUNCHERS)
+
+
+def _serialize_context_data(
+    node_cfg: DictConfig,
+    node: PipelineNodeSpec,
+    inputs: Dict[str, str],
+    output_paths: Dict[str, str],
+    output_dir: str,
+    output_root: str,
+) -> Dict[str, Any]:
+    return {
+        "cfg": OmegaConf.to_container(node_cfg, resolve=True),
+        "node": {
+            "key": node.key,
+            "stage": node.stage,
+            "depends_on": node.depends_on,
+            "inputs": node.inputs,
+            "outputs": {k: {"path": v.path, "type": v.type, "optional": v.optional} for k, v in node.outputs.items()},
+            "overrides": node.overrides,
+            "launcher": node.launcher,
+            "parallel_group": node.parallel_group,
+            "max_attempts": node.max_attempts,
+            "retry_backoff_s": node.retry_backoff_s,
+            "wandb_suffix": node.wandb_suffix,
+        },
+        "inputs": inputs,
+        "output_paths": output_paths,
+        "output_dir": output_dir,
+        "output_root": output_root,
+    }
+
+
+def _list_descendant_pids(root_pid: int) -> List[int]:
+    try:
+        proc = subprocess.run(
+            ["ps", "-eo", "pid=", "ppid="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        lines = proc.stdout.splitlines()
+    except Exception:
+        return []
+
+    children: Dict[int, List[int]] = {}
+    for line in lines:
+        parts = line.strip().split()
+        if len(parts) != 2:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+        except Exception:
+            continue
+        children.setdefault(ppid, []).append(pid)
+
+    descendants: List[int] = []
+    stack = list(children.get(root_pid, []))
+    seen: set[int] = set()
+    while stack:
+        pid = stack.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        descendants.append(pid)
+        stack.extend(children.get(pid, []))
+    return descendants
+
+
+def _reap_descendant_processes(root_pid: int, grace_s: float = 5.0) -> Dict[str, Any]:
+    descendants = [pid for pid in _list_descendant_pids(root_pid) if pid != root_pid]
+    if not descendants:
+        return {"terminated": 0, "killed": 0, "remaining": 0}
+
+    terminated = 0
+    for pid in descendants:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            terminated += 1
+        except Exception:
+            pass
+    time.sleep(max(0.0, grace_s))
+
+    remaining = [pid for pid in descendants if os.path.exists(f"/proc/{pid}")]
+    killed = 0
+    for pid in remaining:
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed += 1
+        except Exception:
+            pass
+    time.sleep(0.5)
+    still_alive = [pid for pid in descendants if os.path.exists(f"/proc/{pid}")]
+    return {"terminated": terminated, "killed": killed, "remaining": len(still_alive)}
+
+
+def _emit_privacylens_metrics(logger: Any, stage: str, df_out: pd.DataFrame) -> None:
+    """Emit PrivacyLens benchmark metrics from stage outputs."""
+    if df_out.empty:
+        return
+
+    metrics: Dict[str, float] = {}
+    summary: Dict[str, float] = {}
+
+    if stage == "qa_probe_eval":
+        axis_map = {
+            "qa_S_correct": "accuracy_s",
+            "qa_V_correct": "accuracy_v",
+            "qa_T_correct": "accuracy_t",
+            "qa_overall_correct": "accuracy_overall",
+        }
+        for col, suffix in axis_map.items():
+            if col in df_out.columns:
+                val = float(df_out[col].astype(float).mean())
+                metrics[f"{stage}/{suffix}"] = val
+                summary[f"{stage}/{suffix}"] = val
+    elif stage == "agent_action_eval":
+        if "leak_flag" in df_out.columns:
+            lr = float(df_out["leak_flag"].astype(float).mean())
+            metrics[f"{stage}/leakage_rate"] = lr
+            summary[f"{stage}/leakage_rate"] = lr
+    elif stage == "statistical_analysis":
+        required = {"metric", "mean", "ci_low", "ci_high"}
+        if required.issubset(set(df_out.columns)):
+            for _, row in df_out.iterrows():
+                metric_name = str(row.get("metric", "")).strip()
+                if not metric_name:
+                    continue
+                mean = float(row.get("mean"))
+                ci_low = float(row.get("ci_low"))
+                ci_high = float(row.get("ci_high"))
+                metrics[f"{stage}/{metric_name}_mean"] = mean
+                metrics[f"{stage}/{metric_name}_ci_low"] = ci_low
+                metrics[f"{stage}/{metric_name}_ci_high"] = ci_high
+                summary[f"{stage}/{metric_name}_mean"] = mean
+
+    if metrics:
+        logger.log_metrics(metrics)
+    for key, val in summary.items():
+        try:
+            logger.set_summary(key, val)
+        except Exception:
+            pass
+
+
+def execute_gpu_bundle_job(bundle_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute a bundle of GPU stages sequentially in a single SLURM job.
+
+    vLLM runs as an isolated HTTP server subprocess (``vllm serve``),
+    managing its own CUDA initialization and multi-GPU tensor parallelism.
+    No Ray cluster is needed.  The server is started on first use by
+    ``_build_vllm()`` and shut down in the finally block via
+    ``cleanup_vllm_runtime()``.
+    """
+    stages = bundle_data.get("stages", [])
+    if not isinstance(stages, list) or not stages:
+        raise ValueError("GPU bundle job requires a non-empty 'stages' list")
+
+    started_at = time.time()
+    node_results: Dict[str, Dict[str, Any]] = {}
+    try:
+        for stage_data in stages:
+            node_key = str(stage_data.get("node", {}).get("key", "unknown"))
+            stage_started = time.time()
+            stage_result = execute_stage_job(stage_data)
+            node_results[node_key] = {
+                "outputs": stage_result["outputs"],
+                "metadata": stage_result["metadata"],
+                "duration_s": round(time.time() - stage_started, 3),
+            }
+        total_s = round(time.time() - started_at, 3)
+        return {"node_results": node_results, "duration_s": total_s}
+    finally:
+        try:
+            from .stages.runtime_shared import cleanup_vllm_runtime
+            cleanup_info = cleanup_vllm_runtime()
+            _print_status({"gpu_bundle": {"status": "vllm_cleanup", **cleanup_info}})
+        except Exception as cleanup_exc:
+            _print_status({"gpu_bundle": {"status": "vllm_cleanup_failed", "error": str(cleanup_exc)}})
+
+        reap = _reap_descendant_processes(os.getpid(), grace_s=5.0)
+        _print_status({"gpu_bundle": {"status": "process_reap", **reap}})
 
 
 def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -689,8 +759,6 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
     runner = stage_registry.get(node.stage)
     if runner is None:
         raise ValueError(f"No runner registered for stage '{node.stage}' (node '{node.key}')")
-
-    _sanitize_cuda_visible_devices(cfg, reason=f"job:{node.key}")
     
     # Execute stage with wandb logging context
     wandb_run_id = node.wandb_suffix or node.key
@@ -715,24 +783,16 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
             # Log output table if available
             if result.outputs and "dataset" in result.outputs:
                 try:
-                    dataset_path = result.outputs["dataset"]
-                    if dataset_path.endswith(".csv"):
-                        df_out = pd.read_csv(dataset_path)
-                    else:
-                        df_out = pd.read_parquet(dataset_path)
+                    df_out = pd.read_parquet(result.outputs["dataset"])
                     # Use stage-specific logic for preferred columns
                     prefer_cols = None
                     if node.stage == "norm_reasoning":
-                        prefer_cols = [
-                            "norm_snippet", "reasoning_trace",
-                            "preliminary_normative_force", "governs_information_flow",
-                            "has_prescriptive_content", "norm_count", "article_text",
-                        ]
+                        prefer_cols = ["norm_snippet", "reasoning_trace", "potential_type", "article_text"]
                     elif node.stage == "norm_extraction":
-                        prefer_cols = [c for c in df_out.columns if c.startswith("raz_")]
-                        for extra in ["norm_snippet", "article_text", "gutenberg_id", "chunk_id"]:
-                            if extra in df_out.columns and extra not in prefer_cols:
-                                prefer_cols.append(extra)
+                        # Log flattened IG components
+                        prefer_cols = [c for c in df_out.columns if c.startswith("ig20_")]
+                        if "norm_snippet" in df_out.columns:
+                            prefer_cols.append("norm_snippet")
                     elif node.stage == "ci_reasoning":
                         prefer_cols = [
                             "has_information_exchange", "ci_flow_count",
@@ -745,10 +805,46 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
                         for extra in ["article_text", "gutenberg_id", "chunk_id"]:
                             if extra in df_out.columns and extra not in prefer_cols:
                                 prefer_cols.append(extra)
+                    elif node.stage == "qa_probe_eval":
+                        prefer_cols = [
+                            "record_id",
+                            "baseline_arm",
+                            "qa_S_correct",
+                            "qa_V_correct",
+                            "qa_T_correct",
+                            "qa_overall_correct",
+                            "qa_S_predicted_label",
+                            "qa_V_predicted_label",
+                            "qa_T_predicted_label",
+                        ]
+                    elif node.stage == "agent_action_eval":
+                        prefer_cols = [
+                            "record_id",
+                            "baseline_arm",
+                            "trajectory_prompt",
+                            "generated_action",
+                            "leak_judge_text",
+                            "leak_probability",
+                            "leak_flag",
+                        ]
+                    elif node.stage == "statistical_analysis":
+                        prefer_cols = ["metric", "mean", "ci_low", "ci_high"]
+                    elif node.stage == "summarize_results":
+                        prefer_cols = [
+                            "baseline_arm",
+                            "qa_accuracy",
+                            "leakage_rate",
+                            "utility_score",
+                            "delta_vs_zero_shot",
+                        ]
                     
                     _safe_log_table(logger, df_out, f"{node.stage}/results", prefer_cols=prefer_cols)
                 except Exception as e:
                     print(f"Warning: Failed to log output table for {node.key}: {e}", flush=True)
+                try:
+                    _emit_privacylens_metrics(logger, node.stage, df_out)
+                except Exception as e:
+                    print(f"Warning: Failed to log benchmark metrics for {node.key}: {e}", flush=True)
 
             # Log completion metrics
             duration_s = time.time() - stage_start
@@ -799,14 +895,45 @@ def run_experiment(cfg: DictConfig) -> None:
             manifest: Dict[str, Any] = {
                 "output_root": output_root,
                 "nodes": {},
+                "runtime": {
+                    "ray_mode": _runtime_ray_mode(cfg),
+                    "gpu_execution_mode": _runtime_gpu_execution_mode(cfg),
+                    "gpu_bundle_stage_keys": _runtime_gpu_bundle_stage_keys(cfg),
+                },
             }
             stage_registry = dict(_STAGE_REGISTRY)
             ordered_nodes = graph_spec.topological_order()
             pipeline_start = time.time()
+            ray_mode = _runtime_ray_mode(cfg)
+            gpu_exec_mode = _runtime_gpu_execution_mode(cfg)
+            bundle_stage_keys = _runtime_gpu_bundle_stage_keys(cfg)
+            bundle_launchers = _runtime_gpu_bundle_launchers(cfg)
+            ordered_gpu_bundle_keys = [k for k in ordered_nodes if k in bundle_stage_keys]
+            bundle_enabled = (
+                ray_mode == "per_run"
+                and gpu_exec_mode in {"mixed", "sequential_reuse"}
+                and len(ordered_gpu_bundle_keys) == len(bundle_stage_keys)
+                and all(graph_spec.nodes[k].launcher in bundle_launchers for k in ordered_gpu_bundle_keys)
+            )
+            bundle_cache: Dict[str, Dict[str, Any]] = {}
+            bundle_launched = False
+            if bundle_enabled:
+                _print_status(
+                    {
+                        "gpu_bundle": {
+                            "enabled": True,
+                            "ray_mode": ray_mode,
+                            "execution_mode": gpu_exec_mode,
+                            "stages": ordered_gpu_bundle_keys,
+                        }
+                    }
+                )
             
             # Log pipeline structure to wandb: numeric to charts; structure to config
             logger.log_metrics({
                 "orchestrator/total_nodes": len(ordered_nodes),
+                "orchestrator/ray_per_run_enabled": 1 if ray_mode == "per_run" else 0,
+                "orchestrator/gpu_bundle_enabled": 1 if bundle_enabled else 0,
             })
             try:
                 logger.set_config({
@@ -840,9 +967,130 @@ def run_experiment(cfg: DictConfig) -> None:
                 )
                 
                 node_start = time.time()
+                cached_bundle_entry = bundle_cache.get(node_key)
+                if cached_bundle_entry is not None:
+                    result = StageResult(
+                        outputs=dict(cached_bundle_entry["outputs"]),
+                        metadata=dict(cached_bundle_entry["metadata"]),
+                    )
+                    duration = float(cached_bundle_entry.get("duration_s", time.time() - node_start))
+                    registry.register_outputs(node.key, result.outputs)
+                    manifest["nodes"][node.key] = {
+                        "stage": node.stage,
+                        "inputs": inputs,
+                        "outputs": result.outputs,
+                        "metadata": result.metadata,
+                        "duration_s": duration,
+                    }
+                    _print_status({
+                        "node": node.key,
+                        "stage": node.stage,
+                        "status": "completed",
+                        "duration_s": round(duration, 3),
+                        "outputs": result.outputs,
+                        "source": "gpu_bundle_cache",
+                    })
+                    continue
                 
                 # Check if this node should be launched as a separate SLURM job
                 if node.launcher:
+                    if bundle_enabled and not bundle_launched and node_key == ordered_gpu_bundle_keys[0]:
+                        _print_status({
+                            "gpu_bundle": {
+                                "status": "submitting",
+                                "trigger_node": node_key,
+                                "stages": ordered_gpu_bundle_keys,
+                            }
+                        })
+                        launcher_cfg = _load_launcher_config(cfg, node.launcher)
+                        bundle_contexts: List[Dict[str, Any]] = []
+                        for bundle_node_key in ordered_gpu_bundle_keys:
+                            bundle_node = graph_spec.nodes[bundle_node_key]
+                            bundle_inputs = _node_inputs(bundle_node, registry)
+                            bundle_output_paths = _node_output_paths(bundle_node, registry, output_root)
+                            bundle_output_dir = common_parent(bundle_output_paths.values()) or os.path.join(output_root, bundle_node.key)
+                            os.makedirs(bundle_output_dir, exist_ok=True)
+                            bundle_node_cfg = prepare_node_config(cfg, bundle_node, bundle_output_dir)
+                            bundle_contexts.append(
+                                _serialize_context_data(
+                                    bundle_node_cfg,
+                                    bundle_node,
+                                    bundle_inputs,
+                                    bundle_output_paths,
+                                    bundle_output_dir,
+                                    output_root,
+                                )
+                            )
+
+                        bundle_log_folder = None
+                        try:
+                            hydra_cfg = HydraConfig.get()
+                            if hydra_cfg and hydra_cfg.runtime and hydra_cfg.runtime.output_dir:
+                                bundle_log_folder = os.path.join(hydra_cfg.runtime.output_dir, ".slurm_jobs", "gpu_bundle")
+                        except Exception:
+                            bundle_log_folder = None
+                        if not bundle_log_folder:
+                            bundle_log_folder = os.path.join(output_root, ".slurm_jobs", "gpu_bundle")
+                        bundle_log_folder = os.path.abspath(bundle_log_folder)
+                        os.makedirs(bundle_log_folder, exist_ok=True)
+
+                        bundle_executor = _create_submitit_executor(launcher_cfg, "HNORMS-gpu_bundle", bundle_log_folder)
+                        if parent_group:
+                            try:
+                                current_setup = list(launcher_cfg.get("setup", []))
+                                insert_idx = 0
+                                for i, cmd in enumerate(current_setup):
+                                    if "source" in cmd or "export HYDRA_FULL_ERROR" in cmd:
+                                        insert_idx = i + 1
+                                wandb_group_export = f"export WANDB_GROUP={parent_group}"
+                                if wandb_group_export not in current_setup:
+                                    current_setup.insert(insert_idx, wandb_group_export)
+                                    bundle_executor.update_parameters(slurm_setup=current_setup)
+                            except Exception:
+                                pass
+
+                        bundle_payload = {
+                            "ray_mode": ray_mode,
+                            "execution_mode": gpu_exec_mode,
+                            "stages": bundle_contexts,
+                        }
+                        with _clean_slurm_env():
+                            bundle_job = bundle_executor.submit(execute_gpu_bundle_job, bundle_payload)
+                        _print_status({"gpu_bundle": {"status": "submitted", "job_id": bundle_job.job_id}})
+                        bundle_result = bundle_job.result()
+                        node_results = dict(bundle_result.get("node_results", {}))
+                        if not node_results:
+                            raise RuntimeError("GPU bundle job completed without node results")
+                        for bundle_node_key, bundle_node_result in node_results.items():
+                            bundle_cache[bundle_node_key] = {
+                                "outputs": dict(bundle_node_result.get("outputs", {})),
+                                "metadata": dict(bundle_node_result.get("metadata", {})),
+                                "duration_s": float(bundle_node_result.get("duration_s", 0.0)),
+                            }
+                        bundle_launched = True
+                        cached_now = bundle_cache.get(node_key)
+                        if cached_now is None:
+                            raise RuntimeError(f"GPU bundle did not return results for node '{node_key}'")
+                        result = StageResult(outputs=dict(cached_now["outputs"]), metadata=dict(cached_now["metadata"]))
+                        duration = float(cached_now.get("duration_s", time.time() - node_start))
+                        registry.register_outputs(node.key, result.outputs)
+                        manifest["nodes"][node.key] = {
+                            "stage": node.stage,
+                            "inputs": inputs,
+                            "outputs": result.outputs,
+                            "metadata": result.metadata,
+                            "duration_s": duration,
+                        }
+                        _print_status({
+                            "node": node.key,
+                            "stage": node.stage,
+                            "status": "completed",
+                            "duration_s": round(duration, 3),
+                            "outputs": result.outputs,
+                            "source": "gpu_bundle",
+                        })
+                        continue
+
                     _print_status({"node": node.key, "stage": node.stage, "status": "submitting", "launcher": node.launcher, "inputs": inputs})
                     try:
                         launcher_cfg = _load_launcher_config(cfg, node.launcher)
@@ -896,26 +1144,14 @@ def run_experiment(cfg: DictConfig) -> None:
                             _print_status({"debug": "failed_to_inject_wandb_group", "error": str(e)})
                     
                     # Prepare serializable context data
-                    context_data = {
-                        "cfg": OmegaConf.to_container(node_cfg, resolve=True),
-                        "node": {
-                            "key": node.key,
-                            "stage": node.stage,
-                            "depends_on": node.depends_on,
-                            "inputs": node.inputs,
-                            "outputs": {k: {"path": v.path, "type": v.type, "optional": v.optional} for k, v in node.outputs.items()},
-                            "overrides": node.overrides,
-                            "launcher": node.launcher,
-                            "parallel_group": node.parallel_group,
-                            "max_attempts": node.max_attempts,
-                            "retry_backoff_s": node.retry_backoff_s,
-                            "wandb_suffix": node.wandb_suffix,
-                        },
-                        "inputs": inputs,
-                        "output_paths": output_paths,
-                        "output_dir": output_dir,
-                        "output_root": output_root,
-                    }
+                    context_data = _serialize_context_data(
+                        node_cfg,
+                        node,
+                        inputs,
+                        output_paths,
+                        output_dir,
+                        output_root,
+                    )
                     
                     # Submit the job
                     with _clean_slurm_env():
@@ -923,39 +1159,96 @@ def run_experiment(cfg: DictConfig) -> None:
                     _print_status({"node": node.key, "stage": node.stage, "status": "submitted", "job_id": job.job_id})
                     
                     # Wait for the job to complete
+                    job_result: Optional[Dict[str, Any]] = None
                     try:
                         # Blocking call to get result
                         job_result = job.result()
                     except Exception as exc:
-                        # Check if the job was actually cancelled or just misreported
-                        try:
-                            # Use squeue to check if it's still alive
-                            import subprocess
-                            check = subprocess.run(["squeue", "-j", str(job.job_id), "-h", "-o", "%t"], capture_output=True, text=True)
-                            if check.stdout.strip() in ("R", "PD", "CG"):
-                                _print_status({"debug": "job_misreported_as_failed", "job_id": job.job_id, "state": check.stdout.strip()})
-                                # Fallback to manual wait
-                                while True:
-                                    time.sleep(30)
-                                    check = subprocess.run(["squeue", "-j", str(job.job_id), "-h", "-o", "%t"], capture_output=True, text=True)
-                                    if not check.stdout.strip():
-                                        break
-                                    if check.stdout.strip() not in ("R", "PD", "CG"):
-                                        break
-                                # Try one last time to get the result from file
-                                if os.path.exists(job.paths.result_pickle):
-                                    with open(job.paths.result_pickle, "rb") as f:
+                        # Submitit can race on networked filesystems: state may be
+                        # TERMINATING before result pickle metadata is visible. In
+                        # that case, explicitly wait for the result pickle and retry.
+                        exc_text = str(exc)
+                        exc_text_lower = exc_text.lower()
+                        result_path = job.paths.result_pickle
+                        missing_result_artifact = (
+                            "has not produced any output" in exc_text_lower
+                            or "result_pickle" in exc_text_lower
+                            or ("result" in exc_text_lower and "pickle" in exc_text_lower)
+                        )
+                        if missing_result_artifact:
+                            try:
+                                wait_s = int(OmegaConf.select(cfg, "runtime.submitit_result_wait_s", default=120))
+                                deadline = time.time() + wait_s
+                                _print_status({
+                                    "debug": "waiting_for_result_pickle",
+                                    "job_id": job.job_id,
+                                    "path": str(result_path),
+                                    "max_wait_s": wait_s,
+                                })
+                                while time.time() < deadline and not os.path.exists(result_path):
+                                    time.sleep(2)
+                                if os.path.exists(result_path):
+                                    with open(result_path, "rb") as f:
                                         import pickle
                                         _outcome, _result = pickle.load(f)
                                         job_result = _result
+                                    _print_status({
+                                        "debug": "recovered_result_after_wait",
+                                        "job_id": job.job_id,
+                                    })
+                                    missing_result_artifact = False
+                            except Exception as wait_exc:
+                                _print_status({
+                                    "debug": "result_pickle_wait_failed",
+                                    "job_id": job.job_id,
+                                    "error": str(wait_exc),
+                                })
+                        elif os.path.exists(result_path):
+                            try:
+                                with open(result_path, "rb") as f:
+                                    import pickle
+                                    _outcome, _result = pickle.load(f)
+                                    job_result = _result
+                                _print_status({
+                                    "debug": "recovered_result_after_exception",
+                                    "job_id": job.job_id,
+                                })
+                            except Exception:
+                                pass
+
+                        if missing_result_artifact and job_result is None:
+                            # Check if the job was actually cancelled or just misreported
+                            try:
+                                # Use squeue to check if it's still alive
+                                import subprocess
+                                check = subprocess.run(["squeue", "-j", str(job.job_id), "-h", "-o", "%t"], capture_output=True, text=True)
+                                if check.stdout.strip() in ("R", "PD", "CG"):
+                                    _print_status({"debug": "job_misreported_as_failed", "job_id": job.job_id, "state": check.stdout.strip()})
+                                    # Fallback to manual wait
+                                    while True:
+                                        time.sleep(30)
+                                        check = subprocess.run(["squeue", "-j", str(job.job_id), "-h", "-o", "%t"], capture_output=True, text=True)
+                                        if not check.stdout.strip():
+                                            break
+                                        if check.stdout.strip() not in ("R", "PD", "CG"):
+                                            break
+                                    # Try one last time to get the result from file
+                                    if os.path.exists(job.paths.result_pickle):
+                                        with open(job.paths.result_pickle, "rb") as f:
+                                            import pickle
+                                            _outcome, _result = pickle.load(f)
+                                            job_result = _result
+                                    else:
+                                        _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": str(exc)})
+                                        raise
                                 else:
                                     _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": str(exc)})
                                     raise
-                            else:
-                                _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": str(exc)})
+                            except Exception as inner_exc:
+                                _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": f"{exc} (inner: {inner_exc})"})
                                 raise
-                        except Exception as inner_exc:
-                            _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": f"{exc} (inner: {inner_exc})"})
+                        if job_result is None:
+                            # Any non-recovered failure should propagate as before.
                             raise
                     
                     result = StageResult(
@@ -966,7 +1259,6 @@ def run_experiment(cfg: DictConfig) -> None:
                     # Run locally in the current process
                     _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})
                     try:
-                        _sanitize_cuda_visible_devices(node_cfg, reason=f"node:{node.key}")
                         result = runner.run(context)
                     except Exception as exc:
                         _print_status({"node": node.key, "stage": node.stage, "status": "failed", "error": str(exc)})

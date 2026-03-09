@@ -7,7 +7,7 @@ license = {text = "MIT"}
 authors = [
     {name = "Matt Franchi"}
 ]
-keywords = ["nlp", "llm", "pipeline", "text-processing", "ray", "vllm", "distributed"]
+keywords = ["nlp", "llm", "pipeline", "text-processing", "vllm"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -218,7 +218,6 @@ dependencies = [
     "pytz",
     "pyyaml",
     "pyzmq",
-    "ray",
     "raft-dask-cu12>=24.10.0",
     "rapids-dask-dependency>=24.10.0",
     "rapids-logger",
@@ -295,6 +294,7 @@ dependencies = [
     "yarl",
     "zict",
     "zipp",
+    "datasets>=4.5.0",
 ]
 
 [tool.uv]

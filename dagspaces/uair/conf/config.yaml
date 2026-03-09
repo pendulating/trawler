@@ -22,15 +22,12 @@ runtime:
   serialize_nested_json: true
   use_llm_classify: true
   use_llm_decompose: false
-  max_errored_blocks: 0
   guided_decoding_decompose: false
-  streaming_io: false
   prefilter_mode: pre_gating   # pre_gating | post_gating | off
   keyword_buffering: true
   keyword_window_words: 100
   job_memory_gb: 32
   gate_on_relevance: true
-  rows_per_block: 4000
 
 # Topic modeling configuration
 topic:
