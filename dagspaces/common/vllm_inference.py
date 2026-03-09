@@ -404,10 +404,11 @@ def run_vllm_inference(
         f"(batch_size={batch_size})..."
     )
     outputs = []
+    shared_sp = sampling_params_list if not isinstance(sampling_params_list, list) else None
     for start in range(0, len(prompts), batch_size):
         end = min(start + batch_size, len(prompts))
         prompt_batch = prompts[start:end]
-        sampling_batch = sampling_params_list[start:end]
+        sampling_batch = shared_sp if shared_sp else sampling_params_list[start:end]
         print(
             f"[{stage_name}] Generating batch {start // batch_size + 1}: "
             f"rows {start}-{end - 1}",
