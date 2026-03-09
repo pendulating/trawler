@@ -1,158 +1,139 @@
-# Trawler: Large-Scale Text Pipeline Framework
+# Trawler
 
-A configurable DAG-based pipeline framework for processing large text datasets with LLM integration.
+A DAG-based pipeline framework for large-scale text analysis with LLM-driven extraction, classification, and synthesis. Built for research on AI governance, contextual integrity, and norm extraction from text corpora.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
 
-## Overview
+## What Trawler Does
 
-Trawler is a scalable pipeline framework for running multi-stage text processing workflows over large datasets. Built on Ray Data for distributed processing and vLLM for efficient LLM inference, Trawler enables researchers and engineers to:
+Trawler orchestrates multi-stage NLP pipelines over document collections, using LLMs for structured information extraction. Each pipeline is defined as a directed acyclic graph (DAG) in YAML. Stages run sequentially or are dispatched to SLURM, with vLLM handling GPU inference via tensor parallelism.
 
-- **Define** complex multi-stage pipelines as YAML DAGs
-- **Process** millions of documents using distributed computing
-- **Integrate** LLMs for classification, extraction, and synthesis
-- **Track** experiments automatically with Weights & Biases
-- **Deploy** on local machines or SLURM clusters
+The framework currently supports four research domains, each implemented as a self-contained **dagspace**:
 
-### Key Features
+### UAIR — AI Risk Assessment in News Media
 
-- **Configuration-Driven**: Define pipelines in YAML, no code changes needed
-- **Dagspace Architecture**: Modular domain-specific pipeline configurations
-- **Scalable**: Process millions of records using Ray Data and SLURM clusters
-- **LLM-Integrated**: Built-in vLLM support with automatic GPU management
-- **Extensible**: Easy to add custom processing stages
-- **Tracked**: Automatic experiment logging with Weights & Biases
+Processes global news articles to extract structured records of real-world AI deployments, incidents, risks, and benefits. The full pipeline:
+
+1. **Classify Relevance** — keyword pre-gating + LLM binary filter for AI-related content
+2. **Decompose NBL** — extracts Need–Beneficiary–Limitation tuples: deployment domain, purpose, capability, deployer, subject, location, date, harms, risks, benefits
+3. **Verify NBL** — embedding similarity + entailment scoring to validate extracted tuples against source text
+4. **Classify EU AI Act** — maps each AI use case to EU AI Act risk tiers (Prohibited / High / Limited / Minimal)
+5. **Classify Risks & Benefits** — fine-grained categorization of specific risks and benefits mentioned
+6. **Taxonomy / Topic / Synthesis** — clustering and cross-article synthesis of extracted patterns
+
+### Historical Norms — Norm Extraction from Literature
+
+Extracts societal norms about information flows from historical and prescriptive texts (Project Gutenberg), grounded in Helen Nissenbaum's [Contextual Integrity](https://en.wikipedia.org/wiki/Contextual_integrity) (CI) framework:
+
+1. **Fetch Gutenberg** — retrieves and chunks books by Gutenberg ID
+2. **Norm/CI Reasoning** — LLM analysis of text chunks for societal norms and information flow patterns
+3. **Norm/CI Extraction** — structures output as formal CI 5-tuples: subject, sender, recipient, information type, transmission principle
+
+### Rule Tuples — Privacy Norms in Online Communities
+
+Applies the same CI framework to Reddit community rules:
+
+1. **Classify** — identifies rules governing privacy and information flows (vs. content moderation rules)
+2. **Decompose** — extracts CI tuples from relevant community governance rules
+
+### Contextual Integrity Eval — Benchmarking LLM Understanding of CI
+
+Evaluates how well LLMs understand contextual integrity through QA probing, agent action evaluation, judge calibration, active prompting ablation, and context collapse diagnostics. Based on the [PrivacyLens](https://github.com/SALT-NLP/PrivacyLens) dataset.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Pipeline Definition (YAML)                    │
-├─────────────────────────────────────────────────────────────────┤
-│  Sources → Stage 1 → Stage 2 → Stage 3 → Outputs               │
-│  (Data)    (filter)  (extract) (synth)   (Parquet)             │
-├─────────────────────────────────────────────────────────────────┤
-│              Orchestrator (DAG Execution Engine)                 │
-├─────────────────────────────────────────────────────────────────┤
-│  Ray Data (Distributed) | vLLM (GPU) | SLURM (Cluster) | W&B   │
-├─────────────────────────────────────────────────────────────────┤
-│            Hydra (Configuration Management)                      │
-└─────────────────────────────────────────────────────────────────┘
+dagspaces/
+├── common/                      # Shared framework code
+│   ├── orchestrator.py          # DAG execution, SLURM dispatch, artifact tracking
+│   ├── vllm_inference.py        # Direct vLLM inference (GPU detection, NCCL config)
+│   ├── wandb_logger.py          # W&B experiment tracking
+│   ├── stage_utils.py           # Shared stage utilities
+│   ├── config_schema.py         # Pipeline/node dataclasses
+│   └── runners/base.py          # StageRunner protocol
+├── uair/                        # AI risk analysis dagspace
+├── historical_norms/            # Literature norm extraction dagspace
+├── rule_tuples/                 # Reddit rule analysis dagspace
+└── contextual_integrity_eval/   # CI evaluation dagspace
 ```
-
-### Dagspaces
-
-Trawler organizes domain-specific pipelines into **dagspaces** - self-contained modules with their own stages, configurations, and prompts:
-
-| Dagspace | Domain | Description |
-|----------|--------|-------------|
-| **uair** | News Analysis | AI risk assessment in news media coverage |
-| **historical_norms** | Literature | Norm extraction from historical texts |
-| **rule_tuples** | Social Media | Rule classification from Reddit communities |
 
 Each dagspace follows a consistent structure:
 
 ```
 dagspaces/{name}/
-├── cli.py                 # Hydra CLI entry point
-├── orchestrator.py        # Pipeline execution engine
-├── conf/                  # Configuration files
-│   ├── config.yaml        # Base config
-│   ├── pipeline/          # Pipeline DAG definitions
-│   ├── prompt/            # LLM prompt templates
-│   └── model/             # Model configurations
-├── runners/               # Stage runner classes
-└── stages/                # Stage implementations
+├── cli.py              # Hydra entry point
+├── orchestrator.py     # Pipeline-specific DAG logic + re-exports from common
+├── wandb_logger.py     # Thin shim over common/wandb_logger.py
+├── conf/
+│   ├── config.yaml     # Base config (model, runtime, sampling, wandb)
+│   ├── pipeline/       # DAG definitions (sources → nodes → outputs)
+│   ├── prompt/         # LLM prompt templates
+│   ├── model/          # vLLM engine configs (model path, TP size, memory)
+│   └── hydra/launcher/ # SLURM launcher configs
+├── runners/            # StageRunner implementations (one per stage)
+└── stages/             # Stage logic (_pre/_post transforms + run function)
 ```
 
 ---
 
-## Quick Start
-
-### Installation
+## Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/trawler.git
-cd trawler
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate
+git clone <repo-url> && cd trawler
 
 # Install with uv (recommended)
+uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -e .
 ```
 
-### Run a Pipeline
+Requires CUDA GPUs. Models are loaded from local paths configured in `conf/model/*.yaml` (e.g., Qwen 2.5-72B-AWQ, Qwen 3-30B).
+
+## Running Pipelines
 
 ```bash
-# Run the UAIR news analysis pipeline
+# UAIR: full news analysis pipeline
 python -m dagspaces.uair.cli \
   pipeline=full_event_pipeline \
   data.parquet_path=/path/to/articles.parquet
 
-# Run historical norms extraction
+# Historical norms: CI extraction from Gutenberg texts
 python -m dagspaces.historical_norms.cli \
-  pipeline=norm_extraction \
+  pipeline=ci_extraction \
   data.parquet_path=/path/to/texts.parquet
-```
 
-### Debug Mode
+# Rule tuples: classify + decompose Reddit rules
+python -m dagspaces.rule_tuples.cli \
+  runtime.stage=pipeline \
+  data.parquet_path=/path/to/rules.parquet
 
-```bash
-# Run with sampling for quick iteration
+# Debug mode: sample 100 rows
 python -m dagspaces.uair.cli \
-  runtime.debug=true \
-  runtime.sample_n=100 \
+  pipeline=full_event_pipeline \
+  runtime.debug=true runtime.sample_n=100 \
   data.parquet_path=/path/to/data.parquet
 ```
 
----
+### SLURM Dispatch
 
-## Documentation
-
-Complete documentation is available in `docs/`:
-
-| Document | Description |
-|----------|-------------|
-| [User Guide](docs/USER_GUIDE.md) | Complete introduction and Quick Start |
-| [Configuration Guide](docs/CONFIGURATION_GUIDE.md) | Pipeline recipes and config patterns |
-| [Custom Stages Guide](docs/CUSTOM_STAGES_GUIDE.md) | Building custom processing stages |
-| [Quick Reference](docs/QUICK_REFERENCE.md) | Command cheat sheet |
-
----
-
-## Project Structure
-
+```bash
+python -m dagspaces.uair.cli \
+  pipeline=full_event_pipeline \
+  hydra/launcher=g2_slurm_gpu_1x \
+  data.parquet_path=/path/to/data.parquet
 ```
-trawler/
-├── dagspaces/                    # Domain-specific pipelines
-│   ├── uair/                     # News AI analysis
-│   │   ├── cli.py                # CLI entry point
-│   │   ├── orchestrator.py       # Pipeline orchestrator
-│   │   ├── conf/                 # Configuration files
-│   │   ├── runners/              # Stage runners
-│   │   └── stages/               # Stage implementations
-│   ├── historical_norms/         # Historical text analysis
-│   └── rule_tuples/              # Social media rules
-├── docs/                         # Documentation
-├── notebooks/                    # Analysis notebooks
-├── scripts/                      # Utility scripts
-├── viz/                          # Visualization projects
-└── pyproject.toml                # Project configuration
-```
+
+Launcher configs in `conf/hydra/launcher/` define GPU count, memory, partition, and setup commands.
 
 ---
 
 ## Pipeline Configuration
 
-Trawler uses [Hydra](https://hydra.cc/) for hierarchical configuration. Pipelines are defined as DAGs in YAML:
+Pipelines are Hydra-composed YAML DAGs:
 
 ```yaml
 # conf/pipeline/my_pipeline.yaml
@@ -167,130 +148,46 @@ pipeline:
         inputs: {articles: articles}
         outputs: [classified]
       extract:
-        stage: decompose
+        stage: decompose_nbl
         depends_on: [classify]
         inputs: {articles: classified}
         outputs: [extracted]
 ```
 
-**Override from command line:**
+Override anything from CLI: `model=qwen2.5-72b-awq sampling_params.temperature=0.3 runtime.sample_n=500`
 
-```bash
-python -m dagspaces.uair.cli \
-  pipeline=my_pipeline \
-  model.batch_size=16 \
-  runtime.sample_n=1000
-```
+## Adding a Stage
 
----
-
-## Deployment
-
-### Local Execution
-
-```bash
-python -m dagspaces.uair.cli \
-  hydra/launcher=null \
-  runtime.sample_n=100
-```
-
-### SLURM Cluster
-
-```bash
-python -m dagspaces.uair.cli \
-  pipeline=full_event_pipeline \
-  hydra/launcher=g2_slurm_gpu_4x
-```
-
----
-
-## Development
-
-### Creating a Custom Stage
-
-1. **Implement stage function** in `dagspaces/{name}/stages/mystage.py`:
+1. Implement in `dagspaces/{name}/stages/mystage.py`:
 
 ```python
+from dagspaces.common.vllm_inference import run_vllm_inference
+
+def _pre(row):
+    row["messages"] = [{"role": "user", "content": row["text"]}]
+    row["sampling_params"] = {"max_tokens": 512, "temperature": 0.0}
+    return row
+
+def _post(row):
+    row["result"] = row["generated_text"]
+    return row
+
 def run_mystage(df, cfg):
-    """Process dataframe with custom logic."""
-    # Your processing logic
-    return df
+    return run_vllm_inference(df, cfg, _pre, _post, "mystage")
 ```
 
-2. **Create runner** in `dagspaces/{name}/runners/mystage.py`:
-
-```python
-from .base import StageRunner
-
-class MyStageRunner(StageRunner):
-    stage_name = "mystage"
-    
-    def run(self, context):
-        from ..stages.mystage import run_mystage
-        return run_mystage(context.input_df, context.cfg)
-```
-
-3. **Register** in `dagspaces/{name}/runners/__init__.py`:
-
-```python
-STAGE_REGISTRY["mystage"] = MyStageRunner()
-```
-
-See [Custom Stages Guide](docs/CUSTOM_STAGES_GUIDE.md) for details.
+2. Create runner in `dagspaces/{name}/runners/mystage.py` implementing `StageRunner.run(context)`.
+3. Register in `runners/__init__.py`.
 
 ---
 
-## Example Dagspaces
+## Key Dependencies
 
-### UAIR: News AI Analysis
-
-Analyze AI-related risks and benefits in news coverage:
-
-```bash
-python -m dagspaces.uair.cli \
-  pipeline=classify_risks_and_benefits_from_decompose \
-  data.parquet_path=/data/news_articles.parquet
-```
-
-Stages: `classify_relevance` → `decompose` → `verify` → `taxonomy` → `topic` → `synthesis`
-
-### Historical Norms: Literature Analysis
-
-Extract structured norms from historical texts:
-
-```bash
-python -m dagspaces.historical_norms.cli \
-  pipeline=norm_extraction \
-  data.parquet_path=/data/gutenberg_texts.parquet
-```
-
-Stages: `fetch_gutenberg` → `norm_reasoning` → `norm_extraction`
-
----
-
-## Contributing
-
-We welcome contributions! Areas of interest:
-
-- **New Dagspaces**: Domain-specific pipeline configurations
-- **Stages**: Additional processing capabilities  
-- **Optimizations**: Performance improvements
-- **Documentation**: Examples, tutorials, guides
-
----
+- **[vLLM](https://docs.vllm.ai/)** — LLM inference with tensor parallelism (`distributed_executor_backend="mp"`)
+- **[Hydra](https://hydra.cc/)** — hierarchical YAML configuration with CLI overrides
+- **[Weights & Biases](https://wandb.ai/)** — experiment tracking, table logging, run grouping
+- **[submitit](https://github.com/facebookincubator/submitit)** — SLURM job submission from Hydra
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
-
----
-
-## Acknowledgments
-
-Built with:
-
-- [Hydra](https://hydra.cc/) - Configuration management
-- [Ray Data](https://docs.ray.io/en/latest/data/data.html) - Distributed processing
-- [vLLM](https://docs.vllm.ai/) - LLM inference
-- [Weights & Biases](https://wandb.ai/) - Experiment tracking
-- [SLURM](https://slurm.schedmd.com/) - Cluster scheduling
+MIT

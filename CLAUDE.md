@@ -34,14 +34,16 @@ No formal test suite exists. Ad-hoc tests live in `test_clean_stage.py` and `scr
 ### Dagspace Pattern
 Each domain pipeline is a self-contained "dagspace" under `dagspaces/{name}/` with:
 - `cli.py` - Hydra entry point (`python -m dagspaces.{name}.cli`)
-- `orchestrator.py` - DAG execution engine (~1000 LOC): loads pipeline graph, topologically sorts nodes, resolves inputs via ArtifactRegistry, submits jobs to SLURM or runs locally
+- `orchestrator.py` - DAG execution (imports shared utilities from `common/orchestrator.py`): loads pipeline graph, topologically sorts nodes, resolves inputs via ArtifactRegistry, submits jobs to SLURM or runs locally
 - `conf/` - Hydra configs: `config.yaml` (base), `pipeline/` (DAG definitions), `prompt/` (LLM templates), `model/`, `hydra/launcher/` (SLURM specs)
 - `runners/` - Stage runner classes extending `StageRunner` base; lazy-loaded via `get_stage_registry()`
 - `stages/` - Stage implementation functions
 
-Three dagspaces: **uair** (news AI risk analysis, most mature), **historical_norms** (literature norm extraction), **rule_tuples** (Reddit rule classification).
+Four dagspaces: **uair** (news AI risk analysis, most mature), **historical_norms** (literature norm extraction via contextual integrity), **rule_tuples** (Reddit rule CI classification), **contextual_integrity_eval** (benchmarking LLM CI understanding).
 
 ### Key Abstractions
+
+**Common modules** (`dagspaces/common/`): `orchestrator.py` (shared DAG utilities, dataclasses, SLURM helpers), `vllm_inference.py` (direct LLM inference), `wandb_logger.py` (experiment tracking), `stage_utils.py` (shared `maybe_silence_vllm_logs`, `to_json_str`, `serialize_arrow_unfriendly_in_row`, `extract_last_json`, `sanitize_for_json`), `config_schema.py` (pipeline dataclasses), `runners/base.py` (StageRunner protocol).
 
 **StageRunner** (`dagspaces/common/runners/base.py`): Base class all runners extend. Receives `StageExecutionContext` with cfg, node spec, resolved inputs, output paths, and optional WandbLogger. Returns `StageResult`.
 
@@ -66,7 +68,7 @@ Three dagspaces: **uair** (news AI risk analysis, most mature), **historical_nor
 - Outputs go to `outputs/YYYY-MM-DD/HH-MM-SS/` with `.hydra/` metadata
 
 ### W&B Integration
-`wandb_logger.py` in each dagspace: `WandbLogger` context manager handles run lifecycle; `NoOpLogger` fallback when disabled. Supports single-run or per-stage runs, table sampling, distributed-aware init.
+`common/wandb_logger.py` is the canonical implementation; each dagspace has a thin shim with dagspace-specific defaults (project name, column exclusions). `WandbLogger` context manager handles run lifecycle; `_NoOpLogger` fallback when disabled. Supports single-run or per-stage runs, table sampling.
 
 ## Adding a New Stage
 1. Create stage function in `dagspaces/{name}/stages/mystage.py`
