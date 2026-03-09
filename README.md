@@ -18,8 +18,8 @@ The framework currently supports four research domains, each implemented as a se
 Processes global news articles to extract structured records of real-world AI deployments, incidents, risks, and benefits. The full pipeline:
 
 1. **Classify Relevance** — keyword pre-gating + LLM binary filter for AI-related content
-2. **Decompose NBL** — extracts Need–Beneficiary–Limitation tuples: deployment domain, purpose, capability, deployer, subject, location, date, harms, risks, benefits
-3. **Verify NBL** — embedding similarity + entailment scoring to validate extracted tuples against source text
+2. **Decompose** — extracts AI use-case tuples: deployment domain, purpose, capability, deployer, subject, location, date, harms, risks, benefits
+3. **Verify** — embedding similarity + entailment scoring to validate extracted tuples against source text
 4. **Classify EU AI Act** — maps each AI use case to EU AI Act risk tiers (Prohibited / High / Limited / Minimal)
 5. **Classify Risks & Benefits** — fine-grained categorization of specific risks and benefits mentioned
 6. **Taxonomy / Topic / Synthesis** — clustering and cross-article synthesis of extracted patterns
