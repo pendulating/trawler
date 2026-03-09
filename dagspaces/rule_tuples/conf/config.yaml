@@ -17,9 +17,7 @@ runtime:
   output_csv: null
   use_llm_classify: false
   use_llm_decompose: false
-  max_errored_blocks: 0
   guided_decoding_decompose: false
-  streaming_io: false
   output_dir: null
   serialize_nested_json: true
 

@@ -7,15 +7,18 @@ tasks_per_node: 1
 cpus_per_task: 8
 mem_gb: ${runtime.job_memory_gb}
 gpus_per_node: 4
-  gres: gpu:4
 partition: pierson
 array_parallelism: 1
 name: historical_norms
 additional_parameters:
+  gres: gpu:4
 setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
   - source /share/pierson/matt/UAIR/.venv/bin/activate
+  # Let SLURM cgroups handle CUDA_VISIBLE_DEVICES automatically
+  # (cgroups remaps global GPU indices to local 0,1,2,... within the job)
+  - unset CUDA_VISIBLE_DEVICES
   - unset WANDB_DISABLED
   - export RULE_TUPLES_SILENT=1
   - export WANDB_SILENT=true
@@ -32,5 +35,5 @@ setup:
   # Set local TMPDIR to avoid issues with network drives
   - if [ -d /scratch ]; then export TMPDIR=/scratch/$USER; else export TMPDIR=/tmp/$USER; fi
   - mkdir -p $TMPDIR
-  - export CUDA_VISIBLE_DEVICES=0,1,2,3
+  - export SLURM_CPU_BIND=none
 

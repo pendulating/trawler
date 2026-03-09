@@ -9,14 +9,17 @@ mem_gb: ${runtime.job_memory_gb}
 partition: pierson
 array_parallelism: 1
 gpus_per_node: 1
-  gres: gpu:1
 name: historical_norms
 additional_parameters:
+  gres: gpu:1
   wckey: ""
 setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
   - source /share/pierson/matt/UAIR/.venv/bin/activate
+  # Let SLURM cgroups handle CUDA_VISIBLE_DEVICES automatically
+  # (cgroups remaps global GPU indices to local 0,1,2,... within the job)
+  - unset CUDA_VISIBLE_DEVICES
   - export PYTHONUNBUFFERED=1
   - export PYTHONPATH=/share/pierson/matt/UAIR:$PYTHONPATH
   - export UAIR_VERIFY_DEBUG=1

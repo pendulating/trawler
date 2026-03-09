@@ -13,12 +13,6 @@ except Exception:
     _OmegaListConfig = None  # type: ignore
 
 try:
-    import ray  # type: ignore
-    _RAY_OK = True
-except Exception:
-    _RAY_OK = False
-
-try:
     import yaml  # type: ignore
     _YAML_OK = True
 except Exception:
@@ -423,11 +417,7 @@ def _cluster_hdbscan(emb_red: List[List[float]], cfg) -> Tuple[List[int], List[f
         raise RuntimeError(f"hdbscan not available: {e}")
 
 def run_topic_stage(df, cfg, logger=None):
-    # Load into pandas if Ray Dataset
-    if hasattr(df, "to_pandas") and hasattr(df, "count") and _RAY_OK:
-        pdf = df.to_pandas()
-    else:
-        pdf = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame([])
+    pdf = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame([])
     
     print(f"[run_topic_stage] Initial input: {len(pdf)} rows", flush=True)
     

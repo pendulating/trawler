@@ -1,13 +1,31 @@
 # Top-level Hydra config for historical_norms dagspace
-# Part of the Trawler pipeline framework
+#
+# Prompts are loaded as named config groups. Stages resolve the "active" prompt
+# key (e.g. prompt_reasoning) at runtime.  Pipeline configs can swap variants
+# via Hydra interpolation, e.g.:
+#   prompt_reasoning: ${prompt_norm_reasoning_fiction}
 
 defaults:
   - _self_
   - pipeline: norm_extraction
   - model: qwen2.5-72b-awq
-  - data: gutenberg_sample
-  - prompt@prompt_reasoning: reasoning
-  - prompt@prompt_extraction: extraction
+  - data: pride_and_prejudice
+  # Active prompt keys — stages look these up at runtime.
+  # Default to the prescriptive-text variants.
+  - prompt@prompt_reasoning: norm_reasoning_prescriptive
+  - prompt@prompt_extraction: norm_extraction_prescriptive
+  - prompt@prompt_ci_reasoning: ci_reasoning_prescriptive
+  - prompt@prompt_ci_extraction: ci_extraction_prescriptive
+  # Named prescriptive variants (available for explicit pipeline overrides)
+  - prompt@prompt_norm_reasoning_prescriptive: norm_reasoning_prescriptive
+  - prompt@prompt_norm_extraction_prescriptive: norm_extraction_prescriptive
+  - prompt@prompt_ci_reasoning_prescriptive: ci_reasoning_prescriptive
+  - prompt@prompt_ci_extraction_prescriptive: ci_extraction_prescriptive
+  # Named fiction variants (for fiction pipeline overrides)
+  - prompt@prompt_norm_reasoning_fiction: norm_reasoning_fiction
+  - prompt@prompt_norm_extraction_fiction: norm_extraction_fiction
+  - prompt@prompt_ci_reasoning_fiction: ci_reasoning_fiction
+  - prompt@prompt_ci_extraction_fiction: ci_extraction_fiction
 
 experiment:
   name: historical_norms
@@ -16,8 +34,6 @@ runtime:
   output_root: "outputs/historical_norms"
   debug: false
   sample_n: null
-  streaming_io: true
-  auto_streaming_io: true
   job_memory_gb: 64
 
 sampling_params:
