@@ -17,9 +17,17 @@ setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
   - source activate /share/pierson/matt/conda/cillm-lora
-  # Let SLURM cgroups handle CUDA_VISIBLE_DEVICES automatically
-  # (cgroups remaps global GPU indices to local 0,1,2,... within the job)
-  - unset CUDA_VISIBLE_DEVICES
+  # Explicitly set CUDA_VISIBLE_DEVICES to local indices (0,1,...,N-1)
+  # This is REQUIRED for vLLM V1 multiprocessing - unset causes race conditions
+  # where spawned workers see different GPU counts than the parent process
+  - if [ -n "$SLURM_GPUS_ON_NODE" ] && [ "$SLURM_GPUS_ON_NODE" -gt 0 ]; then export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((SLURM_GPUS_ON_NODE - 1))); else unset CUDA_VISIBLE_DEVICES; fi
   - export RULE_TUPLES_SILENT=1
   - export WANDB_SILENT=true
+  - export VLLM_WORKER_MULTIPROC_METHOD=spawn
+  # NCCL configuration for PCIe-only machines (no NVLink)
+  - export NCCL_DEBUG=WARN
+  - export NCCL_P2P_DISABLE=1
+  - export NCCL_IB_DISABLE=1
+  - export NCCL_CUMEM_HOST_ENABLE=0
+  - export NCCL_SHM_DISABLE=1
 

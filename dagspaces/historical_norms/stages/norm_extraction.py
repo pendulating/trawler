@@ -1,12 +1,11 @@
-# Norm extraction stage - tensor parallelism across 2 GPUs
-# Uses vLLM V0 engine (VLLM_USE_V1=0 set in launcher before Python starts)
+# Norm extraction stage using the shared direct vLLM helper.
 
 import pandas as pd
 import json
-import os
 from omegaconf import OmegaConf
-from typing import Any, Dict, List
+from typing import Any, Dict
 
+from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import PrescriptiveNormExtractionResult
 
 
@@ -59,33 +58,16 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     Stage 2 of Norm Extraction: Raz Norm Tuple Extraction.
     Uses constrained decoding to map reasoning traces to structured Raz norm tuples.
 
-    Architecture:
-    1. Launcher sets VLLM_USE_V1=0 in shell BEFORE Python starts
-    2. vLLM LLM class used directly with `distributed_executor_backend="mp"`
-    3. Multiprocessing executor handles tensor parallelism across GPUs
-
     Args:
         df: Input pandas DataFrame
         cfg: Configuration object
     """
-    # STEP 1: Verify VLLM_USE_V1=0 is set
-    vllm_v1_env = os.environ.get("VLLM_USE_V1", "not set")
-    print(f"[norm_extraction] VLLM_USE_V1 = {vllm_v1_env}")
-    if vllm_v1_env != "0":
-        print("[norm_extraction] WARNING: VLLM_USE_V1 is not '0' - V1 engine may be used!")
-    
     # Filter to rows that have a reasoning trace
     df = df[df["reasoning_trace"].notna() & (df["reasoning_trace"] != "")]
     if len(df) == 0:
         print("[norm_extraction] No rows with reasoning traces, returning empty")
         return df
-    
-    # STEP 4: Ensure V1 shared memory broadcast is NOT disabled, then import vLLM
-    os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
-    os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
-    from vllm import LLM, SamplingParams
-    print(f"[norm_extraction] vLLM imported successfully")
-    
+
     prompt_cfg = OmegaConf.select(cfg, "prompt_extraction") or OmegaConf.select(cfg, "prompt")
     if prompt_cfg is None:
         raise RuntimeError(
@@ -114,85 +96,28 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
                 .replace("{{article_text}}", text)
                 .replace("{{reasoning_trace}}", reasoning))
 
-    # Get model configuration
-    model_source = str(getattr(cfg.model, "model_source"))
-    ek = dict(getattr(cfg.model, "engine_kwargs", {}))
-    
-    # vLLM V0 LLM class config for 72B AWQ model on 2x A6000
-    llm_kwargs = {
-        "model": model_source,
-        "tensor_parallel_size": ek.get("tensor_parallel_size", 2),
-        "max_model_len": ek.get("max_model_len", 8192),
-        "gpu_memory_utilization": ek.get("gpu_memory_utilization", 0.85),
-        "trust_remote_code": ek.get("trust_remote_code", True),
-        "enforce_eager": ek.get("enforce_eager", True),
-        # Use multiprocessing executor for single-node tensor parallelism.
-        # The "ray" backend deadlocks with vLLM V1 engine (vLLM #27249).
-        "distributed_executor_backend": "mp",
-    }
-    
-    # Add quantization for AWQ models
-    if "awq" in model_source.lower():
-        llm_kwargs["quantization"] = "awq"
-    
-    print(f"[norm_extraction] Initializing vLLM V0 with config: {llm_kwargs}")
-    
-    # Initialize vLLM LLM directly
-    llm = LLM(**llm_kwargs)
-    
-    # Prepare prompts with chat template
-    prompts = []
-    rows_list = df.to_dict('records')
-    
-    for row in rows_list:
-        user_prompt = _format_prompt(row)
-        
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        
-        try:
-            prompt = llm.get_tokenizer().apply_chat_template(
-                messages, 
-                tokenize=False, 
-                add_generation_prompt=True
-            )
-        except Exception:
-            prompt = f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
-        
-        prompts.append(prompt)
-    
-    # Sampling parameters with JSON schema hint
-    sampling_params = SamplingParams(
-        max_tokens=ek.get("max_tokens", 4096),
-        temperature=0.0,
+    sampling_params = dict(
+        OmegaConf.to_container(
+            OmegaConf.select(cfg, "sampling_params"),
+            resolve=True,
+        ) or {}
     )
-    
+    sampling_params.setdefault("temperature", 0.0)
+    sampling_params.setdefault("max_tokens", 2048)
     json_schema = PrescriptiveNormExtractionResult.model_json_schema()
-    schema_hint = f"\n\nRespond with valid JSON matching this schema: {json.dumps(json_schema)}"
-    prompts = [p + schema_hint for p in prompts]
-    
-    print(f"[norm_extraction] Running inference on {len(prompts)} prompts...")
-    outputs = llm.generate(prompts, sampling_params)
-    
-    # Process outputs
-    results = []
-    for idx, row in enumerate(rows_list):
-        output = outputs[idx]
-        gen_text = output.outputs[0].text if output.outputs else "{}"
-        
-        # Try to extract JSON
+    sampling_params["guided_decoding"] = {"json": json_schema}
+
+    def _extract_json(gen_text: str) -> tuple[dict | None, str | None]:
         obj = None
         parse_error = None
         json_text = gen_text
-        
+
         if "{" in gen_text:
             start = gen_text.find("{")
             end = gen_text.rfind("}") + 1
             if start < end:
                 json_text = gen_text[start:end]
-        
+
         try:
             obj = json.loads(json_text)
         except json.JSONDecodeError as e:
@@ -203,11 +128,26 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
                     if isinstance(repaired, dict):
                         obj = repaired
                 except Exception as repair_err:
-                    print(f"JSON repair also failed: {repair_err}")
-        
+                    parse_error = f"JSON repair failed: {repair_err}"
+        return obj, parse_error
+
+    def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
         result_row = dict(row)
-        result_row["generated_text"] = gen_text
-        
+        user_prompt = _format_prompt(result_row)
+        result_row["messages"] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        result_row["sampling_params"] = sampling_params
+        return result_row
+
+    def _postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+        result_row = dict(row)
+        result_row.pop("messages", None)
+        result_row.pop("sampling_params", None)
+        result_row.pop("usage", None)
+        gen_text = result_row.get("generated_text", "{}")
+        obj, parse_error = _extract_json(gen_text)
         if obj is not None:
             norms = obj.get("norms", [])
             result_row["raz_norms_raw"] = norms
@@ -235,13 +175,16 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
         else:
             print(f"Error parsing generated JSON: {parse_error}")
             result_row["extraction_error"] = str(parse_error)
-        
-        results.append(result_row)
-    
-    print(f"[norm_extraction] Completed inference, {len(results)} results")
-    
-    # Clean DataFrame for parquet serialization
-    result_df = pd.DataFrame(results)
+        return result_row
+
+    result_df = run_vllm_inference(
+        df=df,
+        cfg=cfg,
+        preprocess=_preprocess,
+        postprocess=_postprocess,
+        stage_name="norm_extraction",
+    )
+
+    print(f"[norm_extraction] Completed inference, {len(result_df)} results")
     result_df = _clean_for_parquet(result_df)
-    
     return result_df

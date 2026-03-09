@@ -1,4 +1,8 @@
-# Norm reasoning stage using the shared direct vLLM helper.
+# CI reasoning stage using the shared direct vLLM helper.
+#
+# Identifies information flows in text through a Contextual Integrity lens.
+# Produces reasoning traces about who exchanges what information with whom,
+# in what societal context, and whether the flow is appropriate.
 
 import pandas as pd
 import json
@@ -6,43 +10,29 @@ from omegaconf import OmegaConf
 from typing import Any, Dict
 
 from dagspaces.common.vllm_inference import run_vllm_inference
-from ..ci_schema import RazNormReasoningList
+from ..ci_schema import CIReasoningList
 
 
 def _clean_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean DataFrame to avoid PyArrow serialization issues.
-    
-    Removes or converts columns that cause parquet write errors:
-    - Empty struct columns (e.g., 'metadata' with {})
-    - Complex nested types that Arrow can't handle
-    """
-    # Columns that commonly cause issues
-    problematic_cols = [
-        "metadata", "reasoning_data", "__inference_error__", "embeddings"
-    ]
-    
+    """Clean DataFrame to avoid PyArrow serialization issues."""
+    problematic_cols = ["metadata", "ci_reasoning_data", "__inference_error__", "embeddings"]
+
     for col in problematic_cols:
         if col in df.columns:
-            # Check if column contains empty dicts/structs
             try:
                 sample = df[col].dropna().head(1)
-                if len(sample) > 0:
-                    val = sample.iloc[0]
-                    if val == {} or val == []:
-                        df = df.drop(columns=[col])
-                        print(f"[norm_reasoning] Dropped empty struct column: {col}")
-                        continue
+                if len(sample) > 0 and sample.iloc[0] in ({}, []):
+                    df = df.drop(columns=[col])
+                    continue
             except Exception:
                 pass
-            
-            # Convert complex objects to JSON strings for safe parquet storage
             try:
                 df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
             except Exception:
                 df = df.drop(columns=[col])
-                print(f"[norm_reasoning] Dropped problematic column: {col}")
-    
+
     return df
+
 
 try:
     from json_repair import repair_json
@@ -51,23 +41,25 @@ except ImportError:
     _JSON_REPAIR_OK = False
 
 
-def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
+def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
     """
-    Stage 1 of Norm Extraction: Raz Norm Reasoning.
-    Uses Qwen 2.5 72B to identify norms (per Raz's anatomy) and provide reasoning traces.
+    CI Reasoning: Identify information flows in text via Contextual Integrity.
+
+    Uses Qwen 2.5 72B to identify information exchanges between agents and
+    reason about their context, direction, and appropriateness.
 
     Args:
         df: Input pandas DataFrame
         cfg: Configuration object
     """
     if df is None or len(df) == 0:
-        print("[norm_reasoning] Empty input, returning empty")
+        print("[ci_reasoning] Empty input, returning empty")
         return pd.DataFrame()
-    
-    prompt_cfg = OmegaConf.select(cfg, "prompt_reasoning") or OmegaConf.select(cfg, "prompt")
+
+    prompt_cfg = OmegaConf.select(cfg, "prompt_ci_reasoning") or OmegaConf.select(cfg, "prompt")
     if prompt_cfg is None:
         raise RuntimeError(
-            "[norm_reasoning] No prompt config found at 'prompt_reasoning' or 'prompt'. "
+            "[ci_reasoning] No prompt config found at 'prompt_ci_reasoning' or 'prompt'. "
             "Check config.yaml defaults and pipeline overrides."
         )
 
@@ -75,13 +67,13 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
     prompt_template = OmegaConf.select(prompt_cfg, "prompt_template")
     if not system_prompt or not prompt_template:
         raise RuntimeError(
-            f"[norm_reasoning] Prompt config is missing required fields. "
+            f"[ci_reasoning] Prompt config is missing required fields. "
             f"system_prompt={'present' if system_prompt else 'MISSING'}, "
             f"prompt_template={'present' if prompt_template else 'MISSING'}"
         )
     system_prompt = str(system_prompt)
     prompt_template = str(prompt_template)
-    print(f"[norm_reasoning] Loaded prompt from config "
+    print(f"[ci_reasoning] Loaded prompt from config "
           f"(system_prompt: {len(system_prompt)} chars, prompt_template: {len(prompt_template)} chars)",
           flush=True)
 
@@ -96,14 +88,16 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
     )
     sampling_params.setdefault("temperature", 0.0)
     sampling_params.setdefault("max_tokens", 4096)
-    json_schema = RazNormReasoningList.model_json_schema()
+    json_schema = CIReasoningList.model_json_schema()
+    # Use vLLM guided decoding for structured output — constrains token
+    # generation to valid JSON matching the schema. Faster and more reliable
+    # than appending the schema as text and hoping for valid JSON.
     sampling_params["guided_decoding"] = {"json": json_schema}
 
     def _extract_json(gen_text: str) -> tuple[dict | None, str | None]:
         obj = None
         parse_error = None
         json_text = gen_text
-
         if "{" in gen_text:
             start = gen_text.find("{")
             end = gen_text.rfind("}") + 1
@@ -113,14 +107,14 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
         try:
             obj = json.loads(json_text)
         except json.JSONDecodeError as e:
-            parse_error = e
             if _JSON_REPAIR_OK:
                 try:
-                    repaired = repair_json(json_text, return_objects=True)
-                    if isinstance(repaired, dict):
-                        obj = repaired
-                except Exception as repair_err:
-                    parse_error = f"JSON repair failed: {repair_err}"
+                    repaired = repair_json(json_text)
+                    obj = json.loads(repaired)
+                except Exception as e2:
+                    parse_error = f"JSON repair failed: {e2}"
+            else:
+                parse_error = str(e)
         return obj, parse_error
 
     def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -141,34 +135,16 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
         result_row.pop("usage", None)
         gen_text = result_row.get("generated_text", "{}")
         obj, parse_error = _extract_json(gen_text)
+        result_row["ci_reasoning_json"] = json.dumps(obj) if obj else None
+        result_row["ci_reasoning_parse_error"] = parse_error
+
         if obj is not None:
-            result_row["reasoning_data"] = obj
-            result_row["has_prescriptive_content"] = obj.get("has_prescriptive_content", False)
-
-            norms = obj.get("norms", [])
-            result_row["has_norms"] = len(norms) > 0
-            result_row["norm_count"] = len(norms)
-
-            if norms:
-                result_row["reasoning_trace"] = norms[0].get("reasoning", "")
-                result_row["norm_snippet"] = norms[0].get("original_text_snippet", "")
-                result_row["preliminary_normative_force"] = norms[0].get("preliminary_normative_force", "")
-                result_row["governs_information_flow"] = norms[0].get("governs_information_flow", None)
-            else:
-                result_row["reasoning_trace"] = None
-                result_row["norm_snippet"] = None
-                result_row["preliminary_normative_force"] = None
-                result_row["governs_information_flow"] = None
+            flows = obj.get("flows", [])
+            result_row["has_information_exchange"] = bool(obj.get("has_information_exchange", len(flows) > 0))
+            result_row["ci_flow_count"] = len(flows)
         else:
-            print(f"Error parsing reasoning JSON: {parse_error}")
-            result_row["reasoning_error"] = str(parse_error)
-            result_row["has_norms"] = False
-            result_row["has_prescriptive_content"] = False
-            result_row["norm_count"] = 0
-            result_row["reasoning_trace"] = None
-            result_row["norm_snippet"] = None
-            result_row["preliminary_normative_force"] = None
-            result_row["governs_information_flow"] = None
+            result_row["has_information_exchange"] = False
+            result_row["ci_flow_count"] = 0
         return result_row
 
     result_df = run_vllm_inference(
@@ -176,9 +152,16 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
         cfg=cfg,
         preprocess=_preprocess,
         postprocess=_postprocess,
-        stage_name="norm_reasoning",
+        stage_name="ci_reasoning",
     )
 
-    print(f"[norm_reasoning] Completed inference, {len(result_df)} results")
+    records = result_df.to_dict("records")
+    n_with_flows = sum(1 for r in records if r.get("has_information_exchange"))
+    n_without_flows = len(records) - n_with_flows
+    n_parse_errors = sum(1 for r in records if r.get("ci_reasoning_parse_error"))
+    print(f"[ci_reasoning] Completed inference, {len(records)} results: "
+          f"{n_with_flows} with flows, {n_without_flows} without flows, "
+          f"{n_parse_errors} parse errors")
+
     result_df = _clean_for_parquet(result_df)
     return result_df

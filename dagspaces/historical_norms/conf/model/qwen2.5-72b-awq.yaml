@@ -1,14 +1,23 @@
 model_source: /share/pierson/matt/zoo/models/Qwen2.5-72B-Instruct-AWQ
 engine_kwargs:
   enable_chunked_prefill: true
-  max_num_batched_tokens: 4096
+  # Higher batched tokens = more prefill throughput. Original 4096 bottlenecked
+  # long CI prompts (~2-3k tokens each). 32768 lets vLLM process more prefill
+  # tokens per scheduler step, maximizing GPU utilization.
+  max_num_batched_tokens: 32768
   max_model_len: 32768
-  gpu_memory_utilization: 0.9
+  gpu_memory_utilization: 0.92
   tensor_parallel_size: 2
   enable_prefix_caching: true
   disable_log_stats: true
-  enforce_eager: true
+  # enforce_eager removed — CUDA graphs improve decode throughput by ~20-30%.
+  # Compilation cost (~30s) amortizes quickly over batch inference workloads.
   quantization: awq
-batch_size: 1
+  # FP8 KV cache halves cache memory footprint on Ampere+ GPUs (A6000).
+  # AWQ 72B ≈ 36GB model. 2×A6000 @ 0.92 = ~88GB usable. ~52GB for KV cache.
+  # FP8 doubles effective capacity → 32 concurrent sequences at typical lengths.
+  kv_cache_dtype: fp8
+  max_num_seqs: 32
+batch_size: 0
 concurrency: 1
 

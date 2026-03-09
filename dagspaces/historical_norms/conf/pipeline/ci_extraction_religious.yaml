@@ -1,31 +1,36 @@
 # @package _global_
-# Raz Norm Extraction Pipeline: Gutenberg -> Reasoning -> Norm Extraction
+# Contextual Integrity Information Flow Extraction Pipeline -- Religious Texts
 #
-# Workflow:
-#   1. Fetch texts from Project Gutenberg based on IDs
-#   2. Perform Raz norm reasoning on text chunks using Qwen 2.5 72B
-#   3. Extract structured Raz norm tuples via constrained decoding
+# Extracts Nissenbaum CI information flow tuples from major religious texts:
+#   Bible (KJV), Quran (Rodwell), Dhammapada, Bhagavad-Gita, Tao Te Ching, Book of Mormon
+#
+# Pipeline: Fetch (Gutenberg) -> CI Reasoning -> CI Structured Extraction
+#
+# Uses direct vLLM tensor parallelism across 2 GPUs.
 #
 # Usage:
 #   python -m dagspaces.historical_norms.cli -m \
-#     pipeline=norm_extraction \
-#     data.gutenberg_ids=[1342,11,84]
+#     pipeline=ci_extraction_religious
 
 defaults:
+  # IMPORTANT: Orchestrator uses CPU launcher - only child jobs need GPUs
   - override /hydra/launcher: slurm_monitor
+
+# Override prompts to use prescriptive variants tailored for religious/ethical texts
+prompt_ci_reasoning: ${prompt_ci_reasoning_prescriptive}
+prompt_ci_extraction: ${prompt_ci_extraction_prescriptive}
 
 runtime:
   debug: false
   sample_n: null
 
 pipeline:
-  output_root: ${hydra:run.dir}/norm_extraction
+  output_root: ${hydra:run.dir}/ci_extraction_religious
   allow_partial: false
-  
+
   sources:
     gutenberg_config:
-      # Pride and Prejudice (Gutenberg ID 1342) - full book
-      path: ${oc.env:GUTENBERG_CONFIG,dagspaces/historical_norms/conf/data/pride_and_prejudice.yaml}
+      path: ${oc.env:GUTENBERG_CONFIG,dagspaces/historical_norms/conf/data/religious_texts.yaml}
       type: yaml
 
   graph:
@@ -36,7 +41,7 @@ pipeline:
       fetch:
         stage: fetch_gutenberg
         depends_on: []
-        inputs: 
+        inputs:
           config: gutenberg_config
         outputs:
           dataset: outputs/fetch/chunks.parquet
@@ -46,37 +51,41 @@ pipeline:
         wandb_suffix: fetch
 
       # ============================================================
-      # Stage 2: Normative Reasoning
+      # Stage 2: CI Reasoning
+      # Identifies information flows and reasons about context,
+      # actors, direction, and appropriateness.
       # ============================================================
-      reasoning:
-        stage: norm_reasoning
+      ci_reasoning:
+        stage: ci_reasoning
         depends_on: [fetch]
         inputs:
           dataset: fetch.dataset
         outputs:
-          dataset: outputs/reasoning/reasoning.parquet
+          dataset: outputs/ci_reasoning/reasoning.parquet
         overrides:
           runtime.debug: ${runtime.debug}
           runtime.sample_n: ${runtime.sample_n}
           runtime.job_memory_gb: 256
           sampling_params.max_tokens: 4096
         launcher: g2_slurm_pierson
-        wandb_suffix: reasoning
+        wandb_suffix: ci_reasoning
 
       # ============================================================
-      # Stage 3: Raz Norm Extraction
+      # Stage 3: CI Extraction
+      # Converts reasoning traces to structured 5-component
+      # CI information flow tuples.
       # ============================================================
-      extraction:
-        stage: norm_extraction
-        depends_on: [reasoning]
+      ci_extraction:
+        stage: ci_extraction
+        depends_on: [ci_reasoning]
         inputs:
-          dataset: reasoning.dataset
+          dataset: ci_reasoning.dataset
         outputs:
-          dataset: outputs/extraction/structured_norms.parquet
+          dataset: outputs/ci_extraction/ci_flows.parquet
         overrides:
           runtime.debug: ${runtime.debug}
           runtime.sample_n: ${runtime.sample_n}
           runtime.job_memory_gb: 256
           sampling_params.max_tokens: 2048
         launcher: g2_slurm_pierson
-        wandb_suffix: extraction
+        wandb_suffix: ci_extraction

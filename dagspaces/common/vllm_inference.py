@@ -30,6 +30,35 @@ def get_pcie_nccl_env_vars() -> Dict[str, str]:
     }
 
 
+def get_vllm_runtime_env_vars() -> Dict[str, str]:
+    """Return the shared runtime environment for in-process vLLM launches.
+
+    Note: VLLM_USE_V1 and VLLM_ENABLE_V1_MULTIPROCESSING were removed in
+    vLLM 0.10+ (V1 is now the only engine). We no longer set them.
+    """
+    return {
+        "TOKENIZERS_PARALLELISM": "false",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512,expandable_segments:True",
+        "CUDA_LAUNCH_BLOCKING": "0",
+    }
+
+
+def _run_nvidia_smi(args: List[str]) -> List[str]:
+    """Run nvidia-smi without importing torch in the parent process."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except Exception:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
 def detect_num_gpus() -> int:
     """Detect the number of GPUs available.
 
@@ -37,7 +66,7 @@ def detect_num_gpus() -> int:
     1. UAIR_TENSOR_PARALLEL_SIZE env override
     2. CUDA_VISIBLE_DEVICES
     3. SLURM GPU env vars
-    4. torch.cuda.device_count()
+    4. nvidia-smi -L
     5. Fallback to 1
     """
     # Env override
@@ -73,42 +102,33 @@ def detect_num_gpus() -> int:
     except Exception:
         pass
 
-    # torch
-    try:
-        import torch
-        if torch.cuda.is_available():
-            count = torch.cuda.device_count()
-            if count > 0:
-                return count
-    except Exception:
-        pass
+    # nvidia-smi
+    gpu_lines = _run_nvidia_smi(["-L"])
+    if gpu_lines:
+        return len(gpu_lines)
 
     return 1
 
 
 def detect_gpu_type() -> str:
     """Detect GPU type, returning a normalised string like 'rtx_a6000'."""
-    try:
-        import torch
-        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-            name = torch.cuda.get_device_name(0).lower()
-            if "a6000" in name:
-                return "rtx_a6000"
-            if "a5000" in name:
-                return "rtx_a5000"
-            if "a100" in name:
-                return "a100"
-            if "h100" in name:
-                return "h100"
-            if "v100" in name:
-                return "v100"
-            if "a40" in name:
-                return "a40"
-            if "rtx" in name:
-                return "rtx_generic"
-            return "unknown"
-    except Exception:
-        pass
+    names = _run_nvidia_smi(["--query-gpu=name", "--format=csv,noheader,nounits"])
+    if names:
+        name = names[0].lower()
+        if "a6000" in name:
+            return "rtx_a6000"
+        if "a5000" in name:
+            return "rtx_a5000"
+        if "a100" in name:
+            return "a100"
+        if "h100" in name:
+            return "h100"
+        if "v100" in name:
+            return "v100"
+        if "a40" in name:
+            return "a40"
+        if "rtx" in name:
+            return "rtx_generic"
     return "unknown"
 
 
@@ -134,12 +154,42 @@ def apply_gpu_aware_settings(engine_kwargs: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop engine kwargs not accepted by the installed vLLM LLM class."""
+    """Drop engine kwargs not accepted by the installed vLLM LLM class.
+
+    vLLM's LLM.__init__ accepts **kwargs and forwards them to EngineArgs,
+    so we check both signatures to build the accepted set.
+    """
     try:
         import inspect
         from vllm import LLM as _LLM
+
         sig = inspect.signature(_LLM.__init__)
-        accepted = {k for k in sig.parameters if k != "self"}
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        )
+
+        if has_var_keyword:
+            # LLM forwards **kwargs to EngineArgs — check EngineArgs too
+            accepted = {k for k in sig.parameters if k != "self"}
+            try:
+                from vllm.config import EngineArgs
+                ea_sig = inspect.signature(EngineArgs.__init__)
+                accepted |= {k for k in ea_sig.parameters if k != "self"}
+            except ImportError:
+                try:
+                    from vllm.engine.arg_utils import EngineArgs
+                    ea_sig = inspect.signature(EngineArgs.__init__)
+                    accepted |= {k for k in ea_sig.parameters if k != "self"}
+                except ImportError:
+                    # Can't resolve EngineArgs — pass everything through
+                    ek = dict(ek)
+                    for k in ("concurrency", "batch_size"):
+                        ek.pop(k, None)
+                    return ek
+        else:
+            accepted = {k for k in sig.parameters if k != "self"}
+
         filtered = {k: v for k, v in ek.items() if k in accepted}
         dropped = [k for k in ek if k not in accepted]
         if dropped:
@@ -147,7 +197,7 @@ def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
         return filtered
     except Exception:
         pass
-    # Conservative fallback
+    # Conservative fallback — only drop known non-vLLM keys
     ek = dict(ek)
     for k in ("use_v2_block_manager", "concurrency", "batch_size"):
         ek.pop(k, None)
@@ -177,6 +227,8 @@ def _build_engine_kwargs(cfg) -> Dict[str, Any]:
     # Safe defaults
     ek.setdefault("trust_remote_code", True)
     ek.setdefault("distributed_executor_backend", "mp")
+    if int(ek.get("tensor_parallel_size", 1) or 1) > 1:
+        ek.setdefault("disable_custom_all_reduce", True)
 
     # AWQ auto-detection
     if "awq" in model_source.lower() and "quantization" not in ek:
@@ -192,25 +244,34 @@ def _build_engine_kwargs(cfg) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _build_sampling_params(sp_dict: Dict[str, Any]):
-    """Convert a plain dict to vLLM SamplingParams, handling guided_decoding."""
+    """Convert a plain dict to vLLM SamplingParams, handling structured output.
+
+    Supports both vLLM <=0.11 (GuidedDecodingParams) and >=0.12
+    (StructuredOutputsParams) APIs transparently.
+    """
     from vllm import SamplingParams
 
     sp = dict(sp_dict or {})
 
-    # Extract guided_decoding if present
-    guided = sp.pop("guided_decoding", None)
+    # Extract guided_decoding / structured_output if present
+    guided = sp.pop("guided_decoding", None) or sp.pop("structured_output", None)
     # Remove keys that aren't valid SamplingParams fields
     for k in ("early_stopping", "length_penalty", "response_format",
-              "structured_output", "detokenize"):
+              "detokenize"):
         sp.pop(k, None)
 
     if guided and isinstance(guided, dict):
+        # vLLM >=0.12: StructuredOutputsParams replaces GuidedDecodingParams
         try:
-            from vllm.sampling_params import GuidedDecodingParams
-            sp["guided_decoding"] = GuidedDecodingParams(**guided)
-        except Exception:
-            # Older vLLM may not support this; drop it
-            pass
+            from vllm.sampling_params import StructuredOutputsParams
+            sp["structured_outputs"] = StructuredOutputsParams(**guided)
+        except ImportError:
+            # vLLM <=0.11: fall back to GuidedDecodingParams
+            try:
+                from vllm.sampling_params import GuidedDecodingParams
+                sp["guided_decoding"] = GuidedDecodingParams(**guided)
+            except ImportError:
+                pass
 
     return SamplingParams(**sp)
 
@@ -232,7 +293,7 @@ def run_vllm_inference(
        ``row["messages"]`` (list of chat dicts) and ``row["sampling_params"]``
        (plain dict).
     2. Builds prompts via ``tokenizer.apply_chat_template``.
-    3. Calls ``llm.generate(prompts, sampling_params)`` in one batch.
+    3. Calls ``llm.generate(prompts, sampling_params)`` in configurable batches.
     4. Sets ``row["generated_text"]`` and usage info, then calls postprocess.
     5. Returns a DataFrame of all postprocessed rows.
 
@@ -255,16 +316,27 @@ def run_vllm_inference(
         print(f"[{stage_name}] Empty input, returning empty DataFrame")
         return pd.DataFrame()
 
-    # Set NCCL env vars for PCIe GPUs before importing vLLM
-    for k, v in get_pcie_nccl_env_vars().items():
+    # Set runtime env vars before importing vLLM.
+    for k, v in {**get_pcie_nccl_env_vars(), **get_vllm_runtime_env_vars()}.items():
         os.environ.setdefault(k, v)
+
+    env_snapshot = {
+        "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>"),
+        "SLURM_JOB_GPUS": os.environ.get("SLURM_JOB_GPUS", "<unset>"),
+        "SLURM_GPUS_ON_NODE": os.environ.get("SLURM_GPUS_ON_NODE", "<unset>"),
+        "VLLM_WORKER_MULTIPROC_METHOD": os.environ.get("VLLM_WORKER_MULTIPROC_METHOD", "<unset>"),
+    }
+    print(f"[{stage_name}] Runtime env: {env_snapshot}")
 
     # Import vLLM after env vars are set
     from vllm import LLM, SamplingParams
 
     # Build engine kwargs and initialize LLM
     engine_kwargs = _build_engine_kwargs(cfg)
-    print(f"[{stage_name}] Initializing vLLM with: { {k: v for k, v in engine_kwargs.items() if k != 'model'} }")
+    print(
+        f"[{stage_name}] Initializing vLLM with: "
+        f"{ {k: v for k, v in engine_kwargs.items() if k != 'model'} }"
+    )
     print(f"[{stage_name}] Model: {engine_kwargs.get('model')}")
 
     llm = LLM(**engine_kwargs)
@@ -280,10 +352,13 @@ def run_vllm_inference(
             row["__preprocess_error__"] = str(e)
             preprocessed_rows.append(row)
 
-    # Build prompts from chat messages
+    # Build prompts and per-row sampling params.
+    # Optimization: when all rows share the same sampling_params dict object
+    # (common in stage code), build SamplingParams once and pass it as a
+    # single instance — vLLM broadcasts it to all prompts internally.
     prompts: List[str] = []
-    sampling_params_obj = None  # Will be built from first row's params
-    first_sp_dict = None
+    sp_objects: List[Any] = []
+    _sp_cache: Dict[int, Any] = {}  # id(dict) -> SamplingParams
 
     for row in preprocessed_rows:
         messages = row.get("messages")
@@ -304,19 +379,40 @@ def run_vllm_inference(
             prompt = str(row.get("article_text", ""))
         prompts.append(prompt)
 
-        # Capture sampling params from first row (all rows typically share the same)
-        if first_sp_dict is None:
-            first_sp_dict = row.get("sampling_params", {})
+        sp_dict = row.get("sampling_params", {})
+        sp_id = id(sp_dict)
+        if sp_id not in _sp_cache:
+            _sp_cache[sp_id] = _build_sampling_params(sp_dict)
+        sp_objects.append(_sp_cache[sp_id])
 
-    # Build SamplingParams
-    if first_sp_dict:
-        sampling_params_obj = _build_sampling_params(first_sp_dict)
+    if len(_sp_cache) == 1:
+        sampling_params_list = sp_objects[0]  # single object, vLLM broadcasts
+        print(f"[{stage_name}] Using shared SamplingParams for all {len(prompts)} prompts")
     else:
-        sampling_params_obj = SamplingParams()
+        sampling_params_list = sp_objects
 
-    # Run inference
-    print(f"[{stage_name}] Running inference on {len(prompts)} prompts...")
-    outputs = llm.generate(prompts, sampling_params_obj)
+    try:
+        batch_size = int(getattr(cfg.model, "batch_size", 0) or 0)
+    except Exception:
+        batch_size = 0
+    if batch_size <= 0:
+        batch_size = len(prompts)
+
+    # Run inference in batches to keep prompt and output memory bounded.
+    print(
+        f"[{stage_name}] Running inference on {len(prompts)} prompts "
+        f"(batch_size={batch_size})..."
+    )
+    outputs = []
+    for start in range(0, len(prompts), batch_size):
+        end = min(start + batch_size, len(prompts))
+        prompt_batch = prompts[start:end]
+        sampling_batch = sampling_params_list[start:end]
+        print(
+            f"[{stage_name}] Generating batch {start // batch_size + 1}: "
+            f"rows {start}-{end - 1}",
+        )
+        outputs.extend(llm.generate(prompt_batch, sampling_batch))
 
     # Postprocess
     print(f"[{stage_name}] Postprocessing {len(outputs)} outputs...")

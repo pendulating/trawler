@@ -1,0 +1,44 @@
+# @package _global_
+# Contextual Integrity Extraction Pipeline -- Fiction reasoning input
+#
+# Runs only the CI extraction stage against a precomputed CI reasoning parquet.
+# Override `reasoning_dataset_path` on the command line to reuse a different
+# reasoning-stage output without editing this file.
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# Use the fiction extraction prompt variant.
+prompt_ci_extraction: ${prompt_ci_extraction_fiction}
+
+runtime:
+  debug: false
+  sample_n: null
+
+reasoning_dataset_path: /share/pierson/matt/UAIR/outputs/2026-03-06/15-26-52/ci_extraction_fiction/outputs/ci_reasoning/reasoning.parquet
+
+pipeline:
+  output_root: ${hydra:run.dir}/ci_extraction_from_reasoning_fiction
+  allow_partial: false
+
+  sources:
+    reasoning_dataset:
+      path: ${reasoning_dataset_path}
+      type: parquet
+
+  graph:
+    nodes:
+      ci_extraction:
+        stage: ci_extraction
+        depends_on: []
+        inputs:
+          dataset: reasoning_dataset
+        outputs:
+          dataset: outputs/ci_extraction/ci_flows.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 2048
+        launcher: g2_slurm_pierson
+        wandb_suffix: ci_extraction
