@@ -1,0 +1,37 @@
+# 3-GPU launcher for vLLM HTTP server inference (tp=2).
+# Requests 3 GPUs so that the runtime GPU blacklist (see .env) can
+# filter out any broken device and still have 2 healthy GPUs for
+# tensor parallelism.
+_target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
+submitit_folder: ${hydra.sweep.dir}/.submitit/%j
+timeout_min: 14400
+nodes: 1
+tasks_per_node: 1
+cpus_per_task: 16
+mem_gb: 128
+partition: pierson
+array_parallelism: 1
+gpus_per_node: 2
+name: historical_norms
+additional_parameters:
+  gres: gpu:2
+  wckey: ""
+setup:
+  - export HYDRA_FULL_ERROR=1
+  - source ~/.bashrc
+  - source /share/pierson/matt/UAIR/.venv/bin/activate
+  - export PYTHONUNBUFFERED=1
+  - export PYTHONPATH=/share/pierson/matt/UAIR:$PYTHONPATH
+  - echo "=== GPU sanity check ==="
+  - echo "HOST=$(hostname) DATE=$(date)"
+  - echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES SLURM_JOB_GPUS=$SLURM_JOB_GPUS SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"
+  - nvidia-smi -L || true
+  - echo "SLURM_STEP_GPUS=$SLURM_STEP_GPUS"
+  - export WANDB_SILENT=true
+  - export WANDB_DISABLE_SERVICE=true
+  - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+  - export TOKENIZERS_PARALLELISM=false
+  - export NCCL_P2P_DISABLE=1
+  - export NCCL_IB_DISABLE=1
+  - export NCCL_DEBUG=INFO
+  - if [ -d /scratch ]; then export TMPDIR=/scratch/$USER; mkdir -p $TMPDIR; fi
