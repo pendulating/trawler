@@ -1,0 +1,57 @@
+# @package _global_
+defaults:
+  - /model: qwen2.5-72b-awq
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/privacylens_eval
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+
+      # QA probing: 3 axes (S/V/T) per row, yes/no classification
+      qa_probe_inference:
+        stage: qa_probe_inference
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/qa_probe_inference/results.parquet
+        launcher: g2_slurm_pierson
+
+      # Agent action generation: model generates final action from trajectory
+      agent_action_inference:
+        stage: agent_action_inference
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/agent_action_inference/results.parquet
+        launcher: g2_slurm_pierson
+
+      # Leakage judgment: few-shot CoT judge on generated actions
+      leakage_judge_inference:
+        stage: leakage_judge_inference
+        depends_on: [agent_action_inference]
+        inputs:
+          dataset: agent_action_inference.dataset
+        outputs:
+          dataset: outputs/leakage_judge_inference/results.parquet
+        launcher: g2_slurm_pierson
+
+      # Compute all metrics (QA accuracy + leakage rate)
+      compute_metrics:
+        stage: compute_metrics
+        depends_on: [qa_probe_inference, leakage_judge_inference]
+        inputs:
+          qa_dataset: qa_probe_inference.dataset
+          leakage_dataset: leakage_judge_inference.dataset
+        outputs:
+          dataset: outputs/compute_metrics/metrics.parquet

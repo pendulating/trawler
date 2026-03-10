@@ -1,0 +1,5 @@
+# @package _global_
+prompt:
+  task: applicability
+  mode: cot
+  few_shot: false

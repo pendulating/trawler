@@ -11,7 +11,6 @@ from ..orchestrator import (
     StageExecutionContext,
     StageResult,
     _collect_outputs,
-    _convert_to_pandas_if_needed,
     _safe_log_table,
     prepare_stage_input,
 )
@@ -34,10 +33,10 @@ class ClassificationEUActRunner(StageRunner):
         OmegaConf.update(cfg, "data.parquet_path", dataset_path, merge=True)
         # Note: Prompt injection is handled internally by run_classification_eu_act
         # Always load as pandas for gating; streaming not supported for this custom stage
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_df = df if df is not None else (ds.to_pandas() if hasattr(ds, "to_pandas") else None)
-        if in_df is None:
+        df, _, _ = prepare_stage_input(cfg, dataset_path, self.stage_name)
+        if df is None:
             raise RuntimeError("Failed to load input dataset for classify_eu_act")
+        in_df = df
         # Gate by core_tuple_verified == True
         try:
             total_rows = len(in_df)
@@ -59,7 +58,7 @@ class ClassificationEUActRunner(StageRunner):
         except Exception:
             pass
 
-        # Drop verification-specific columns before handing off to Ray to avoid schema drift
+        # Drop verification-specific columns before classification to avoid schema drift
         try:
             required_cols = get_required_input_columns(is_eu_profile=True, is_risks_benefits_profile=False)
             existing = [c for c in gated_df.columns if c in required_cols]
@@ -73,8 +72,6 @@ class ClassificationEUActRunner(StageRunner):
         # Run classification with EU AI Act profile (assumed set via overrides)
         # EU-only classification (prompt injected inside wrapper)
         out = run_classification_eu_act(gated_df, cfg)
-
-        out = _convert_to_pandas_if_needed(out)
 
         # Save outputs to disk
         if isinstance(out, pd.DataFrame) and "results" in context.output_paths:

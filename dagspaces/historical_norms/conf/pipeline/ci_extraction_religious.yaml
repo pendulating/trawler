@@ -86,6 +86,6 @@ pipeline:
           runtime.debug: ${runtime.debug}
           runtime.sample_n: ${runtime.sample_n}
           runtime.job_memory_gb: 256
-          sampling_params.max_tokens: 2048
+          sampling_params.max_tokens: 8192
         launcher: g2_slurm_pierson
         wandb_suffix: ci_extraction

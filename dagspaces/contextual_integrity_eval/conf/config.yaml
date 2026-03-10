@@ -1,35 +1,18 @@
-# Top-level Hydra config for contextual integrity evaluation dagspace
+# Top-level Hydra config for PrivacyLens evaluation dagspace
 
 defaults:
   - _self_
-  - pipeline: privacylens_eval
-  - context_source: prompt_dev
+  - pipeline: privacylens_clean
   - data: privacylens
-  - context_variants: ladder_default
-  - baseline: paper_baselines
-  - question_selection: paper_modes
-  - eval: privacylens
-  - prompt@prompt_qa_probe: qa_probe
-  - prompt@prompt_agent_action: agent_action
-  - prompt@prompt_leakage_judge: leakage_judge
-  - prompt@prompt_cimemories_labeling: cimemories_labeling
-  - statistics: default
-  - governance: strict
-  - model: qwen2.5-72b-awq
 
 experiment:
-  name: contextual_integrity_eval
+  name: privacylens_eval
 
 runtime:
-  output_root: "outputs/contextual_integrity_eval"
+  output_root: null
   debug: false
   sample_n: null
   job_memory_gb: 64
-  gpu:
-    execution_mode: mixed  # mixed | sequential_reuse | parallel
-    bundle_stage_keys: [qa_probe_eval, agent_action_eval]
-    bundle_launchers: [g2_slurm_pierson_clean]
-    reuse_vllm_runtime: true
 
 sampling_params:
   seed: 777
@@ -40,8 +23,7 @@ sampling_params:
 
 wandb:
   enabled: true
-  name_prefix: null
-  project: contextual-integrity-eval
+  project: privacylens-eval
   entity: ""
   group: ""
   table_sample_rows: 1000

@@ -233,8 +233,9 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
                 result_row["ci_is_new_flow"] = bool(first.get("is_new_flow", False))
                 result_row["ci_confidence_qual"] = _to_str(first.get("confidence_qual"))
                 result_row["ci_confidence_quant"] = first.get("confidence_quant")
-                result_row["ci_source_snippet"] = _to_str(first.get("source_snippet"))
-                result_row["ci_reasoning_trace_extraction"] = _to_str(first.get("reasoning_trace"))
+                # source_snippet and reasoning_trace are already present
+                # as input columns (ci_flow_snippet, ci_reasoning_trace)
+                # from the reasoning stage — no need to re-extract them.
         else:
             print(f"Error parsing generated JSON: {parse_error}")
             result_row["extraction_error"] = str(parse_error)

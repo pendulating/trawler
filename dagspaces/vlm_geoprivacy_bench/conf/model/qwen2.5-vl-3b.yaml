@@ -1,0 +1,14 @@
+# @package _global_
+model:
+  model_source: /share/pierson/matt/zoo/models/Qwen2.5-VL-3B-Instruct
+  model_family: qwen2.5-vl
+  engine_kwargs:
+    max_model_len: 4096
+    max_num_seqs: 5
+  vlm_kwargs:
+    mm_processor_kwargs:
+      min_pixels: 784
+      max_pixels: 1003520
+      fps: 1
+    limit_mm_per_prompt:
+      image: 1

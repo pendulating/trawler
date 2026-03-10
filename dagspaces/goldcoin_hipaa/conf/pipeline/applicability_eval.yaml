@@ -1,0 +1,43 @@
+# @package _global_
+defaults:
+  - /model: qwen2.5-72b-instruct-awq
+  - override /hydra/launcher: slurm_monitor
+
+
+pipeline:
+  output_root: ${hydra:run.dir}/goldcoin_hipaa
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+      llm_inference:
+        stage: llm_inference
+        depends_on:
+          - load_dataset
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/llm_inference/dataset.parquet
+        launcher: g2_slurm_pierson
+      parse_responses:
+        stage: parse_responses
+        depends_on:
+          - llm_inference
+        inputs:
+          dataset: llm_inference.dataset
+        outputs:
+          dataset: outputs/parse_responses/dataset.parquet
+      compute_metrics:
+        stage: compute_metrics
+        depends_on:
+          - parse_responses
+        inputs:
+          dataset: parse_responses.dataset
+        outputs:
+          dataset: outputs/compute_metrics/metrics.parquet

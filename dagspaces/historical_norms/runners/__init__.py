@@ -21,10 +21,14 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
         from .fetch_gutenberg import FetchGutenbergRunner
         from .norm_reasoning import NormReasoningRunner
         from .norm_extraction import NormExtractionRunner
+        from .ci_reasoning import CIReasoningRunner
+        from .ci_extraction import CIExtractionRunner
         
         _STAGE_REGISTRY = {
             "fetch_gutenberg": FetchGutenbergRunner(),
             "norm_reasoning": NormReasoningRunner(),
             "norm_extraction": NormExtractionRunner(),
+            "ci_reasoning": CIReasoningRunner(),
+            "ci_extraction": CIExtractionRunner(),
         }
     return _STAGE_REGISTRY.copy()

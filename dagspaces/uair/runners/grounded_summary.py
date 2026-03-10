@@ -12,7 +12,6 @@ from ..orchestrator import (
     StageExecutionContext,
     StageResult,
     _collect_outputs,
-    _convert_to_pandas_if_needed,
     _save_stage_outputs,
     _safe_log_table,
 )
@@ -45,7 +44,6 @@ class GroundedSummaryRunner(StageRunner):
             verify_df=df_verify,
         )
 
-        out = _convert_to_pandas_if_needed(out)
         _save_stage_outputs(out, context.output_paths)
 
         prefer_cols = [

@@ -1,0 +1,104 @@
+# @package _global_
+defaults:
+  - /model: qwen2.5-7b-instruct
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/goldcoin_hipaa
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      # ── Applicability branch ──
+      load_dataset_applicability:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset_applicability/dataset.parquet
+        overrides:
+          data:
+            csv_path: ${oc.env:GOLDCOIN_DATA,/share/pierson/matt/UAIR/data/ci_benchmarks/GoldCoin/cases/train_val_test}/test_real_cases_hipaa_applicability.csv
+          prompt:
+            task: applicability
+
+      llm_inference_applicability:
+        stage: llm_inference
+        depends_on: [load_dataset_applicability]
+        inputs:
+          dataset: load_dataset_applicability.dataset
+        outputs:
+          dataset: outputs/llm_inference_applicability/dataset.parquet
+        launcher: g2_slurm_pierson
+        overrides:
+          prompt:
+            task: applicability
+
+      parse_responses_applicability:
+        stage: parse_responses
+        depends_on: [llm_inference_applicability]
+        inputs:
+          dataset: llm_inference_applicability.dataset
+        outputs:
+          dataset: outputs/parse_responses_applicability/dataset.parquet
+        overrides:
+          prompt:
+            task: applicability
+
+      compute_metrics_applicability:
+        stage: compute_metrics
+        depends_on: [parse_responses_applicability]
+        inputs:
+          dataset: parse_responses_applicability.dataset
+        outputs:
+          dataset: outputs/compute_metrics_applicability/metrics.parquet
+        overrides:
+          prompt:
+            task: applicability
+
+      # ── Compliance branch ──
+      load_dataset_compliance:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset_compliance/dataset.parquet
+        overrides:
+          data:
+            csv_path: ${oc.env:GOLDCOIN_DATA,/share/pierson/matt/UAIR/data/ci_benchmarks/GoldCoin/cases/train_val_test}/test_real_cases_hipaa_compliance.csv
+          prompt:
+            task: compliance
+
+      llm_inference_compliance:
+        stage: llm_inference
+        depends_on: [load_dataset_compliance]
+        inputs:
+          dataset: load_dataset_compliance.dataset
+        outputs:
+          dataset: outputs/llm_inference_compliance/dataset.parquet
+        launcher: g2_slurm_pierson
+        overrides:
+          prompt:
+            task: compliance
+
+      parse_responses_compliance:
+        stage: parse_responses
+        depends_on: [llm_inference_compliance]
+        inputs:
+          dataset: llm_inference_compliance.dataset
+        outputs:
+          dataset: outputs/parse_responses_compliance/dataset.parquet
+        overrides:
+          prompt:
+            task: compliance
+
+      compute_metrics_compliance:
+        stage: compute_metrics
+        depends_on: [parse_responses_compliance]
+        inputs:
+          dataset: parse_responses_compliance.dataset
+        outputs:
+          dataset: outputs/compute_metrics_compliance/metrics.parquet
+        overrides:
+          prompt:
+            task: compliance

@@ -12,7 +12,6 @@ from ..orchestrator import (
     StageExecutionContext,
     StageResult,
     _collect_outputs,
-    _convert_to_pandas_if_needed,
     _save_stage_outputs,
     _safe_log_table,
     prepare_stage_input,
@@ -49,14 +48,13 @@ class TopicRunner(StageRunner):
         
         cfg = context.cfg
         OmegaConf.update(cfg, "data.parquet_path", resolved_path, merge=True)
-        df, ds, use_streaming = prepare_stage_input(cfg, resolved_path, self.stage_name)
-        
+        df, _, _ = prepare_stage_input(cfg, resolved_path, self.stage_name)
+
         # Gate by core_tuple_verified == True if column exists
         total_rows = None
         gated_rows = None
-        in_obj = ds if use_streaming and ds is not None else df
-        if not use_streaming and isinstance(df, pd.DataFrame):
-            # For pandas, gate before passing to topic stage
+        in_obj = df
+        if isinstance(df, pd.DataFrame):
             try:
                 total_rows = len(df)
                 if "core_tuple_verified" in df.columns:
@@ -71,19 +69,8 @@ class TopicRunner(StageRunner):
             except Exception as e:
                 print(f"[topic] Error gating by core_tuple_verified: {e}, proceeding with unfiltered data", flush=True)
                 gated_rows = total_rows
-        elif use_streaming and ds is not None:
-            # For streaming datasets, filter using Ray
-            try:
-                if hasattr(ds, "filter"):
-                    def _filter_verified(row):
-                        return bool(row.get("core_tuple_verified", False))
-                    in_obj = ds.filter(_filter_verified)
-                    print(f"[topic] Gated streaming dataset by core_tuple_verified", flush=True)
-            except Exception as e:
-                print(f"[topic] Error gating streaming dataset by core_tuple_verified: {e}, proceeding with unfiltered data", flush=True)
-        
+
         out = run_topic_stage(in_obj, cfg, logger=context.logger)
-        out = _convert_to_pandas_if_needed(out)
         _save_stage_outputs(out, context.output_paths)
         
         # Log results table and plots to wandb
@@ -114,7 +101,7 @@ class TopicRunner(StageRunner):
         
         metadata: Dict[str, Any] = {
             "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": bool(use_streaming),
+            "streaming": False,
         }
         outputs = _collect_outputs(
             context,

@@ -12,7 +12,6 @@ from ..orchestrator import (
     StageExecutionContext,
     StageResult,
     _collect_outputs,
-    _convert_to_pandas_if_needed,
     _save_stage_outputs,
     _safe_log_table,
 )
@@ -57,7 +56,6 @@ class SynthesisRunner(StageRunner):
         # Pass both to synthesis stage
         out = run_synthesis_stage(df_clusters, cfg, logger=context.logger, articles_df=df_articles)
         
-        out = _convert_to_pandas_if_needed(out)
         _save_stage_outputs(out, context.output_paths)
         
         # Log results table to wandb (in inspect_results panel group)

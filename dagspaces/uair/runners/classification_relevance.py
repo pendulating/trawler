@@ -12,7 +12,6 @@ from ..orchestrator import (
     StageExecutionContext,
     StageResult,
     _collect_outputs,
-    _convert_to_pandas_if_needed,
     _safe_log_table,
     prepare_stage_input,
 )
@@ -38,12 +37,8 @@ class ClassificationRelevanceRunner(StageRunner):
         except Exception:
             pass
         # Note: Prompt injection and profile setup are handled internally by run_classification_relevance
-        # Support streaming (Ray Datasets) since the stage implementation supports it
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_obj = ds if use_streaming and ds is not None else df
-        out = run_classification_relevance(in_obj, cfg)
-        
-        out = _convert_to_pandas_if_needed(out)
+        df, _, _ = prepare_stage_input(cfg, dataset_path, self.stage_name)
+        out = run_classification_relevance(df, cfg)
         
         # Calculate row count
         row_count = None
@@ -163,7 +158,7 @@ class ClassificationRelevanceRunner(StageRunner):
         
         metadata: Dict[str, Any] = {
             "rows": row_count,
-            "streaming": bool(use_streaming),
+            "streaming": False,
         }
         outputs = _collect_outputs(
             context,

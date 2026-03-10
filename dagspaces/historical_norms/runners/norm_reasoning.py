@@ -27,14 +27,10 @@ class NormReasoningRunner(StageRunner):
             raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
             
         cfg = context.cfg
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_obj = ds if use_streaming and ds is not None else df
-        
-        out = run_norm_reasoning_stage(in_obj, cfg)
-        
-        if hasattr(out, "to_pandas"):
-            out = out.to_pandas()
-            
+        df, _, _ = prepare_stage_input(cfg, dataset_path, self.stage_name)
+
+        out = run_norm_reasoning_stage(df, cfg)
+
         # Explode the reasoning data into individual norms
         if isinstance(out, pd.DataFrame) and "reasoning_data" in out.columns:
             rows = []
@@ -49,21 +45,21 @@ class NormReasoningRunner(StageRunner):
                     else:
                         for i, norm in enumerate(norms):
                             new_row = row.to_dict()
-                            # Update with specific norm reasoning
                             new_row["norm_index"] = i
                             new_row["reasoning_trace"] = norm.get("reasoning", "")
                             new_row["norm_snippet"] = norm.get("original_text_snippet", "")
-                            new_row["potential_type"] = norm.get("potential_type", "")
+                            new_row["preliminary_normative_force"] = norm.get("preliminary_normative_force", "")
+                            new_row["governs_information_flow"] = norm.get("governs_information_flow", None)
                             rows.append(new_row)
                 else:
                     rows.append(row.to_dict())
             out = pd.DataFrame(rows)
 
         _save_stage_outputs(out, context.output_paths)
-        
+
         metadata: Dict[str, Any] = {
             "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": bool(use_streaming),
+            "streaming": False,
         }
         
         outputs = _collect_outputs(

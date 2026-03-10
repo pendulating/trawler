@@ -1,0 +1,7 @@
+# @package _global_
+model:
+  model_source: /share/pierson/matt/zoo/models/Qwen2.5-7B-Instruct
+  model_family: qwen2.5
+  engine_kwargs:
+    max_model_len: 4096
+    max_num_seqs: 16

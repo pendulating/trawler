@@ -82,18 +82,41 @@ def chunk_text(text: str, chunk_size: int = 2000, overlap: int = 200) -> List[st
         
     return chunks
 
+def fetch_text_from_url(url: str) -> Optional[str]:
+    """Fetch plain text from an arbitrary URL."""
+    try:
+        response = requests.get(url, timeout=60)
+        if response.status_code == 200:
+            return response.text
+    except Exception as e:
+        print(f"Failed to fetch {url}: {e}")
+    return None
+
+
 def run_fetch_gutenberg(cfg: Any) -> pd.DataFrame:
-    """Main execution logic for fetch_gutenberg stage."""
+    """Main execution logic for fetch_gutenberg stage.
+
+    Supports two data config formats:
+      1. gutenberg_ids: [1342, 11, 84]  -- fetches from gutenberg.org by ID
+      2. text_urls:                       -- fetches from arbitrary URLs
+           - id: "1984"
+             url: "https://gutenberg.net.au/ebooks01/0100021.txt"
+
+    Both can be used together in the same config.
+    """
     gutenberg_ids = cfg.data.get("gutenberg_ids", [])
+    text_urls = cfg.data.get("text_urls", [])
     chunk_size = cfg.data.get("chunk_size", 2000)
     overlap = cfg.data.get("overlap", 200)
     
     rows = []
+
+    # Fetch by Gutenberg ID (standard gutenberg.org)
     for g_id in gutenberg_ids:
-        print(f"Fetching Gutenberg ID: {g_id}")
+        print(f"[fetch_gutenberg] Fetching Gutenberg ID: {g_id}")
         raw_text = fetch_gutenberg_text(str(g_id))
         if not raw_text:
-            print(f"Warning: Could not fetch text for ID {g_id}")
+            print(f"[fetch_gutenberg] Warning: Could not fetch text for ID {g_id}")
             continue
             
         clean_text = clean_gutenberg_boilerplate(raw_text)
@@ -103,10 +126,44 @@ def run_fetch_gutenberg(cfg: Any) -> pd.DataFrame:
             rows.append({
                 "gutenberg_id": str(g_id),
                 "chunk_id": i,
-                "article_text": chunk, # Keep naming consistent with uair orchestrator if possible
+                "article_text": chunk,
                 "chunk_size": len(chunk)
             })
-            
+
+    # Fetch by direct URL (for texts not on main gutenberg.org)
+    for entry in text_urls:
+        # Handle OmegaConf DictConfig objects (not plain dicts)
+        if hasattr(entry, "get"):
+            text_id = str(entry.get("id", "unknown"))
+            url = str(entry.get("url", ""))
+        elif isinstance(entry, str):
+            # Simple string URL, use filename as ID
+            url = entry
+            text_id = url.rsplit("/", 1)[-1].split(".")[0]
+        else:
+            print(f"[fetch_gutenberg] Warning: Skipping unrecognized text_urls entry: {entry}")
+            continue
+
+        if not url:
+            continue
+
+        print(f"[fetch_gutenberg] Fetching text '{text_id}' from URL: {url}")
+        raw_text = fetch_text_from_url(url)
+        if not raw_text:
+            print(f"[fetch_gutenberg] Warning: Could not fetch text for '{text_id}' from {url}")
+            continue
+
+        clean_text = clean_gutenberg_boilerplate(raw_text)
+        chunks = chunk_text(clean_text, chunk_size=chunk_size, overlap=overlap)
+
+        for i, chunk in enumerate(chunks):
+            rows.append({
+                "gutenberg_id": text_id,
+                "chunk_id": i,
+                "article_text": chunk,
+                "chunk_size": len(chunk)
+            })
+
     return pd.DataFrame(rows)
 
 

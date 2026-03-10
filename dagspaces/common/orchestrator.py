@@ -573,7 +573,7 @@ def _print_status(payload: Dict[str, Any]) -> None:
 # GPU utilities
 # ---------------------------------------------------------------------------
 
-def _probe_single_gpu(device: str) -> bool:
+def _probe_single_gpu(device: str) -> Dict[str, Any]:
     """Probe a single logical GPU in a subprocess.
 
     Using a subprocess keeps CUDA initialisation out of the orchestrator/stage
@@ -608,11 +608,22 @@ def _probe_single_gpu(device: str) -> bool:
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            text=True,
             timeout=15,
         )
-        return result.returncode == 0
-    except Exception:
-        return False
+        return {
+            "ok": result.returncode == 0,
+            "returncode": result.returncode,
+            "stdout": (result.stdout or "").strip(),
+            "stderr": (result.stderr or "").strip(),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "returncode": None,
+            "stdout": "",
+            "stderr": str(exc),
+        }
 
 
 def _update_slurm_gpu_envs(valid_devices: List[str]) -> None:
@@ -742,18 +753,21 @@ def _sanitize_cuda_visible_devices(
     normalized = ",".join(devices)
     valid: List[str] = []
     invalid: List[str] = []
+    probe_failures: Dict[str, Dict[str, Any]] = {}
     for dev in devices:
-        if _probe_single_gpu(dev):
+        probe_result = _probe_single_gpu(dev)
+        if probe_result.get("ok"):
             valid.append(dev)
         else:
             invalid.append(dev)
+            probe_failures[dev] = probe_result
 
     if not invalid:
         _log_gpu_environment(reason or "stage_start", env_prefix=env_prefix)
         return
 
     if not valid:
-        # If everything failed, do not modify CUDA_VISIBLE_DEVICES but log once
+        # If everything failed, surface the probe failures immediately.
         os.environ[f"{env_prefix}_GPU_SANITIZE_REASON"] = reason or "stage_start"
         os.environ[f"{env_prefix}_GPU_SANITIZE_TS"] = str(int(time.time()))
         os.environ.pop(f"{env_prefix}_GPU_SANITIZE_ORIGINAL", None)
@@ -767,7 +781,19 @@ def _sanitize_cuda_visible_devices(
                 }
             }
         )
-        return
+        failure_summary: Dict[str, Dict[str, Any]] = {}
+        for dev, details in probe_failures.items():
+            failure_summary[dev] = {
+                "returncode": details.get("returncode"),
+                "stdout": details.get("stdout"),
+                "stderr": details.get("stderr"),
+            }
+        _print_status({"gpu_sanitize_failures": failure_summary})
+        raise RuntimeError(
+            "GPU sanitize failed for every visible device before stage startup. "
+            f"reason={reason or 'stage_start'} visible={normalized}. "
+            f"Set {skip_env}=1 to bypass the preflight check if you explicitly want to continue."
+        )
 
     new_devices = ",".join(valid)
     os.environ["CUDA_VISIBLE_DEVICES"] = new_devices

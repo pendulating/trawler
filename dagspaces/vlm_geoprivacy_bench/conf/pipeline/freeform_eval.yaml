@@ -1,0 +1,62 @@
+# @package _global_
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+prompt:
+  mode: zs
+  free_form: true
+  heuristics: false
+
+judge:
+  model_source: /share/pierson/matt/zoo/models/Qwen2.5-72B-Instruct-AWQ
+  model_family: qwen2.5
+  engine_kwargs:
+    max_model_len: 2048
+    max_num_seqs: 16
+
+pipeline:
+  output_root: ${hydra:run.dir}/vlm_geoprivacy_bench
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+      vlm_freeform_inference:
+        stage: vlm_freeform_inference
+        depends_on:
+          - load_dataset
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/vlm_freeform_inference/dataset.parquet
+        launcher: g2_slurm_pierson
+      parse_freeform:
+        stage: parse_freeform
+        depends_on:
+          - vlm_freeform_inference
+        inputs:
+          dataset: vlm_freeform_inference.dataset
+        outputs:
+          dataset: outputs/parse_freeform/dataset.parquet
+      granularity_judge:
+        stage: granularity_judge
+        depends_on:
+          - parse_freeform
+        inputs:
+          dataset: parse_freeform.dataset
+        outputs:
+          dataset: outputs/granularity_judge/dataset.parquet
+        launcher: g2_slurm_pierson
+      compute_metrics:
+        stage: compute_metrics
+        depends_on:
+          - granularity_judge
+        inputs:
+          dataset: granularity_judge.dataset
+        outputs:
+          dataset: outputs/compute_metrics/metrics.parquet

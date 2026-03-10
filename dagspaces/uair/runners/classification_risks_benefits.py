@@ -11,7 +11,6 @@ from ..orchestrator import (
     StageExecutionContext,
     StageResult,
     _collect_outputs,
-    _convert_to_pandas_if_needed,
     _safe_log_table,
     prepare_stage_input,
 )
@@ -39,10 +38,10 @@ class ClassificationRisksBenefitsRunner(StageRunner):
         except Exception:
             pass
         # Note: Prompt injection is handled internally by run_classification_risks_benefits
-        df, ds, use_streaming = prepare_stage_input(cfg, dataset_path, self.stage_name)
-        in_df = df if df is not None else (ds.to_pandas() if hasattr(ds, "to_pandas") else None)
-        if in_df is None:
+        df, _, _ = prepare_stage_input(cfg, dataset_path, self.stage_name)
+        if df is None:
             raise RuntimeError("Failed to load input dataset for classify_risk_and_benefits")
+        in_df = df
         # Gate by core_tuple_verified == True to mirror EU AI Act classification requirements
         try:
             if "core_tuple_verified" in in_df.columns:
@@ -69,8 +68,6 @@ class ClassificationRisksBenefitsRunner(StageRunner):
             pass
         # Risks & Benefits classification (prompt injected inside wrapper)
         out = run_classification_risks_benefits(in_df, cfg)
-
-        out = _convert_to_pandas_if_needed(out)
 
         # Save outputs to disk
         if isinstance(out, pd.DataFrame) and "results" in context.output_paths:

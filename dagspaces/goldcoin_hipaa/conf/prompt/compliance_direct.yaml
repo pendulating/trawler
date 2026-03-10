@@ -1,0 +1,5 @@
+# @package _global_
+prompt:
+  task: compliance
+  mode: direct
+  few_shot: false

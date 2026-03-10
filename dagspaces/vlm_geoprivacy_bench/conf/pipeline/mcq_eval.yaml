@@ -1,0 +1,41 @@
+# @package _global_
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/vlm_geoprivacy_bench
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+      vlm_mcq_inference:
+        stage: vlm_mcq_inference
+        depends_on:
+          - load_dataset
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/vlm_mcq_inference/dataset.parquet
+        launcher: g2_slurm_pierson
+      parse_mcq:
+        stage: parse_mcq
+        depends_on:
+          - vlm_mcq_inference
+        inputs:
+          dataset: vlm_mcq_inference.dataset
+        outputs:
+          dataset: outputs/parse_mcq/dataset.parquet
+      compute_metrics:
+        stage: compute_metrics
+        depends_on:
+          - parse_mcq
+        inputs:
+          dataset: parse_mcq.dataset
+        outputs:
+          dataset: outputs/compute_metrics/metrics.parquet

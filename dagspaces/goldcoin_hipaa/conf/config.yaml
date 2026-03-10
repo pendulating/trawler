@@ -1,0 +1,36 @@
+defaults:
+  - _self_
+  - pipeline: compliance_eval
+  - prompt: compliance_direct
+  - data: goldcoin_compliance
+
+experiment:
+  name: goldcoin_hipaa
+
+runtime:
+  output_root: null
+  debug: false
+  sample_n: null
+  job_memory_gb: 64
+
+sampling_params:
+  seed: 42
+  temperature: 0.7
+  max_tokens: 1024
+
+wandb:
+  enabled: true
+  project: goldcoin-hipaa
+  entity: ""
+  group: ""
+  table_sample_rows: 1000
+  single_run: true
+
+hydra:
+  job:
+    name: ${experiment.name}
+  run:
+    dir: ${oc.env:HYDRA_RUN_DIR,outputs}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${oc.env:HYDRA_SWEEP_DIR,multirun}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
