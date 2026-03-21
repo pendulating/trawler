@@ -256,7 +256,7 @@ system_prompt: |
      - Tag whether the norm governs information flow or non-informational conduct (`governs_information_flow`)
 
 prompt_template: |
-  Text from fiction:
+  {{book_context}}Text from fiction:
   {{article_text}}
 
   Identify the operative social norms revealed in this text. Look for any passage where the fictional society's expectations about proper conduct are made visible, including:

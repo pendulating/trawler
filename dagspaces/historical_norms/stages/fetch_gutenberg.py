@@ -1,3 +1,4 @@
+import json
 import requests
 import re
 import pandas as pd
@@ -164,7 +165,30 @@ def run_fetch_gutenberg(cfg: Any) -> pd.DataFrame:
                 "chunk_size": len(chunk)
             })
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+
+    # Enrich with book metadata (title, author, summary) from static JSON
+    summaries_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))),
+        "data", "fiction_novel_summaries.json",
+    )
+    if os.path.isfile(summaries_path) and len(df) > 0:
+        with open(summaries_path, encoding="utf-8") as f:
+            summaries = json.load(f)
+        df["book_title"] = df["gutenberg_id"].map(
+            lambda gid: summaries.get(str(gid), {}).get("title", "")
+        )
+        df["book_author"] = df["gutenberg_id"].map(
+            lambda gid: summaries.get(str(gid), {}).get("author", "")
+        )
+        df["book_summary"] = df["gutenberg_id"].map(
+            lambda gid: summaries.get(str(gid), {}).get("summary", "")
+        )
+        n_matched = (df["book_title"] != "").sum()
+        print(f"[fetch_gutenberg] Enriched {n_matched}/{len(df)} chunks with book metadata")
+
+    return df
 
 
 

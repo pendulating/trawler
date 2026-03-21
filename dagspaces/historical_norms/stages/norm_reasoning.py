@@ -85,8 +85,24 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
           f"(system_prompt: {len(system_prompt)} chars, prompt_template: {len(prompt_template)} chars)",
           flush=True)
 
-    def _format_prompt(article_text: str) -> str:
-        return prompt_template.replace("{{article_text}}", str(article_text or ""))
+    def _format_prompt(row: Dict[str, Any]) -> str:
+        article_text = str(row.get("article_text", ""))
+        book_context = ""
+        title = row.get("book_title", "")
+        author = row.get("book_author", "")
+        summary = row.get("book_summary", "")
+        if title:
+            book_context = f'Novel Context:\nThis text is a chunk from "{title}"'
+            if author:
+                book_context += f" by {author}"
+            book_context += ".\n"
+            if summary:
+                book_context += f"\nSummary: {summary}\n\n---\n\n"
+            else:
+                book_context += "\n---\n\n"
+        return (prompt_template
+                .replace("{{book_context}}", book_context)
+                .replace("{{article_text}}", article_text))
 
     sampling_params = dict(
         OmegaConf.to_container(
@@ -125,8 +141,7 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
 
     def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
         result_row = dict(row)
-        article_text = result_row.get("article_text", "")
-        user_prompt = _format_prompt(article_text)
+        user_prompt = _format_prompt(result_row)
         result_row["messages"] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},

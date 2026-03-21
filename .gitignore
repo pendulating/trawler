@@ -217,8 +217,9 @@ __marimo__/
 cldr/
 
 # Trawler project-specific ignores
-# Data files (users download separately)
-data/
+# Data files (users download separately), except static metadata
+data/*
+!data/fiction_novel_summaries.json
 
 # Debug artifacts
 debug/

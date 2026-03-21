@@ -264,7 +264,21 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     def _format_prompt(row: Dict[str, Any]) -> str:
         text = str(row.get("norm_snippet") or row.get("article_text") or "")
         reasoning = str(row.get("reasoning_trace", ""))
+        book_context = ""
+        title = row.get("book_title", "")
+        author = row.get("book_author", "")
+        summary = row.get("book_summary", "")
+        if title:
+            book_context = f'Novel Context:\nThis text is a chunk from "{title}"'
+            if author:
+                book_context += f" by {author}"
+            book_context += ".\n"
+            if summary:
+                book_context += f"\nSummary: {summary}\n\n---\n\n"
+            else:
+                book_context += "\n---\n\n"
         return (prompt_template
+                .replace("{{book_context}}", book_context)
                 .replace("{{article_text}}", text)
                 .replace("{{reasoning_trace}}", reasoning))
 
