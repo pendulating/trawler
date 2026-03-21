@@ -1,0 +1,91 @@
+# @package _global_
+# Raz Norm Extraction Pipeline -- Fiction Texts (COLM, prefetched)
+#
+# Identical to COLM_norms_fiction but loads pre-fetched chunks from a
+# parquet file instead of calling the Gutenberg API. Run COLM_fetch_fiction
+# first to produce the chunks parquet.
+#
+# Usage:
+#   FICTION_CHUNKS_PATH=/path/to/chunks.parquet \
+#     python -m dagspaces.historical_norms.cli pipeline=COLM_norms_fiction_prefetched
+#
+#   Or override on CLI:
+#     python -m dagspaces.historical_norms.cli \
+#       pipeline=COLM_norms_fiction_prefetched \
+#       pipeline.sources.prefetched_chunks.path=/path/to/chunks.parquet
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# Override prompts to use fiction variants
+prompt_reasoning: ${prompt_norm_reasoning_fiction}
+prompt_extraction: ${prompt_norm_extraction_fiction}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/COLM_norms_fiction
+  allow_partial: false
+
+  sources:
+    prefetched_chunks:
+      path: ${oc.env:FICTION_CHUNKS_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      # ============================================================
+      # Stage 1: Raz Norm Reasoning (from prefetched chunks)
+      # ============================================================
+      reasoning:
+        stage: norm_reasoning
+        depends_on: []
+        inputs:
+          dataset: prefetched_chunks
+        outputs:
+          dataset: outputs/reasoning/reasoning.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 4096
+        launcher: slurm_gpu_2x
+        wandb_suffix: reasoning
+
+      # ============================================================
+      # Stage 2: Raz Norm Extraction
+      # ============================================================
+      extraction:
+        stage: norm_extraction
+        depends_on: [reasoning]
+        inputs:
+          dataset: reasoning.dataset
+        outputs:
+          dataset: outputs/extraction/structured_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 8192
+        launcher: slurm_gpu_2x
+        wandb_suffix: extraction
+
+      # ============================================================
+      # Stage 3: Role Abstraction
+      # ============================================================
+      role_abstraction:
+        stage: norm_role_abstraction
+        depends_on: [extraction]
+        inputs:
+          dataset: extraction.dataset
+        outputs:
+          dataset: outputs/role_abstraction/abstracted_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 1024
+        launcher: slurm_gpu_2x
+        wandb_suffix: role_abstraction

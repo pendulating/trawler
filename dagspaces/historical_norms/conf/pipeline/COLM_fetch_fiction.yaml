@@ -1,0 +1,33 @@
+# @package _global_
+# Fetch-only pipeline for COLM fiction novels.
+#
+# Downloads and chunks all 10 fiction novels from Project Gutenberg,
+# enriches with book metadata (title, author, Wikipedia summary).
+# Run once, then use COLM_norms_fiction_prefetched with the output.
+#
+# Usage:
+#   python -m dagspaces.historical_norms.cli pipeline=COLM_fetch_fiction
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/COLM_fetch_fiction
+  allow_partial: false
+
+  sources:
+    gutenberg_config:
+      path: ${oc.env:GUTENBERG_CONFIG,dagspaces/historical_norms/conf/data/fiction_sample_for_colm.yaml}
+      type: yaml
+
+  graph:
+    nodes:
+      fetch:
+        stage: fetch_gutenberg
+        depends_on: []
+        inputs:
+          config: gutenberg_config
+        outputs:
+          dataset: outputs/fetch/chunks.parquet
+        launcher: slurm_cpu
+        wandb_suffix: fetch
