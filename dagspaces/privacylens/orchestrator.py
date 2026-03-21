@@ -11,6 +11,7 @@ import json
 import os
 import pickle
 import subprocess
+import sys
 import time
 from typing import Any, Dict, Optional
 
@@ -208,205 +209,212 @@ def _resolve_hydra_output_dir() -> Optional[str]:
 def run_experiment(cfg: DictConfig) -> None:
     """Execute the PrivacyLens evaluation pipeline."""
     with _get_wandb_logger(cfg, stage="orchestrator", run_id="monitor") as logger:
-        graph_spec: PipelineGraphSpec = load_pipeline_graph(cfg)
+        try:
+            graph_spec: PipelineGraphSpec = load_pipeline_graph(cfg)
 
-        hydra_output_dir = _resolve_hydra_output_dir()
-        if hydra_output_dir:
-            output_root = os.path.join(hydra_output_dir, "privacylens_eval")
-        else:
-            output_root = resolve_output_root(graph_spec, cfg)
-        os.makedirs(output_root, exist_ok=True)
-        print(f"[orchestrator] output_root={output_root}", flush=True)
+            hydra_output_dir = _resolve_hydra_output_dir()
+            if hydra_output_dir:
+                output_root = os.path.join(hydra_output_dir, "privacylens_eval")
+            else:
+                output_root = resolve_output_root(graph_spec, cfg)
+            os.makedirs(output_root, exist_ok=True)
+            print(f"[orchestrator] output_root={output_root}", flush=True)
 
-        registry = ArtifactRegistry()
-        for source_key, source in graph_spec.sources.items():
-            path = source.path
-            if not os.path.isabs(path):
-                path = os.path.abspath(os.path.expanduser(path))
-            registry.register_source(source_key, path)
+            registry = ArtifactRegistry()
+            for source_key, source in graph_spec.sources.items():
+                path = source.path
+                if not os.path.isabs(path):
+                    path = os.path.abspath(os.path.expanduser(path))
+                registry.register_source(source_key, path)
 
-        stage_registry = dict(_STAGE_REGISTRY)
-        ordered_nodes = graph_spec.topological_order()
-        pipeline_start = time.time()
+            stage_registry = dict(_STAGE_REGISTRY)
+            ordered_nodes = graph_spec.topological_order()
+            pipeline_start = time.time()
 
-        manifest: Dict[str, Any] = {
-            "output_root": output_root,
-            "nodes": {},
-        }
+            manifest: Dict[str, Any] = {
+                "output_root": output_root,
+                "nodes": {},
+            }
 
-        for node_key in ordered_nodes:
-            node = graph_spec.nodes[node_key]
-            runner = stage_registry.get(node.stage)
-            if runner is None:
-                raise ValueError(f"No runner registered for stage '{node.stage}' (node '{node.key}')")
+            for node_key in ordered_nodes:
+                node = graph_spec.nodes[node_key]
+                runner = stage_registry.get(node.stage)
+                if runner is None:
+                    raise ValueError(f"No runner registered for stage '{node.stage}' (node '{node.key}')")
 
-            inputs = _node_inputs(node, registry)
-            output_paths = _node_output_paths(node, registry, output_root)
-            output_dir = common_parent(output_paths.values())
-            if not output_dir:
-                output_dir = os.path.join(output_root, node.key)
-            os.makedirs(output_dir, exist_ok=True)
+                inputs = _node_inputs(node, registry)
+                output_paths = _node_output_paths(node, registry, output_root)
+                output_dir = common_parent(output_paths.values())
+                if not output_dir:
+                    output_dir = os.path.join(output_root, node.key)
+                os.makedirs(output_dir, exist_ok=True)
 
-            node_cfg = prepare_node_config(cfg, node, output_dir)
-            context = StageExecutionContext(
-                cfg=node_cfg,
-                node=node,
-                inputs=inputs,
-                output_paths=output_paths,
-                output_dir=output_dir,
-                output_root=output_root,
-            )
-
-            node_start = time.time()
-
-            if node.launcher and _SUBMITIT_AVAILABLE:
-                from dagspaces.common.orchestrator import (
-                    _clean_slurm_env,
-                    _create_submitit_executor,
-                    _load_launcher_config,
+                node_cfg = prepare_node_config(cfg, node, output_dir)
+                context = StageExecutionContext(
+                    cfg=node_cfg,
+                    node=node,
+                    inputs=inputs,
+                    output_paths=output_paths,
+                    output_dir=output_dir,
+                    output_root=output_root,
                 )
 
-                _print_status({"node": node.key, "stage": node.stage, "status": "submitting", "launcher": node.launcher})
+                node_start = time.time()
 
-                launcher_cfg = _load_launcher_config(cfg, node.launcher, config_dir=_CONF_DIR)
-
-                log_base = hydra_output_dir if hydra_output_dir else output_root
-                log_folder = os.path.join(log_base, ".slurm_jobs", node.key)
-                os.makedirs(log_folder, exist_ok=True)
-
-                executor = _create_submitit_executor(launcher_cfg, f"PLens-{node.key}", log_folder, use_srun=False)
-                context_data = _serialize_context_data(node_cfg, node, inputs, output_paths, output_dir, output_root)
-
-                with _clean_slurm_env():
-                    job = executor.submit(execute_stage_job, context_data)
-                _print_status({"node": node.key, "status": "submitted", "job_id": job.job_id})
-
-                # Robust job result waiting -- submitit's watcher can prematurely
-                # report jobs as done on NFS, so we fall back to polling squeue
-                # and waiting for the result pickle manually.
-                job_result: Optional[Dict[str, Any]] = None
-                try:
-                    job_result = job.result()
-                except Exception as exc:
-                    exc_text = str(exc).lower()
-                    result_path = job.paths.result_pickle
-                    missing_result = (
-                        "has not produced any output" in exc_text
-                        or "result_pickle" in exc_text
-                        or ("result" in exc_text and "pickle" in exc_text)
+                if node.launcher and _SUBMITIT_AVAILABLE:
+                    from dagspaces.common.orchestrator import (
+                        _create_submitit_executor,
+                        _load_launcher_config,
+                        _submit_slurm_job,
                     )
-                    if missing_result:
-                        wait_s = int(OmegaConf.select(cfg, "runtime.submitit_result_wait_s", default=120))
-                        _print_status({
-                            "debug": "waiting_for_result_pickle",
-                            "job_id": job.job_id,
-                            "path": str(result_path),
-                            "max_wait_s": wait_s,
-                        })
-                        deadline = time.time() + wait_s
-                        while time.time() < deadline and not os.path.exists(result_path):
-                            time.sleep(2)
-                        if os.path.exists(result_path):
-                            with open(result_path, "rb") as f:
-                                _outcome, _result = pickle.load(f)
-                            job_result = _result
-                            _print_status({"debug": "recovered_result_after_wait", "job_id": job.job_id})
 
-                    # If still no result, poll squeue for the actual job state
-                    if job_result is None:
-                        try:
-                            check = subprocess.run(
-                                ["squeue", "-j", str(job.job_id), "-h", "-o", "%t"],
-                                capture_output=True, text=True, check=False,
-                            )
-                            state = check.stdout.strip()
-                            if state in ("R", "PD", "CG"):
-                                _print_status({
-                                    "debug": "job_still_running_in_squeue",
-                                    "job_id": job.job_id,
-                                    "state": state,
-                                })
-                                while True:
-                                    time.sleep(30)
-                                    check = subprocess.run(
-                                        ["squeue", "-j", str(job.job_id), "-h", "-o", "%t"],
-                                        capture_output=True, text=True, check=False,
-                                    )
-                                    if not check.stdout.strip() or check.stdout.strip() not in ("R", "PD", "CG"):
-                                        break
-                                # Wait a bit for NFS to sync, then read result
-                                for _ in range(30):
-                                    if os.path.exists(result_path):
-                                        break
-                                    time.sleep(2)
-                                if os.path.exists(result_path):
-                                    with open(result_path, "rb") as f:
-                                        _outcome, _result = pickle.load(f)
-                                    job_result = _result
-                                    _print_status({"debug": "recovered_result_after_squeue_wait", "job_id": job.job_id})
-                        except Exception as inner_exc:
+                    _print_status({"node": node.key, "stage": node.stage, "status": "submitting", "launcher": node.launcher})
+
+                    launcher_cfg = _load_launcher_config(cfg, node.launcher, config_dir=_CONF_DIR)
+
+                    log_base = hydra_output_dir if hydra_output_dir else output_root
+                    log_folder = os.path.join(log_base, ".slurm_jobs", node.key)
+                    os.makedirs(log_folder, exist_ok=True)
+
+                    executor = _create_submitit_executor(launcher_cfg, f"PLens-{node.key}", log_folder, use_srun=False)
+                    context_data = _serialize_context_data(node_cfg, node, inputs, output_paths, output_dir, output_root)
+
+                    job = _submit_slurm_job(executor, execute_stage_job, context_data, node.key, node.launcher)
+
+                    # Robust job result waiting -- submitit's watcher can prematurely
+                    # report jobs as done on NFS, so we fall back to polling squeue
+                    # and waiting for the result pickle manually.
+                    job_result: Optional[Dict[str, Any]] = None
+                    try:
+                        job_result = job.result()
+                    except Exception as exc:
+                        exc_text = str(exc).lower()
+                        result_path = job.paths.result_pickle
+                        missing_result = (
+                            "has not produced any output" in exc_text
+                            or "result_pickle" in exc_text
+                            or ("result" in exc_text and "pickle" in exc_text)
+                        )
+                        if missing_result:
+                            wait_s = int(OmegaConf.select(cfg, "runtime.submitit_result_wait_s", default=120))
                             _print_status({
-                                "debug": "squeue_fallback_failed",
+                                "debug": "waiting_for_result_pickle",
                                 "job_id": job.job_id,
-                                "error": str(inner_exc),
+                                "path": str(result_path),
+                                "max_wait_s": wait_s,
                             })
+                            deadline = time.time() + wait_s
+                            while time.time() < deadline and not os.path.exists(result_path):
+                                time.sleep(2)
+                            if os.path.exists(result_path):
+                                with open(result_path, "rb") as f:
+                                    _outcome, _result = pickle.load(f)
+                                job_result = _result
+                                _print_status({"debug": "recovered_result_after_wait", "job_id": job.job_id})
 
-                    if job_result is None:
-                        _print_status({"node": node.key, "status": "failed", "job_id": job.job_id, "error": str(exc)})
+                        # If still no result, poll squeue for the actual job state
+                        if job_result is None:
+                            try:
+                                check = subprocess.run(
+                                    ["squeue", "-j", str(job.job_id), "-h", "-o", "%t"],
+                                    capture_output=True, text=True, check=False,
+                                )
+                                state = check.stdout.strip()
+                                if state in ("R", "PD", "CG"):
+                                    _print_status({
+                                        "debug": "job_still_running_in_squeue",
+                                        "job_id": job.job_id,
+                                        "state": state,
+                                    })
+                                    while True:
+                                        time.sleep(30)
+                                        check = subprocess.run(
+                                            ["squeue", "-j", str(job.job_id), "-h", "-o", "%t"],
+                                            capture_output=True, text=True, check=False,
+                                        )
+                                        if not check.stdout.strip() or check.stdout.strip() not in ("R", "PD", "CG"):
+                                            break
+                                    # Wait a bit for NFS to sync, then read result
+                                    for _ in range(30):
+                                        if os.path.exists(result_path):
+                                            break
+                                        time.sleep(2)
+                                    if os.path.exists(result_path):
+                                        with open(result_path, "rb") as f:
+                                            _outcome, _result = pickle.load(f)
+                                        job_result = _result
+                                        _print_status({"debug": "recovered_result_after_squeue_wait", "job_id": job.job_id})
+                            except Exception as inner_exc:
+                                _print_status({
+                                    "debug": "squeue_fallback_failed",
+                                    "job_id": job.job_id,
+                                    "error": str(inner_exc),
+                                })
+
+                        if job_result is None:
+                            _print_status({"node": node.key, "status": "failed", "job_id": job.job_id, "error": str(exc)})
+                            raise
+
+                    # Submitit may return (outcome, payload) tuple or the payload directly
+                    if isinstance(job_result, tuple) and len(job_result) == 2:
+                        outcome, payload = job_result
+                        if outcome == "error":
+                            raise RuntimeError(f"SLURM job {job.job_id} failed:\n{payload}")
+                        job_result = payload
+
+                    result = StageResult(outputs=job_result["outputs"], metadata=job_result["metadata"])
+                else:
+                    _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})
+                    try:
+                        result = runner.run(context)
+                    except Exception as exc:
+                        _print_status({"node": node.key, "stage": node.stage, "status": "failed", "error": str(exc)})
                         raise
 
-                # Submitit may return (outcome, payload) tuple or the payload directly
-                if isinstance(job_result, tuple) and len(job_result) == 2:
-                    outcome, payload = job_result
-                    if outcome == "error":
-                        raise RuntimeError(f"SLURM job {job.job_id} failed:\n{payload}")
-                    job_result = payload
+                # Log evaluation metrics to W&B (local execution path)
+                eval_metrics = result.metadata.get("metrics")
+                if eval_metrics and isinstance(eval_metrics, dict):
+                    _log_eval_metrics(logger, eval_metrics, node.stage)
 
-                result = StageResult(outputs=job_result["outputs"], metadata=job_result["metadata"])
-            else:
-                _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})
-                try:
-                    result = runner.run(context)
-                except Exception as exc:
-                    _print_status({"node": node.key, "stage": node.stage, "status": "failed", "error": str(exc)})
-                    raise
+                registry.register_outputs(node.key, result.outputs)
+                duration = time.time() - node_start
+                manifest["nodes"][node.key] = {
+                    "stage": node.stage,
+                    "inputs": inputs,
+                    "outputs": result.outputs,
+                    "metadata": result.metadata,
+                    "duration_s": round(duration, 3),
+                }
+                _print_status({
+                    "node": node.key,
+                    "stage": node.stage,
+                    "status": "completed",
+                    "duration_s": round(duration, 3),
+                    "outputs": result.outputs,
+                })
 
-            # Log evaluation metrics to W&B (local execution path)
-            eval_metrics = result.metadata.get("metrics")
-            if eval_metrics and isinstance(eval_metrics, dict):
-                _log_eval_metrics(logger, eval_metrics, node.stage)
+            # Save manifest
+            manifest_path = os.path.join(output_root, "pipeline_manifest.json")
+            try:
+                with open(manifest_path, "w", encoding="utf-8") as fh:
+                    json.dump(manifest, fh, indent=2)
+            except Exception:
+                pass
 
-            registry.register_outputs(node.key, result.outputs)
-            duration = time.time() - node_start
-            manifest["nodes"][node.key] = {
-                "stage": node.stage,
-                "inputs": inputs,
-                "outputs": result.outputs,
-                "metadata": result.metadata,
-                "duration_s": round(duration, 3),
-            }
+            total_duration = time.time() - pipeline_start
             _print_status({
-                "node": node.key,
-                "stage": node.stage,
-                "status": "completed",
-                "duration_s": round(duration, 3),
-                "outputs": result.outputs,
+                "pipeline": {
+                    "output_root": output_root,
+                    "nodes": ordered_nodes,
+                    "duration_s": round(total_duration, 3),
+                    "manifest": manifest_path,
+                }
             })
-
-        # Save manifest
-        manifest_path = os.path.join(output_root, "pipeline_manifest.json")
-        try:
-            with open(manifest_path, "w", encoding="utf-8") as fh:
-                json.dump(manifest, fh, indent=2)
-        except Exception:
-            pass
-
-        total_duration = time.time() - pipeline_start
-        _print_status({
-            "pipeline": {
-                "output_root": output_root,
-                "nodes": ordered_nodes,
-                "duration_s": round(total_duration, 3),
-                "manifest": manifest_path,
-            }
-        })
+        except Exception as e:
+            print(f"[orchestrator] PIPELINE FAILED: {e}", file=sys.stderr, flush=True)
+            try:
+                logger.set_summary("orchestrator/status", "failed")
+                logger.set_summary("orchestrator/error", str(e))
+            except Exception:
+                pass
+            raise

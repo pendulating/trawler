@@ -47,6 +47,7 @@ from dagspaces.common.orchestrator import (
     _sanitize_cuda_visible_devices,
     _clean_slurm_env,
     _create_submitit_executor,
+    _submit_slurm_job,
 )
 from .runners import get_stage_registry
 from .wandb_logger import WandbLogger, WandbConfig
@@ -364,9 +365,7 @@ def run_experiment(cfg: DictConfig) -> None:
                     }
                     
                     # Submit the job
-                    with _clean_slurm_env():
-                        job = executor.submit(execute_stage_job, context_data)
-                    _print_status({"node": node.key, "stage": node.stage, "status": "submitted", "job_id": job.job_id})
+                    job = _submit_slurm_job(executor, execute_stage_job, context_data, node.key, node.launcher)
                     
                     # Wait for the job to complete
                     try:
@@ -469,6 +468,7 @@ def run_experiment(cfg: DictConfig) -> None:
                 }
             })
         except Exception as e:
+            print(f"[orchestrator] PIPELINE FAILED: {e}", file=sys.stderr, flush=True)
             try:
                 logger.set_summary("orchestrator/status", "failed")
                 logger.set_summary("orchestrator/error", str(e))

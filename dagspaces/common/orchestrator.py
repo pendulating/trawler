@@ -1000,3 +1000,34 @@ def _create_submitit_executor(
 
     executor.update_parameters(**params)
     return executor
+
+
+def _submit_slurm_job(
+    executor,
+    execute_fn,
+    context_data: Dict[str, Any],
+    node_key: str,
+    launcher_name: str,
+):
+    """Submit a SLURM job with structured error logging on failure.
+
+    Wraps ``executor.submit()`` in a try-except that prints a structured
+    ``submission_failed`` status before re-raising.  This prevents the
+    silent-failure pattern where sbatch errors are only visible in stderr.
+    """
+    try:
+        with _clean_slurm_env():
+            job = executor.submit(execute_fn, context_data)
+    except Exception as e:
+        _print_status({
+            "node": node_key,
+            "status": "submission_failed",
+            "launcher": launcher_name,
+            "error": str(e),
+        })
+        raise RuntimeError(
+            f"SLURM submission failed for '{node_key}' "
+            f"(launcher={launcher_name}): {e}"
+        ) from e
+    _print_status({"node": node_key, "status": "submitted", "job_id": job.job_id})
+    return job
