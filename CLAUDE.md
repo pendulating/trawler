@@ -39,7 +39,7 @@ Each domain pipeline is a self-contained "dagspace" under `dagspaces/{name}/` wi
 - `runners/` - Stage runner classes extending `StageRunner` base; lazy-loaded via `get_stage_registry()`
 - `stages/` - Stage implementation functions
 
-Four dagspaces: **uair** (news AI risk analysis, most mature), **historical_norms** (literature norm extraction via contextual integrity), **rule_tuples** (Reddit rule CI classification), **contextual_integrity_eval** (benchmarking LLM CI understanding).
+Four dagspaces: **uair** (news AI risk analysis, most mature), **historical_norms** (literature norm extraction via contextual integrity), **rule_tuples** (Reddit rule CI classification), **privacylens** (benchmarking LLM CI understanding via PrivacyLens).
 
 ### Key Abstractions
 

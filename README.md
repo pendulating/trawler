@@ -59,7 +59,7 @@ dagspaces/
 ├── uair/                        # AI risk analysis dagspace
 ├── historical_norms/            # Literature norm extraction dagspace
 ├── rule_tuples/                 # Reddit rule analysis dagspace
-└── contextual_integrity_eval/   # CI evaluation dagspace
+└── privacylens/                 # PrivacyLens CI evaluation dagspace
 ```
 
 Each dagspace follows a consistent structure:

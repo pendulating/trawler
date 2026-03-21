@@ -24,7 +24,7 @@ pipeline:
           dataset: load_dataset.dataset
         outputs:
           dataset: outputs/qa_probe_inference/results.parquet
-        launcher: g2_slurm_pierson
+        launcher: g2_slurm_gpu_1x
 
       # Agent action generation: model generates final action from trajectory
       agent_action_inference:
@@ -34,7 +34,7 @@ pipeline:
           dataset: load_dataset.dataset
         outputs:
           dataset: outputs/agent_action_inference/results.parquet
-        launcher: g2_slurm_pierson
+        launcher: g2_slurm_gpu_1x
 
       # Leakage judgment: few-shot CoT judge on generated actions
       leakage_judge_inference:
@@ -44,7 +44,7 @@ pipeline:
           dataset: agent_action_inference.dataset
         outputs:
           dataset: outputs/leakage_judge_inference/results.parquet
-        launcher: g2_slurm_pierson
+        launcher: g2_slurm_gpu_1x
 
       # Compute all metrics (QA accuracy + leakage rate)
       compute_metrics:
