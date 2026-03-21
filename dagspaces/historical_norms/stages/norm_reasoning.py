@@ -92,12 +92,16 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
         author = row.get("book_author", "")
         summary = row.get("book_summary", "")
         if title:
-            book_context = f'Novel Context:\nThis text is a chunk from "{title}"'
+            book_context = f'Novel Context:\nThe text below is a short excerpt from the novel "{title}"'
             if author:
                 book_context += f" by {author}"
-            book_context += ".\n"
+            book_context += (
+                ". It is one of many consecutive chunks extracted from the full novel. "
+                "The excerpt may begin or end mid-scene. Use the summary below to "
+                "understand the broader societal context of the novel when identifying norms.\n"
+            )
             if summary:
-                book_context += f"\nSummary: {summary}\n\n---\n\n"
+                book_context += f"\nNovel summary: {summary}\n\n---\n\n"
             else:
                 book_context += "\n---\n\n"
         return (prompt_template
