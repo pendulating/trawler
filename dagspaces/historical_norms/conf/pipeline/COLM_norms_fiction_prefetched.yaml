@@ -50,7 +50,7 @@ pipeline:
           runtime.debug: ${runtime.debug}
           runtime.sample_n: ${runtime.sample_n}
           runtime.job_memory_gb: 256
-          sampling_params.max_tokens: 4096
+          sampling_params.max_tokens: 8192
         launcher: slurm_gpu_2x
         wandb_suffix: reasoning
 
@@ -68,7 +68,7 @@ pipeline:
           runtime.debug: ${runtime.debug}
           runtime.sample_n: ${runtime.sample_n}
           runtime.job_memory_gb: 256
-          sampling_params.max_tokens: 8192
+          sampling_params.max_tokens: 12288
         launcher: slurm_gpu_2x
         wandb_suffix: extraction
 
@@ -86,6 +86,6 @@ pipeline:
           runtime.debug: ${runtime.debug}
           runtime.sample_n: ${runtime.sample_n}
           runtime.job_memory_gb: 256
-          sampling_params.max_tokens: 1024
+          sampling_params.max_tokens: 2048
         launcher: slurm_gpu_2x
         wandb_suffix: role_abstraction
