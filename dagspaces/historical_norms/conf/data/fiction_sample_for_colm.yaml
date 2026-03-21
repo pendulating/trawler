@@ -1,0 +1,20 @@
+gutenberg_ids:
+  - 1342  # Pride and Prejudice
+  - 11    # Alice's Adventures in Wonderland
+  - 145   # Middlemarch
+  - 541   # The Age of Innocence
+  - 1023     # Bleak House
+  - 135    # Les Miserables
+  - 1399   # Anna Karenina
+  - 4078   # The Picture of Dorian Gray
+  - 1184  # The Count of Monte Cristo
+
+
+text_urls:
+  - id: "1984"
+    url: "https://gutenberg.net.au/ebooks01/0100021.txt"
+chunk_size: 6000
+overlap: 1000
+
+
+
