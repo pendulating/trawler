@@ -6,7 +6,7 @@ nodes: 1
 tasks_per_node: 1
 cpus_per_task: 8
 mem_gb: ${runtime.job_memory_gb}
-partition: pierson
+partition: ${oc.env:SLURM_PARTITION,pierson}
 array_parallelism: 1
 gpus_per_node: 1
 name: ${experiment.name}
@@ -16,13 +16,13 @@ additional_parameters:
 setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
-  - source /share/pierson/matt/UAIR/.venv/bin/activate
+  - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
   # Explicitly set CUDA_VISIBLE_DEVICES to local indices (0,1,...,N-1)
   # This is REQUIRED for vLLM V1 multiprocessing - unset causes race conditions
   # where spawned workers see different GPU counts than the parent process
   - if [ -n "$SLURM_GPUS_ON_NODE" ] && [ "$SLURM_GPUS_ON_NODE" -gt 0 ]; then export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((SLURM_GPUS_ON_NODE - 1))); else unset CUDA_VISIBLE_DEVICES; fi
   - export PYTHONUNBUFFERED=1
-  - export PYTHONPATH=/share/pierson/matt/UAIR:$PYTHONPATH
+  - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
   - export UAIR_VERIFY_DEBUG=1
   - echo "=== GPU sanity (pre-job) ==="
   - echo "HOST=$(hostname) DATE=$(date)"

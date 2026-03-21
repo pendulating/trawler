@@ -43,10 +43,13 @@ _VLLM_LOGS_SILENCED = False
 
 
 def ensure_dotenv() -> None:
-    """Load the project-root ``.env`` file into ``os.environ`` (idempotent).
+    """Load project-root ``.env`` and ``server.env`` into ``os.environ``.
 
-    Walks up from this file's directory to find the nearest ``.env``.
+    Walks up from this file's directory to find the project root, then
+    loads both ``.env`` (pipeline inputs, checkpoint paths) and
+    ``server.env`` (SLURM partition, project paths, NCCL settings).
     Existing env vars are NOT overwritten (``override=False``).
+    Idempotent — subsequent calls are no-ops.
     """
     global _DOTENV_LOADED
     if _DOTENV_LOADED:
@@ -57,9 +60,13 @@ def ensure_dotenv() -> None:
         search_dir = os.path.dirname(os.path.abspath(__file__))
         # Walk up to repo root (max 5 levels: common/ -> dagspaces/ -> repo/)
         for _ in range(5):
-            candidate = os.path.join(search_dir, ".env")
-            if os.path.isfile(candidate):
-                _load(candidate, override=False)
+            env_file = os.path.join(search_dir, ".env")
+            if os.path.isfile(env_file):
+                _load(env_file, override=False)
+                # Also load server.env for SLURM/cluster settings
+                server_env = os.path.join(search_dir, "server.env")
+                if os.path.isfile(server_env):
+                    _load(server_env, override=False)
                 break
             search_dir = os.path.dirname(search_dir)
     except ImportError:

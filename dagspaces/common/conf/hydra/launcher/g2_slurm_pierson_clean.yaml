@@ -9,7 +9,7 @@ nodes: 1
 tasks_per_node: 1
 cpus_per_task: 16
 mem_gb: 128
-partition: pierson
+partition: ${oc.env:SLURM_PARTITION,pierson}
 array_parallelism: 1
 gpus_per_node: 2
 name: historical_norms
@@ -19,9 +19,9 @@ additional_parameters:
 setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
-  - source /share/pierson/matt/UAIR/.venv/bin/activate
+  - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
   - export PYTHONUNBUFFERED=1
-  - export PYTHONPATH=/share/pierson/matt/UAIR:$PYTHONPATH
+  - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
   - echo "=== GPU sanity check ==="
   - echo "HOST=$(hostname) DATE=$(date)"
   - echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES SLURM_JOB_GPUS=$SLURM_JOB_GPUS SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"

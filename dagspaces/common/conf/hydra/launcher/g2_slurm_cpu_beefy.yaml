@@ -6,7 +6,7 @@ nodes: 1
 tasks_per_node: 1
 cpus_per_task: 8
 mem_gb: 64
-partition: pierson
+partition: ${oc.env:SLURM_PARTITION,pierson}
 array_parallelism: 1
 name: ${experiment.name}
 additional_parameters:
@@ -18,7 +18,7 @@ srun_args:
 setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
-  - source /share/pierson/matt/UAIR/.venv/bin/activate
+  - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
   - unset WANDB_DISABLED
   - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
   - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
