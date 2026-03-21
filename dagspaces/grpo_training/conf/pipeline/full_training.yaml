@@ -34,7 +34,7 @@ pipeline:
           embeddings:
             path: outputs/norm_universe/embeddings
             type: dir
-        launcher: g2_slurm_gpu_1x
+        launcher: slurm_gpu_1x
         wandb_suffix: norm_universe
 
       sft_data_prep:
@@ -47,7 +47,7 @@ pipeline:
           dataset:
             path: outputs/sft_data/sft_pairs.parquet
             type: parquet
-        launcher: g2_slurm_cpu
+        launcher: slurm_cpu
         wandb_suffix: sft_data_prep
 
       sft_training:
@@ -60,7 +60,7 @@ pipeline:
           checkpoint:
             path: outputs/sft/checkpoint
             type: dir
-        launcher: g2_slurm_train_4x
+        launcher: slurm_train_4x
         wandb_suffix: sft_training
 
       reward_prep:
@@ -76,7 +76,7 @@ pipeline:
           dataset:
             path: outputs/reward_prep/reward_cache.parquet
             type: parquet
-        launcher: g2_slurm_train_4x
+        launcher: slurm_train_4x
         wandb_suffix: reward_prep
 
       grpo_training:
@@ -95,5 +95,5 @@ pipeline:
           checkpoint:
             path: outputs/grpo/checkpoint
             type: dir
-        launcher: g2_slurm_train_4x
+        launcher: slurm_train_4x
         wandb_suffix: grpo_training

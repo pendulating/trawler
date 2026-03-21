@@ -29,12 +29,12 @@ pipeline:
           runtime.sample_n: ${runtime.sample_n}
           runtime.debug: ${runtime.debug}
           runtime.use_llm_classify: ${runtime.use_llm_classify}
-          # Model config overrides for 2-GPU setup (g2_slurm_pierson)
+          # Model config overrides for 2-GPU setup (slurm_gpu_2x)
           model.engine_kwargs.gpu_memory_utilization: 0.45
           model.engine_kwargs.max_model_len: 2048
           model.engine_kwargs.max_num_seqs: 2
           model.engine_kwargs.enable_prefix_caching: false
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: classify
       taxonomy:
         stage: taxonomy
@@ -48,14 +48,14 @@ pipeline:
           runtime.streaming_io: ${runtime.streaming_io}
           runtime.debug: ${runtime.debug}
           runtime.prefilter_mode: ${runtime.prefilter_mode}
-          # Model config overrides for 2-GPU setup (g2_slurm_pierson)
+          # Model config overrides for 2-GPU setup (slurm_gpu_2x)
           model.engine_kwargs.gpu_memory_utilization: 0.45
           model.engine_kwargs.max_model_len: 2048
           model.engine_kwargs.max_num_seqs: 1
           model.engine_kwargs.enable_prefix_caching: false
           model.engine_kwargs.enable_chunked_prefill: false
           model.batch_size: 1
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: taxonomy
       verification:
         stage: verification
@@ -68,6 +68,6 @@ pipeline:
         overrides:
           runtime.streaming_io: ${runtime.streaming_io}
           runtime.debug: ${runtime.debug}
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: verification
 

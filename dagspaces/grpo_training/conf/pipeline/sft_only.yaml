@@ -28,7 +28,7 @@ pipeline:
           dataset:
             path: outputs/sft_data/sft_pairs.parquet
             type: parquet
-        launcher: g2_slurm_cpu
+        launcher: slurm_cpu
         wandb_suffix: sft_data_prep
 
       sft_training:
@@ -41,5 +41,5 @@ pipeline:
           checkpoint:
             path: outputs/sft/checkpoint
             type: dir
-        launcher: g2_slurm_train_2x
+        launcher: slurm_train_2x
         wandb_suffix: sft_training

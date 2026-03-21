@@ -67,6 +67,6 @@ pipeline:
           sampling_params_grounded_summary.temperature: 0.2
           sampling_params_grounded_summary.top_p: 0.9
           sampling_params_grounded_summary.seed: 777
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: grounded_summary
 

@@ -41,7 +41,7 @@ pipeline:
           # Risks and benefits produces complex nested JSON, needs more output tokens
           sampling_params_risks_and_benefits.max_tokens: 8192
           sampling_params_risks_and_benefits.temperature: 0
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: classify_risks_and_benefits
 
 

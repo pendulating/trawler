@@ -58,7 +58,7 @@ pipeline:
           model.engine_kwargs.max_num_seqs: 8
           model.engine_kwargs.enable_prefix_caching: false
           model.batch_size: 16
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: classify
 
       # ============================================================
@@ -83,7 +83,7 @@ pipeline:
           model.engine_kwargs.max_num_seqs: 4
           model.batch_size: 4
           sampling_params_decompose_nbl.max_tokens: 2048
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: decompose_nbl
 
       # ============================================================
@@ -110,7 +110,7 @@ pipeline:
           verify.windowing.enabled: null
           verify.windowing.window_size: 5
           verify.windowing.stride: 2
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: verify_nbl
 
       # ============================================================
@@ -136,7 +136,7 @@ pipeline:
           model.batch_size: 4
           sampling_params_eu_ai_act.max_tokens: 4096
           sampling_params_eu_ai_act.temperature: 0
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: eu_act
 
       # ============================================================
@@ -165,7 +165,7 @@ pipeline:
           sampling_params_risks_and_benefits.max_tokens: 4096
           sampling_params_risks_and_benefits.temperature: 0
           runtime.sample_rb_v1: true
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: risk_benefits
 
 # ================================================================

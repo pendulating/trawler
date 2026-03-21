@@ -22,7 +22,7 @@ pipeline:
           dataset: load_dataset.dataset
         outputs:
           dataset: outputs/vlm_mcq_inference/dataset.parquet
-        launcher: g2_slurm_gpu_1x
+        launcher: slurm_gpu_1x
       parse_mcq:
         stage: parse_mcq
         depends_on:

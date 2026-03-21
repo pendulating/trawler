@@ -29,7 +29,7 @@ pipeline:
           dataset: load_dataset_applicability.dataset
         outputs:
           dataset: outputs/llm_inference_applicability/dataset.parquet
-        launcher: g2_slurm_gpu_1x
+        launcher: slurm_gpu_1x
         overrides:
           prompt:
             task: applicability
@@ -76,7 +76,7 @@ pipeline:
           dataset: load_dataset_compliance.dataset
         outputs:
           dataset: outputs/llm_inference_compliance/dataset.parquet
-        launcher: g2_slurm_gpu_1x
+        launcher: slurm_gpu_1x
         overrides:
           prompt:
             task: compliance

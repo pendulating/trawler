@@ -56,7 +56,7 @@ pipeline:
           runtime.job_memory_gb: 24
           topic.embed.device: cuda
           topic.embed.batch_size: 128
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: topic
       
       synthesis:
@@ -78,7 +78,7 @@ pipeline:
           sampling_params_synthesis.max_tokens: 2048
           synthesis.max_articles_per_cluster: 100
           synthesis.min_topic_prob: 0.3
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: synthesis
 
 

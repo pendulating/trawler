@@ -47,5 +47,5 @@ pipeline:
           runtime.job_memory_gb: 256
           sampling_params.max_tokens: 2048
           consolidation: ${consolidation}
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: consolidation

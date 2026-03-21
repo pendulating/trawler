@@ -33,5 +33,5 @@ pipeline:
           checkpoint:
             path: outputs/grpo/checkpoint
             type: dir
-        launcher: g2_slurm_gpu_1x
+        launcher: slurm_gpu_1x
         wandb_suffix: grpo_smoke

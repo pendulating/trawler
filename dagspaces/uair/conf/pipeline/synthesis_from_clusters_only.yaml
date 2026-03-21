@@ -44,7 +44,7 @@ pipeline:
           model.engine_kwargs.gpu_memory_utilization: 0.8
           model.batch_size: 1
           sampling_params_synthesis.max_tokens: 2048
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: synthesis
 
 

@@ -55,7 +55,7 @@ pipeline:
           topic.embed.batch_size: 128
           topic.gpu.use_rapids: true
           topic.tfidf_stop_words: dagspaces/uair/conf/stopwords/comprehensive.yaml
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: events
       
       # Stage 2: Synthesis per event
@@ -87,7 +87,7 @@ pipeline:
           
           # Output tokens for synthesis
           sampling_params_synthesis.max_tokens: 2048
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: synthesis
 
 # Expected workflow results:

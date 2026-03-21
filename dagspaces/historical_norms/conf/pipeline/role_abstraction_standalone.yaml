@@ -56,5 +56,5 @@ pipeline:
           runtime.sample_n: ${runtime.sample_n}
           runtime.job_memory_gb: 256
           sampling_params.max_tokens: 1024
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: role_abstraction

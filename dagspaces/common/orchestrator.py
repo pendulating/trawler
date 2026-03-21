@@ -310,8 +310,16 @@ def _load_launcher_config(
         launcher_file = os.path.join(
             config_dir, "hydra", "launcher", f"{launcher_name}.yaml"
         )
+        # Fall back to common/conf/hydra/launcher/ if not found locally
         if not os.path.exists(launcher_file):
-            raise ValueError(f"Launcher config file not found: {launcher_file}")
+            common_conf = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "conf"
+            )
+            launcher_file = os.path.join(
+                common_conf, "hydra", "launcher", f"{launcher_name}.yaml"
+            )
+        if not os.path.exists(launcher_file):
+            raise ValueError(f"Launcher config file not found: {launcher_name}.yaml")
 
         launcher_cfg = OmegaConf.load(launcher_file)
         launcher_cfg = OmegaConf.merge(

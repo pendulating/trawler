@@ -28,12 +28,12 @@ pipeline:
           runtime.sample_n: ${runtime.sample_n}
           runtime.debug: ${runtime.debug}
           runtime.use_llm_classify: ${runtime.use_llm_classify}
-          # Model config overrides for 2-GPU setup (g2_slurm_pierson)
+          # Model config overrides for 2-GPU setup (slurm_gpu_2x)
           model.engine_kwargs.gpu_memory_utilization: 0.8
           model.engine_kwargs.max_model_len: 8192
           model.engine_kwargs.max_num_seqs: 4
           model.engine_kwargs.enable_prefix_caching: false
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: classify
       topic:
         stage: topic
@@ -47,5 +47,5 @@ pipeline:
           runtime.streaming_io: ${runtime.streaming_io}
           runtime.debug: ${runtime.debug}
           topic.embed.device: cpu
-        launcher: g2_slurm_gpu_1x
+        launcher: slurm_gpu_1x
         wandb_suffix: topic

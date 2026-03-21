@@ -53,5 +53,5 @@ pipeline:
           topic.gpu.use_rapids: true
           topic.tfidf_stop_words: dagspaces/uair/conf/stopwords/comprehensive.yaml
         
-        launcher: g2_slurm_pierson  # 2 GPU node (adjust to your launcher)
+        launcher: slurm_gpu_2x  # 2 GPU node (adjust to your launcher)
         wandb_suffix: events

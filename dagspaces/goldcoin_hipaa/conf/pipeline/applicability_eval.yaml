@@ -24,7 +24,7 @@ pipeline:
           dataset: load_dataset.dataset
         outputs:
           dataset: outputs/llm_inference/dataset.parquet
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
       parse_responses:
         stage: parse_responses
         depends_on:

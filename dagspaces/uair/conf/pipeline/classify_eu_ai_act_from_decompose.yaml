@@ -42,7 +42,7 @@ pipeline:
           sampling_params_eu_ai_act.max_tokens: 4096
 
 
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: classify_eu_ai_act
 
 

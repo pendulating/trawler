@@ -41,7 +41,7 @@ pipeline:
           dataset: outputs/fetch/chunks.parquet
         overrides:
           runtime.debug: ${runtime.debug}
-        launcher: g2_slurm_cpu
+        launcher: slurm_cpu
         wandb_suffix: fetch
 
       # ============================================================
@@ -61,5 +61,5 @@ pipeline:
           runtime.sample_n: ${runtime.sample_n}
           runtime.job_memory_gb: 256
           sampling_params.max_tokens: 4096
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: reasoning

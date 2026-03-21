@@ -1,18 +1,18 @@
-# 2-GPU SLURM launcher for TRL training stages (SFT/GRPO).
-# Lighter variant of g2_slurm_train_4x for smaller models / quick tests.
+# 4-GPU SLURM launcher for TRL training stages (SFT/GRPO).
+# Based on slurm_gpu_4x_16cpu but with training-specific settings.
 _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
 submitit_folder: ${hydra.sweep.dir}/.submitit/%j
 timeout_min: 4320
 nodes: 1
 tasks_per_node: 1
-cpus_per_task: 4
+cpus_per_task: 8
 mem_gb: ${runtime.job_memory_gb}
 partition: ${oc.env:SLURM_PARTITION,pierson}
 array_parallelism: 1
-gpus_per_node: 2
+gpus_per_node: 4
 name: ${experiment.name}
 additional_parameters:
-  gres: gpu:2
+  gres: gpu:4
   wckey: ""
 setup:
   - export HYDRA_FULL_ERROR=1
