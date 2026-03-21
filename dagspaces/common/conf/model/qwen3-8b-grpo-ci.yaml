@@ -1,14 +1,17 @@
 # @package _global_
 model:
-  model_source: /share/pierson/matt/zoo/models/Qwen3-8B
+  model_source: ${oc.env:MAR19_K20_GRPO_QWEN3_8B}/_merged_sft
   model_family: qwen3
-  lora_path: /share/pierson/matt/UAIR/multirun/2026-03-17/12-37-26/sft_only/outputs/sft/checkpoint
+  lora_path: ${oc.env:MAR19_K20_GRPO_QWEN3_8B}
   chat_template_kwargs:
     enable_thinking: false
   engine_kwargs:
     max_model_len: 8192
     max_num_seqs: 16
     tensor_parallel_size: 1
+    trust_remote_code: true
     enforce_eager: true
     enable_lora: true
     max_lora_rank: 64
+  batch_size: 0
+  concurrency: 1

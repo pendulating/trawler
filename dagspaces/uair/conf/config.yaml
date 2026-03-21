@@ -116,6 +116,8 @@ wandb:
 
 
 hydra:
+  searchpath:
+    - pkg://dagspaces.common.conf
   job:
     name: ${experiment.name}
   run:
