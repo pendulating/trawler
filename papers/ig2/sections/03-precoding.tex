@@ -1,0 +1,138 @@
+% Header reference level
+\clearpairofpagestyles
+\chead{\headmark}
+\automark[subsection]{subsection}
+\ifoot{\ifootertext}
+\ofoot{\ofootertext}
+\cfoot{\thepage}
+
+\section{Pre-coding Steps}
+\label{sec:PrecodingSteps}
+
+Before discussing the coding of institutional statements in detail, in this section we lay out ``pre-coding'' steps that relate to familiarization with the institutional setting and document preparation, commencing with general pre-processing, followed by considerations specific to distinctive levels of expressiveness.
+
+\subsection{General Steps}
+
+
+\begin{enumerate}
+    \item \underline{Familiarization with institutional setting:} Prior to embarking on any coding, the institutional analyst should carefully review the institution to be coded. A thorough pre-coding review (e.g., reading) of the institution to be coded is necessary for gaining a high-level understanding of institutional actors, actions, and institutional statement relationships that can be leveraged in the encoding process.
+    
+    \item \underline{Selection of coding platform:} One of the first steps the institutional analyst should engage in as she gains familiarity with the institutional setting is identifying the coding platform in which institutional data will be stored. The selection of a coding platform will be informed by the analyst’s expectations regarding at which level of expressiveness institutional statements will be encoded, and related assessment of institutional complexity, as certain platforms are better equipped to capture institutional statement complexity. The selection of a coding platform will also be informed by the analyst’s anticipated usage of institutional data; for example, whether stored data will later be engaged in computational applications. Platforms store data in forms that are more or less computer readable. 
+    
+    \item \underline{Initial organization of institutional information:} Once the institutional analyst reviews the institution to be coded as part of step 1, she can start to organize its contents. Though variable across jurisdictional setting, policy content is typically organized according to (i) a preamble, that describes the motivation for the policy; (ii) key definitions, that provide descriptions for actors (e.g., \begin{exi}```Secretary' means the Secretary of Agriculture''\end{exi}) and other terms (e.g., \begin{exi}```Prohibited substances' are substances that have been banned by the Dept.~of Agriculture for use in organic food production''\end{exi}) and abbreviations (e.g., \begin{exi}```NOSB' means National Organic Standards Board''\end{exi}) that aid in the effective interpretation of policy content; and (ii) Policy instructions organized by topic according to section and subsection headers. 
+
+    All three types of content (preambles, definitions, and policy instructions) should be coded. Preambles are likely to be comprised of self-referential statements that can convey the purpose of, or contextualize, the institution under examination more generally as well as regulative and/or constitutive statements.  In most cases, definitions are constitutive, and can be useful for encoding institutional statements encountered in a policy document; e.g., when some statement clause references something that is defined in the definitions section of the policy document. This is computationally useful [in the coding process] because it allows the computer to reference particular definitions when certain terms inline. It also allows the computer to link statements that share common definitional information in the analysis process.
+    
+    The critical aspect of this coding step is to ensure that the institutional analyst identifies all relevant, codeable information -- i.e., all information that is comprised of codeable institutional statements. 
+    
+    \item \underline{Verification and pre-processing of institutional statements:} Following the identification of candidate statements in step 3, the analyst should engage in verification and pre-processing of institutional statements to enable their syntactic decomposition in step 5. Verification in this case means ascertaining that candidate statements accord with defining syntactic and semantic features of regulative and constitutive statements. Principally, this means verifying that statements presumed to be regulative in kind at least contain an Attribute, Aim, and Context, and that statements presumed constitutive in kind at least contain a Constituted Entity, Constitutive Function, and Context component. Institutional statements often do not align with sentences encountered in formal institutions, as a result of writing style (e.g., compound sentences) and punctuation (e.g., bulleted lists). Examples of excerpts of formal institutions that do and do not accord with the definition of regulative and constitutive statements are provided below. Importantly, text that does not classify as institutional statements should be retained and annotated as domain specific background. This information can be useful for institutional interpretation and implication, but has oftentimes informational character, without parameterizing or regulating function per se.
+
+    \underline{Institutional Statements:}
+    
+    \begin{exa}Organic farming is hereby established as a practice regulated under the Department of Agriculture.\end{exa}
+    
+    \begin{exa}The Department of Agriculture shall promulgate regulations governing the practice of organic farming.\end{exa}
+
+Pre-processing in this step also means organizing the content of institutional statements to both remove extraneous content from statements (i.e., punctuation that accompanies statements often reflecting institutional style or organization; for example, roman numerals, bullet points) as well as to begin to arrange statement content to offer additional clarity about how statements are to be coded in step 5. Provided below is text pre-processed to remove extraneous punctuation. 
+
+\fcolorbox{black}{\boxbgcolor}{\begin{minipage}{15.5cm}
+
+\underline{Unprocessed Excerpt}
+
+\begin{exa}``(a) The producer of an organic livestock operation must establish and maintain year-round livestock living conditions which accommodate the health and natural behavior of animals, including:
+
+(1) Year-round access for all animals to the outdoors, shade, shelter, exercise areas, fresh air, clean water for drinking, and direct sunlight, suitable to the species, its stage of life, the climate, and the environment: Except, that, animals may be temporarily denied access to the outdoors in accordance with §§ 205.239(b) and (c). Yards, feeding pads, and feedlots may be used to provide ruminants with access to the outdoors during the non-grazing season and supplemental feeding during the grazing season \dots''\end{exa}
+
+\vspace{0.3cm}
+
+\underline{Pre-processed Text for Institutional Statement Delineation and Punctuation Removal}
+
+\begin{exa}The producer of an organic livestock operation must establish and maintain year-round livestock living conditions which accommodate the health and natural behavior of animals, including: Year-round access for all animals to the outdoors, shade, shelter, exercise areas, fresh air, clean water for drinking, and direct sunlight, suitable to the species, its stage of life, the climate, and the environment. 
+Except, that, animals may be temporarily denied access to the outdoors in accordance with §§ 205.239(b) and (c). 
+Yards, feeding pads, and feedlots may be used to provide ruminants with access to the outdoors during the non-grazing season and supplemental feeding during the grazing season.\end{exa}
+
+\end{minipage}}
+
+\item \underline{Decomposition of institutional statements:} Following the verification and preprocessing of institutional statements, the analyst should commence the syntax-based encoding process according to a selected level of expressiveness.
+\end{enumerate}
+
+Pre-processing is an optional step in the encoding process but can significantly reduce the time and cognitive load associated with subsequent decomposition. Further, the analyst can choose degrees of pre-processing. More extensive pre-processing is particularly useful for encoding at higher levels of expressiveness. Below are pre-processing guidelines that are useful for encoding at any level of expressiveness, as well as guidelines that are level specific. The level specific guidelines build upon each other, rather than being exclusive, meaning that guidelines applicable for IG Core are relevant for IG Extended and IG Logico, and IG Extended guidelines are applicable for IG Logico. The specific steps outlined here pertain to a manual process. Where tool support, e.g., in the form of an automated parser, is employed, the steps may deviate (specifically for the aspects that are automated).
+
+Generally, pre-processing, particularly of a more extensive kind, will be easier for analysts with greater familiarity with the IG, as they will likely be able to detect statement structure, components, and relations without engaging in even a preliminary decomposition of statements. Some degree of formal decomposition might be required of analysts less familiar with the IG to be able to discern these.
+
+\begin{ptit}General pre-processing guidelines:\end{ptit}
+
+\begin{itemize}
+    \item Data cleaning: dealing with extraneous punctuation, fixing typos
+    \item Delineation of text into institutional statements
+    \item Delineation of nested statements (e.g., Or else statements) 
+    \item Preliminary classification of institutional statements as regulative, constitutive, regulative or-else, constitutive or-else, or combinations thereof (see \cref{subsec:StatementTypesHeuristics} and  \cref{subsec:ConstitutiveRegulativeHybrids})
+    \item Preliminary organization of statements by identifiers capturing the institutional structure/ordering of institutional statements in the document. These identifiers can uniquely identify institutional statements, and statement linkages (i.e., nested statements), as well as policy sections or parts that can facilitate understanding of statement context and cross-statement or policy references.
+\end{itemize}
+
+%\begin{ptit}
+\subsection{Pre-processing Guidelines for IG Core} %:\end{ptit}
+
+\begin{itemize}
+    \item To accommodate encoding of institutional statements at the core level, preliminary decomposition of institutional statements to account for multiple values within individual syntactic fields should be entertained during the preprocessing of institutional documents. Institutional statements often contain multiple Attributes, Aims, and/or Objects. For example: \begin{exa}``The producer of an organic livestock operation must establish and maintain year-round livestock living conditions which accommodate the health and natural behavior of animals.''\end{exa} This statement contains multiple Aims, \begin{emp}``establish''\end{emp} and \begin{emp}``maintain.''\end{emp} Neither of these Aims is associated with unique values in other syntactic fields, and therefore, they can both be captured within a single institutional statement. However, downstream coding is facilitated by capturing multiple values individually within separate statements. With the recommended decomposition, the statement above is reflected as two:\footnote{The decomposition of \begin{emp}component-level combinations\end{emp}, as identified here, is further discussed in \cref{subsec:RegulativeStatementCoding}.} \begin{exa}``The producer of an organic livestock operation must establish year-round livestock living conditions which accommodate the health and natural behavior of animals.''\end{exa} and \begin{exa}``The producer of an organic livestock operation must maintain year-round livestock living conditions which accommodate the health and natural behavior of animals.''\end{exa}
+
+    \item In preprocessing institutional statements for coding at the IG Core level, the analyst may consider reformulating statements into active form (where statements are originally captured in passive form while being careful to retain statement meaning from an institutional perspective). Note that conversion of statements from passive to active form typically requires some implication of values according with different syntactic fields. For example, the passive statement \begin{emp}``Notifications of compliance must be sent to farmers within 30 days of facility inspections''\end{emp} converts to \begin{emp}``[Certifier] must send farmers notifications of compliance within 30 days of facility inspection,''\end{emp} prompting the implication of \begin{emp}``Certifier''\end{emp} as the relevant Attribute, or actor in charge of performing action. This implication requires understanding of institutional context obtained through step 1, as well potentially of the identification of a convention for notating implied information, such as for example, the use of brackets ([ ]) in the example included here.
+
+    \item Where actions or actors are implied, those are inferred from the context and additionally specified as part of the coding in terms of the institutional statement structure. While found across a wide range of statements, this is commonly necessary in the context of statement combinations (combination of two actions performed by the same actor). The same applies to implied logical relationships (e.g., AND, OR, XOR).
+
+    \item When facing complex sentence structures, statements should be thought of in terms of sequentially applied actions. For example, if statements report outcomes of actions without making reference to such actions, the coder should reconstruct the action sequence leading to such outcome in terms of institutional statements (see \cref{subsec:Syntax}).
+
+    \item At this stage, the analyst should flag additional semantic information that she wishes to capture in the syntactic decomposition of statements and associated label.
+    
+\end{itemize}
+
+%\begin{ptit}
+\subsection{Pre-processing Guidelines for IG Extended} %:\end{ptit}
+
+Additional pre-processing of institutional statements to accommodate their downstream coding at the IG Extended level involves some preliminary characterization of institutional statement linkages, particularly to capture action sequences. The coding in IG Extended affords richer decomposition of institutional statements into action sequences. Composite actions are often represented as exemplified in the following: \begin{emp}``When an inspection of an accredited certifying agent by the Program Manager reveals any noncompliance with the Act or regulations in this part, a written notification of noncompliance shall be sent to the certifying agent.''\end{emp}, where \begin{emp}``When an inspection of an accredited certifying agent by the Program Manager reveals any noncompliance with the Act or regulations in this part''\end{emp} represents a conditional clause that does not overtly reflect an institutional statement due to the expression of actions in terms of nouns (conceptual reification). From a semantic perspective, this clause captures two linked action statements, namely the fact that a \begin{emp}``Program Manager inspects accredited certifying agents''\end{emp} and that the \begin{emp}``Program Manager reveals non-compliance in this process''\end{emp}. Retaining the essential institutional semantics, the original statement can thus be rewritten as (with inference of implied components) \begin{emp}``When Program Manager inspects accredited certifying agents and [the Program Manager] reveals non-compliance in this process, the Program Manager shall send a written notification of noncompliance to the certifying agent.''\end{emp} While possible to identify as part of the coding process, a specific consideration of IG Extended is to identify such action sequences, and potentially offload their reconstruction to the pre-processing process, the decision on which is subject to the analytical objective, nature of the coded policy, as well as coder background, used coding platform, and opportunities for automation of the reconstruction.
+
+%\begin{ptit}
+\subsection{Pre-processing Guidelines for IG Logico} %:\end{ptit}
+
+Additional pre-processing of institutional statements to accommodate their downstream coding at the IG Logico level involves some more extensive, albeit still preliminary, capturing of inter-statement relationships and embedded actions within institutional statements that the analyst may want to fully reconstruct in terms of institutional statements during the encoding process. Inter-statement relationships are often indicated with referential clauses that embed within institutional statements. In policy documents, these references are often to statement collections, the coded document at large, or third-party documents. The example statements below include types of referential clauses that embed within statements that the institutional analyst may wish to capture during the pre-processing phase. Embedded actions can generally be thought of as actions ancillary to that represented in the focal action of an institutional statement (reflected in the Aim or Constitutive Function for regulative and constitutive statements, respectively). Embedded actions, while referenced, are incompletely described. However, reconstruction of these embedded actions into complete institutional statements can afford a more complete depiction and understanding of the institutional domain being evaluated. The particular reconstruction the analyst pursues will depend on her analytical objectives, but also the specific types of institutional functions [constitutive (see \cref{subsec:confunc}) or regulative (see \cref{subsec:regfunc})] she wants to capture within explicit and reconstructed statements. In the pre-processing phase, the analyst might consider constructing a dictionary of terms they observe through preliminary review of institutional statements that signal different institutional functions. This prompts consideration of how different types of observed actions might link to different institutional functions of interest to the analyst. The example statements below include embedded actions that can be fully reconstructed during the encoding process. 
+
+\sp
+
+\fcolorbox{black}{\boxbgcolor}{\begin{minipage}{15.5cm}
+
+\underline{Example Statements with Referential Clauses}
+
+\begin{exa}Any operation that: (1) Knowingly sells or labels a product as organic, except in accordance with the Act, shall be subject to a civil penalty of not more than 3.91(b)(1)(xxxvii) of this title per violation.\end{exa}
+
+\begin{exa}A production or handling operation that sells agricultural products as ``organic'' but whose gross agricultural income from organic sales totals \$5,000 or less annually is exempt from certification under subpart E of this part.\end{exa}
+
+\begin{exa}Any agricultural product that is sold, labeled, or represented as ``100 percent organic,'' ``organic,'' or ``made with organic (specified ingredients or food group(s))'' must be: (a) Produced in accordance with the requirements specified in §205.101 or §§205.202 through 205.207 or §§205.236 through 205.240 and all other applicable requirements of part 205.\end{exa}
+
+\vspace{0.3cm}
+
+\underline{Example Statements with Embedded Actions}
+
+\begin{exa}A handler of organic products may use information provided by the certified operation to determine percentage of organic ingredients.\end{exa}
+
+$\rightarrow$ Embedded action: information provided by the certified operation (i.e., provision of information by certified operation)
+
+\begin{exa}A certifying agent must provide an applicant with a copy of the on-site inspection report, as approved by the certifying agent, for any on-site inspection performed.\end{exa}
+
+$\rightarrow$ Embedded action: approved by the certifying agent (i.e., approval of report by certifying agent)
+
+\begin{exa}A certifying agent whose accreditation is suspended by the Secretary under this section may at any time submit a request for reinstatement of its accreditation.\end{exa}
+
+$\rightarrow$ Embedded action: accreditation is suspended by the Secretary (i.e., accreditation suspension by Secretary)
+
+\begin{exa}The Program Manager may initiate suspension proceedings against a certified operation, when a certifying agent fails to take appropriate action to enforce the Act.\end{exa}
+
+$\rightarrow$ Embedded action: certifying agent fails to take appropriate action to enforce the Act (i.e., failure to act by certifying agent). In this case, the failure to act is also signalling a violation, or non-compliance of some kind, which could be marked as an institutional function of interest and even used in downstream coding toward the reconstruction of both direct statements and their logical inverses. 
+
+\end{minipage}}
+
+\sp
+
+Concluding this overview on activities relevant for the design and planning of the coding exercise, the following section turns to the coding of institutional statements. 
+
+\newpage
+

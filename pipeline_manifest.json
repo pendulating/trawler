@@ -1,34 +1,21 @@
 {
   "output_root": "/share/pierson/matt/UAIR",
   "nodes": {
-    "classify": {
-      "stage": "classify",
+    "grounded_summary": {
+      "stage": "grounded_summary",
       "inputs": {
-        "dataset": "/share/pierson/matt/UAIR/data/global_subset/all_articles.parquet"
+        "classification": "/share/pierson/matt/UAIR/outputs/for_nov10workshop_global_results/classify_eu_ai_act/classify_eu_ai_act_results.parquet",
+        "decompose": "/share/pierson/matt/UAIR/outputs/for_nov10workshop_global_results/decompose_nbl/tuples.parquet",
+        "verification": "/share/pierson/matt/UAIR/outputs/for_nov10workshop_global_results/verify_nbl/verify_nbl_results.parquet"
       },
       "outputs": {
-        "all": "/share/pierson/matt/UAIR/outputs/classify/classify_all.parquet",
-        "relevant": "/share/pierson/matt/UAIR/outputs/classify/classify_relevant.parquet"
+        "summaries": "/share/pierson/matt/UAIR/outputs/grounded_summary/grounded_summary.parquet"
       },
       "metadata": {
-        "rows": 831,
+        "rows": 32,
         "streaming": false
       },
-      "duration_s": 216.73799800872803
-    },
-    "topic": {
-      "stage": "topic",
-      "inputs": {
-        "dataset": "/share/pierson/matt/UAIR/outputs/classify/classify_relevant.parquet"
-      },
-      "outputs": {
-        "docs": "/share/pierson/matt/UAIR/outputs/topic/docs_topics.parquet"
-      },
-      "metadata": {
-        "rows": 25,
-        "streaming": false
-      },
-      "duration_s": 24.35644245147705
+      "duration_s": 823.2777998447418
     }
   }
 }

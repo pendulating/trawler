@@ -1,0 +1,783 @@
+% $ biblatex auxiliary file $
+% $ biblatex bbl format version 3.2 $
+% Do not modify the above lines!
+%
+% This is an auxiliary file used by the 'biblatex' package.
+% This file may safely be deleted. It will be recreated by
+% biber as required.
+%
+\begingroup
+\makeatletter
+\@ifundefined{ver@biblatex.sty}
+  {\@latex@error
+     {Missing 'biblatex' package}
+     {The bibliography requires the 'biblatex' package.}
+      \aftergroup\endinput}
+  {}
+\endgroup
+
+
+\refsection{0}
+  \datalist[entry]{apa/apasortcite//global/global}
+    \entry{Brady2018InstitutionalGuidelines}{report}{}
+      \name{author}{12}{}{%
+        {{hash=857c41a2a973b774ec04572b316f9eba}{%
+           family={Brady},
+           familyi={B\bibinitperiod},
+           given={Ute},
+           giveni={U\bibinitperiod}}}%
+        {{hash=b779ac8e942e541e7065f274ebca6829}{%
+           family={Basurto},
+           familyi={B\bibinitperiod},
+           given={Xavier},
+           giveni={X\bibinitperiod}}}%
+        {{hash=4b87fb2993ba479f0b2d0b065ecfd0a8}{%
+           family={Bennett},
+           familyi={B\bibinitperiod},
+           given={Abigail},
+           giveni={A\bibinitperiod}}}%
+        {{hash=286f5a5a7a5c72cc25b2696f29355c3c}{%
+           family={Carter},
+           familyi={C\bibinitperiod},
+           given={David\bibnamedelima P.},
+           giveni={D\bibinitperiod\bibinitdelim P\bibinitperiod}}}%
+        {{hash=b24fb0fdca905b1be4a80fb739bd7821}{%
+           family={Hanlon},
+           familyi={H\bibinitperiod},
+           given={Jeffrey},
+           giveni={J\bibinitperiod}}}%
+        {{hash=dcbc2bf0115a6c90ac65e52e6ccb531f}{%
+           family={Heikkila},
+           familyi={H\bibinitperiod},
+           given={Tanya},
+           giveni={T\bibinitperiod}}}%
+        {{hash=0c35d9ad416ec2a90c456dd4cb58fd96}{%
+           family={Lien},
+           familyi={L\bibinitperiod},
+           given={Aaron},
+           giveni={A\bibinitperiod}}}%
+        {{hash=def2c2fe16f3650022faa36eb8110b80}{%
+           family={Chonaiew},
+           familyi={C\bibinitperiod},
+           given={Sara\bibnamedelima M.},
+           giveni={S\bibinitperiod\bibinitdelim M\bibinitperiod}}}%
+        {{hash=d9f4ced0549c56762a6ce6733fcae1be}{%
+           family={Olivier},
+           familyi={O\bibinitperiod},
+           given={Toms},
+           giveni={T\bibinitperiod}}}%
+        {{hash=adece8978f0d4c2bd9c62b1669af0257}{%
+           family={Schlager},
+           familyi={S\bibinitperiod},
+           given={Edella},
+           giveni={E\bibinitperiod}}}%
+        {{hash=61b28bc104704cc381bf7f3fe8315d5f}{%
+           family={Siddiki},
+           familyi={S\bibinitperiod},
+           given={Saba},
+           giveni={S\bibinitperiod}}}%
+        {{hash=a91169d02915ba211f2308f771fd3cb4}{%
+           family={Weible},
+           familyi={W\bibinitperiod},
+           given={Christopher},
+           giveni={C\bibinitperiod}}}%
+      }
+      \list{institution}{2}{%
+        {Center for Behavior, Institutions}%
+        {the Environment}%
+      }
+      \strng{namehash}{4287a9cce45d0fe4f5e5f95f2abb36be}
+      \strng{fullhash}{e6e5e2c912418115c2516c51347eb8cd}
+      \strng{bibnamehash}{e6e5e2c912418115c2516c51347eb8cd}
+      \strng{authorbibnamehash}{e6e5e2c912418115c2516c51347eb8cd}
+      \strng{authornamehash}{4287a9cce45d0fe4f5e5f95f2abb36be}
+      \strng{authorfullhash}{e6e5e2c912418115c2516c51347eb8cd}
+      \field{sortinit}{B}
+      \field{sortinithash}{d7095fff47cda75ca2589920aae98399}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{series}{CBIE Working Paper Series}
+      \field{title}{{Institutional Analysis of Rules-In-Form Coding Guidelines}}
+      \field{type}{techreport}
+      \field{year}{2018}
+      \field{pages}{25}
+      \range{pages}{1}
+      \verb{urlraw}
+      \verb https://complexity.asu.edu/sites/default/files/papers/cbie_wp_2018-006_0.pdf
+      \endverb
+      \verb{url}
+      \verb https://complexity.asu.edu/sites/default/files/papers/cbie_wp_2018-006_0.pdf
+      \endverb
+    \endentry
+    \entry{Crawford1995}{article}{}
+      \name{author}{2}{}{%
+        {{hash=529e8b38f297d5a73fd034cf41d5fb22}{%
+           family={Crawford},
+           familyi={C\bibinitperiod},
+           given={Sue\bibnamedelimb E\bibnamedelima S},
+           giveni={S\bibinitperiod\bibinitdelim E\bibinitperiod\bibinitdelim S\bibinitperiod}}}%
+        {{hash=83bfc750a74aff11efa4bbcd04d4af05}{%
+           family={Ostrom},
+           familyi={O\bibinitperiod},
+           given={Elinor},
+           giveni={E\bibinitperiod}}}%
+      }
+      \strng{namehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{fullhash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{bibnamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authorbibnamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authornamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authorfullhash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \field{extraname}{1}
+      \field{sortinit}{C}
+      \field{sortinithash}{4d103a86280481745c9c897c925753c0}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{issn}{0003-0554}
+      \field{journaltitle}{American Political Science Review}
+      \field{month}{9}
+      \field{number}{3}
+      \field{title}{{A Grammar of Institutions}}
+      \field{volume}{89}
+      \field{year}{1995}
+      \field{pages}{582\bibrangedash 600}
+      \range{pages}{19}
+      \verb{doi}
+      \verb 10.2307/2082975
+      \endverb
+    \endentry
+    \entry{Crawford2005}{inbook}{}
+      \name{author}{2}{}{%
+        {{hash=529e8b38f297d5a73fd034cf41d5fb22}{%
+           family={Crawford},
+           familyi={C\bibinitperiod},
+           given={Sue\bibnamedelimb E\bibnamedelima S},
+           giveni={S\bibinitperiod\bibinitdelim E\bibinitperiod\bibinitdelim S\bibinitperiod}}}%
+        {{hash=83bfc750a74aff11efa4bbcd04d4af05}{%
+           family={Ostrom},
+           familyi={O\bibinitperiod},
+           given={Elinor},
+           giveni={E\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Princeton (NJ)}%
+      }
+      \list{publisher}{1}{%
+        {Princeton University Press}%
+      }
+      \strng{namehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{fullhash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{bibnamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authorbibnamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authornamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authorfullhash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \field{extraname}{2}
+      \field{sortinit}{C}
+      \field{sortinithash}{4d103a86280481745c9c897c925753c0}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{Understanding Institutional Diversity}
+      \field{chapter}{5}
+      \field{title}{{A Grammar of Institutions}}
+      \field{year}{2005}
+      \field{pages}{137\bibrangedash 174}
+      \range{pages}{38}
+    \endentry
+    \entry{Frantz2013}{article}{}
+      \name{author}{4}{}{%
+        {{hash=096a239cef21533e68f4f0bb1342606b}{%
+           family={Frantz},
+           familyi={F\bibinitperiod},
+           given={Christopher},
+           giveni={C\bibinitperiod}}}%
+        {{hash=cf5e6d0a63d8e922c76ec0aad89953f2}{%
+           family={Purvis},
+           familyi={P\bibinitperiod},
+           given={Martin\bibnamedelima K.},
+           giveni={M\bibinitperiod\bibinitdelim K\bibinitperiod}}}%
+        {{hash=861deede5c548969fe2bc2c88cff7596}{%
+           family={Nowostawski},
+           familyi={N\bibinitperiod},
+           given={Mariusz},
+           giveni={M\bibinitperiod}}}%
+        {{hash=027eaaede40b068ae009b49a7191cec4}{%
+           family={Savarimuthu},
+           familyi={S\bibinitperiod},
+           given={Bastin\bibnamedelimb Tony\bibnamedelima Roy},
+           giveni={B\bibinitperiod\bibinitdelim T\bibinitperiod\bibinitdelim R\bibinitperiod}}}%
+      }
+      \strng{namehash}{5c3dbe87d30ef7f3794efc80ed39041f}
+      \strng{fullhash}{ec91ac6c2c82251d4d11298071c07745}
+      \strng{bibnamehash}{ec91ac6c2c82251d4d11298071c07745}
+      \strng{authorbibnamehash}{ec91ac6c2c82251d4d11298071c07745}
+      \strng{authornamehash}{5c3dbe87d30ef7f3794efc80ed39041f}
+      \strng{authorfullhash}{ec91ac6c2c82251d4d11298071c07745}
+      \field{sortinit}{F}
+      \field{sortinithash}{2638baaa20439f1b5a8f80c6c08a13b4}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{isbn}{9783642449260}
+      \field{issn}{03029743}
+      \field{journaltitle}{Lecture Notes in Computer Science}
+      \field{title}{{nADICO: A nested grammar of institutions}}
+      \field{volume}{8291 LNAI}
+      \field{year}{2013}
+      \field{pages}{429\bibrangedash 436}
+      \range{pages}{8}
+      \verb{doi}
+      \verb 10.1007/978-3-642-44927-7_31
+      \endverb
+      \keyw{Grammar of Institutions,Institutional Statements,Institutions,Multi-Agent Systems,Nested ADICO,Norms,Policy Modelling,Rules,nADICO}
+    \endentry
+    \entry{Frantz2021}{article}{}
+      \name{author}{2}{}{%
+        {{hash=66e5e2f324e072df315ecd2414fef7f7}{%
+           family={Frantz},
+           familyi={F\bibinitperiod},
+           given={Christopher\bibnamedelima K.},
+           giveni={C\bibinitperiod\bibinitdelim K\bibinitperiod}}}%
+        {{hash=61b28bc104704cc381bf7f3fe8315d5f}{%
+           family={Siddiki},
+           familyi={S\bibinitperiod},
+           given={Saba},
+           giveni={S\bibinitperiod}}}%
+      }
+      \strng{namehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{fullhash}{3661819aa54460711680aa5cbb15a333}
+      \strng{bibnamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authorbibnamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authornamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authorfullhash}{3661819aa54460711680aa5cbb15a333}
+      \field{extraname}{1}
+      \field{sortinit}{F}
+      \field{sortinithash}{2638baaa20439f1b5a8f80c6c08a13b4}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{issn}{14679299}
+      \field{journaltitle}{Public Administration}
+      \field{title}{{Institutional Grammar 2.0: A specification for encoding and analyzing institutional design}}
+      \field{year}{2021}
+      \verb{doi}
+      \verb 10.1111/padm.12719
+      \endverb
+      \verb{urlraw}
+      \verb 10.1111/padm.12719
+      \endverb
+      \verb{url}
+      \verb 10.1111/padm.12719
+      \endverb
+    \endentry
+    \entry{Frantz2022InstitutionalGrammar}{book}{}
+      \name{author}{2}{}{%
+        {{hash=66e5e2f324e072df315ecd2414fef7f7}{%
+           family={Frantz},
+           familyi={F\bibinitperiod},
+           given={Christopher\bibnamedelima K},
+           giveni={C\bibinitperiod\bibinitdelim K\bibinitperiod}}}%
+        {{hash=61b28bc104704cc381bf7f3fe8315d5f}{%
+           family={Siddiki},
+           familyi={S\bibinitperiod},
+           given={Saba},
+           giveni={S\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Cham}%
+      }
+      \list{publisher}{1}{%
+        {Palgrave Macmillan}%
+      }
+      \strng{namehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{fullhash}{3661819aa54460711680aa5cbb15a333}
+      \strng{bibnamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authorbibnamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authornamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authorfullhash}{3661819aa54460711680aa5cbb15a333}
+      \field{extraname}{2}
+      \field{sortinit}{F}
+      \field{sortinithash}{2638baaa20439f1b5a8f80c6c08a13b4}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{isbn}{978-3-030-86371-5}
+      \field{title}{{Institutional Grammar}}
+      \field{year}{2022}
+      \verb{doi}
+      \verb 10.1007/978-3-030-86372-2
+      \endverb
+    \endentry
+    \entry{Hohfeld1913SomeReasoning}{article}{}
+      \name{author}{1}{}{%
+        {{hash=08fe694e1a784fe451a2f1915ec8fecd}{%
+           family={Hohfeld},
+           familyi={H\bibinitperiod},
+           given={Wesley\bibnamedelima Newcomb},
+           giveni={W\bibinitperiod\bibinitdelim N\bibinitperiod}}}%
+      }
+      \strng{namehash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \strng{fullhash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \strng{bibnamehash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \strng{authorbibnamehash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \strng{authornamehash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \strng{authorfullhash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \field{sortinit}{H}
+      \field{sortinithash}{23a3aa7c24e56cfa16945d55545109b5}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{issn}{00440094}
+      \field{journaltitle}{The Yale Law Journal}
+      \field{number}{1}
+      \field{title}{{Some Fundamental Legal Conceptions as Applied in Judicial Reasoning}}
+      \field{volume}{23}
+      \field{year}{1913}
+      \verb{doi}
+      \verb 10.2307/785533
+      \endverb
+    \endentry
+    \entry{Siddiki2011}{article}{}
+      \name{author}{4}{}{%
+        {{hash=61b28bc104704cc381bf7f3fe8315d5f}{%
+           family={Siddiki},
+           familyi={S\bibinitperiod},
+           given={Saba},
+           giveni={S\bibinitperiod}}}%
+        {{hash=bc7427f3b49250ff56de16db193e861d}{%
+           family={Weible},
+           familyi={W\bibinitperiod},
+           given={Christopher\bibnamedelima M},
+           giveni={C\bibinitperiod\bibinitdelim M\bibinitperiod}}}%
+        {{hash=b779ac8e942e541e7065f274ebca6829}{%
+           family={Basurto},
+           familyi={B\bibinitperiod},
+           given={Xavier},
+           giveni={X\bibinitperiod}}}%
+        {{hash=b4e716ad19aedcb74668053a5cce3d82}{%
+           family={Calanni},
+           familyi={C\bibinitperiod},
+           given={John},
+           giveni={J\bibinitperiod}}}%
+      }
+      \strng{namehash}{1dff796647325ba3e55130f3a6f95715}
+      \strng{fullhash}{c22d9c2fe6516d5c57975f154b3b9f0f}
+      \strng{bibnamehash}{c22d9c2fe6516d5c57975f154b3b9f0f}
+      \strng{authorbibnamehash}{c22d9c2fe6516d5c57975f154b3b9f0f}
+      \strng{authornamehash}{1dff796647325ba3e55130f3a6f95715}
+      \strng{authorfullhash}{c22d9c2fe6516d5c57975f154b3b9f0f}
+      \field{sortinit}{S}
+      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{The Policy Studies Journal}
+      \field{number}{1}
+      \field{title}{{Dissecting Policy Designs: An Application of the Institutional Grammar Tool}}
+      \field{volume}{39}
+      \field{year}{2011}
+      \field{pages}{79\bibrangedash 103}
+      \range{pages}{25}
+      \verb{doi}
+      \verb 10.1111/j.1541-0072.2010.00397.x
+      \endverb
+    \endentry
+  \enddatalist
+  \datalist[entry]{apa/global//global/global}
+    \entry{Brady2018InstitutionalGuidelines}{report}{}
+      \name{author}{12}{}{%
+        {{hash=857c41a2a973b774ec04572b316f9eba}{%
+           family={Brady},
+           familyi={B\bibinitperiod},
+           given={Ute},
+           giveni={U\bibinitperiod}}}%
+        {{hash=b779ac8e942e541e7065f274ebca6829}{%
+           family={Basurto},
+           familyi={B\bibinitperiod},
+           given={Xavier},
+           giveni={X\bibinitperiod}}}%
+        {{hash=4b87fb2993ba479f0b2d0b065ecfd0a8}{%
+           family={Bennett},
+           familyi={B\bibinitperiod},
+           given={Abigail},
+           giveni={A\bibinitperiod}}}%
+        {{hash=286f5a5a7a5c72cc25b2696f29355c3c}{%
+           family={Carter},
+           familyi={C\bibinitperiod},
+           given={David\bibnamedelima P.},
+           giveni={D\bibinitperiod\bibinitdelim P\bibinitperiod}}}%
+        {{hash=b24fb0fdca905b1be4a80fb739bd7821}{%
+           family={Hanlon},
+           familyi={H\bibinitperiod},
+           given={Jeffrey},
+           giveni={J\bibinitperiod}}}%
+        {{hash=dcbc2bf0115a6c90ac65e52e6ccb531f}{%
+           family={Heikkila},
+           familyi={H\bibinitperiod},
+           given={Tanya},
+           giveni={T\bibinitperiod}}}%
+        {{hash=0c35d9ad416ec2a90c456dd4cb58fd96}{%
+           family={Lien},
+           familyi={L\bibinitperiod},
+           given={Aaron},
+           giveni={A\bibinitperiod}}}%
+        {{hash=def2c2fe16f3650022faa36eb8110b80}{%
+           family={Chonaiew},
+           familyi={C\bibinitperiod},
+           given={Sara\bibnamedelima M.},
+           giveni={S\bibinitperiod\bibinitdelim M\bibinitperiod}}}%
+        {{hash=d9f4ced0549c56762a6ce6733fcae1be}{%
+           family={Olivier},
+           familyi={O\bibinitperiod},
+           given={Toms},
+           giveni={T\bibinitperiod}}}%
+        {{hash=adece8978f0d4c2bd9c62b1669af0257}{%
+           family={Schlager},
+           familyi={S\bibinitperiod},
+           given={Edella},
+           giveni={E\bibinitperiod}}}%
+        {{hash=61b28bc104704cc381bf7f3fe8315d5f}{%
+           family={Siddiki},
+           familyi={S\bibinitperiod},
+           given={Saba},
+           giveni={S\bibinitperiod}}}%
+        {{hash=a91169d02915ba211f2308f771fd3cb4}{%
+           family={Weible},
+           familyi={W\bibinitperiod},
+           given={Christopher},
+           giveni={C\bibinitperiod}}}%
+      }
+      \list{institution}{2}{%
+        {Center for Behavior, Institutions}%
+        {the Environment}%
+      }
+      \strng{namehash}{4287a9cce45d0fe4f5e5f95f2abb36be}
+      \strng{fullhash}{e6e5e2c912418115c2516c51347eb8cd}
+      \strng{bibnamehash}{e6e5e2c912418115c2516c51347eb8cd}
+      \strng{authorbibnamehash}{e6e5e2c912418115c2516c51347eb8cd}
+      \strng{authornamehash}{4287a9cce45d0fe4f5e5f95f2abb36be}
+      \strng{authorfullhash}{e6e5e2c912418115c2516c51347eb8cd}
+      \field{sortinit}{B}
+      \field{sortinithash}{d7095fff47cda75ca2589920aae98399}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{series}{CBIE Working Paper Series}
+      \field{title}{{Institutional Analysis of Rules-In-Form Coding Guidelines}}
+      \field{type}{techreport}
+      \field{year}{2018}
+      \field{pages}{25}
+      \range{pages}{1}
+      \verb{urlraw}
+      \verb https://complexity.asu.edu/sites/default/files/papers/cbie_wp_2018-006_0.pdf
+      \endverb
+      \verb{url}
+      \verb https://complexity.asu.edu/sites/default/files/papers/cbie_wp_2018-006_0.pdf
+      \endverb
+    \endentry
+    \entry{Crawford1995}{article}{}
+      \name{author}{2}{}{%
+        {{hash=529e8b38f297d5a73fd034cf41d5fb22}{%
+           family={Crawford},
+           familyi={C\bibinitperiod},
+           given={Sue\bibnamedelimb E\bibnamedelima S},
+           giveni={S\bibinitperiod\bibinitdelim E\bibinitperiod\bibinitdelim S\bibinitperiod}}}%
+        {{hash=83bfc750a74aff11efa4bbcd04d4af05}{%
+           family={Ostrom},
+           familyi={O\bibinitperiod},
+           given={Elinor},
+           giveni={E\bibinitperiod}}}%
+      }
+      \strng{namehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{fullhash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{bibnamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authorbibnamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authornamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authorfullhash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \field{extraname}{1}
+      \field{sortinit}{C}
+      \field{sortinithash}{4d103a86280481745c9c897c925753c0}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{issn}{0003-0554}
+      \field{journaltitle}{American Political Science Review}
+      \field{month}{9}
+      \field{number}{3}
+      \field{title}{{A Grammar of Institutions}}
+      \field{volume}{89}
+      \field{year}{1995}
+      \field{pages}{582\bibrangedash 600}
+      \range{pages}{19}
+      \verb{doi}
+      \verb 10.2307/2082975
+      \endverb
+    \endentry
+    \entry{Crawford2005}{inbook}{}
+      \name{author}{2}{}{%
+        {{hash=529e8b38f297d5a73fd034cf41d5fb22}{%
+           family={Crawford},
+           familyi={C\bibinitperiod},
+           given={Sue\bibnamedelimb E\bibnamedelima S},
+           giveni={S\bibinitperiod\bibinitdelim E\bibinitperiod\bibinitdelim S\bibinitperiod}}}%
+        {{hash=83bfc750a74aff11efa4bbcd04d4af05}{%
+           family={Ostrom},
+           familyi={O\bibinitperiod},
+           given={Elinor},
+           giveni={E\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Princeton (NJ)}%
+      }
+      \list{publisher}{1}{%
+        {Princeton University Press}%
+      }
+      \strng{namehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{fullhash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{bibnamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authorbibnamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authornamehash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \strng{authorfullhash}{445533aa30b6dec2c1bc7037fc8438f8}
+      \field{extraname}{2}
+      \field{sortinit}{C}
+      \field{sortinithash}{4d103a86280481745c9c897c925753c0}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{Understanding Institutional Diversity}
+      \field{chapter}{5}
+      \field{title}{{A Grammar of Institutions}}
+      \field{year}{2005}
+      \field{pages}{137\bibrangedash 174}
+      \range{pages}{38}
+    \endentry
+    \entry{Frantz2013}{article}{}
+      \name{author}{4}{}{%
+        {{hash=096a239cef21533e68f4f0bb1342606b}{%
+           family={Frantz},
+           familyi={F\bibinitperiod},
+           given={Christopher},
+           giveni={C\bibinitperiod}}}%
+        {{hash=cf5e6d0a63d8e922c76ec0aad89953f2}{%
+           family={Purvis},
+           familyi={P\bibinitperiod},
+           given={Martin\bibnamedelima K.},
+           giveni={M\bibinitperiod\bibinitdelim K\bibinitperiod}}}%
+        {{hash=861deede5c548969fe2bc2c88cff7596}{%
+           family={Nowostawski},
+           familyi={N\bibinitperiod},
+           given={Mariusz},
+           giveni={M\bibinitperiod}}}%
+        {{hash=027eaaede40b068ae009b49a7191cec4}{%
+           family={Savarimuthu},
+           familyi={S\bibinitperiod},
+           given={Bastin\bibnamedelimb Tony\bibnamedelima Roy},
+           giveni={B\bibinitperiod\bibinitdelim T\bibinitperiod\bibinitdelim R\bibinitperiod}}}%
+      }
+      \strng{namehash}{5c3dbe87d30ef7f3794efc80ed39041f}
+      \strng{fullhash}{ec91ac6c2c82251d4d11298071c07745}
+      \strng{bibnamehash}{ec91ac6c2c82251d4d11298071c07745}
+      \strng{authorbibnamehash}{ec91ac6c2c82251d4d11298071c07745}
+      \strng{authornamehash}{5c3dbe87d30ef7f3794efc80ed39041f}
+      \strng{authorfullhash}{ec91ac6c2c82251d4d11298071c07745}
+      \field{sortinit}{F}
+      \field{sortinithash}{2638baaa20439f1b5a8f80c6c08a13b4}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{isbn}{9783642449260}
+      \field{issn}{03029743}
+      \field{journaltitle}{Lecture Notes in Computer Science}
+      \field{title}{{nADICO: A nested grammar of institutions}}
+      \field{volume}{8291 LNAI}
+      \field{year}{2013}
+      \field{pages}{429\bibrangedash 436}
+      \range{pages}{8}
+      \verb{doi}
+      \verb 10.1007/978-3-642-44927-7_31
+      \endverb
+      \keyw{Grammar of Institutions,Institutional Statements,Institutions,Multi-Agent Systems,Nested ADICO,Norms,Policy Modelling,Rules,nADICO}
+    \endentry
+    \entry{Frantz2021}{article}{}
+      \name{author}{2}{}{%
+        {{hash=66e5e2f324e072df315ecd2414fef7f7}{%
+           family={Frantz},
+           familyi={F\bibinitperiod},
+           given={Christopher\bibnamedelima K.},
+           giveni={C\bibinitperiod\bibinitdelim K\bibinitperiod}}}%
+        {{hash=61b28bc104704cc381bf7f3fe8315d5f}{%
+           family={Siddiki},
+           familyi={S\bibinitperiod},
+           given={Saba},
+           giveni={S\bibinitperiod}}}%
+      }
+      \strng{namehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{fullhash}{3661819aa54460711680aa5cbb15a333}
+      \strng{bibnamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authorbibnamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authornamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authorfullhash}{3661819aa54460711680aa5cbb15a333}
+      \field{extraname}{1}
+      \field{sortinit}{F}
+      \field{sortinithash}{2638baaa20439f1b5a8f80c6c08a13b4}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{issn}{14679299}
+      \field{journaltitle}{Public Administration}
+      \field{title}{{Institutional Grammar 2.0: A specification for encoding and analyzing institutional design}}
+      \field{year}{2021}
+      \verb{doi}
+      \verb 10.1111/padm.12719
+      \endverb
+      \verb{urlraw}
+      \verb 10.1111/padm.12719
+      \endverb
+      \verb{url}
+      \verb 10.1111/padm.12719
+      \endverb
+    \endentry
+    \entry{Frantz2022InstitutionalGrammar}{book}{}
+      \name{author}{2}{}{%
+        {{hash=66e5e2f324e072df315ecd2414fef7f7}{%
+           family={Frantz},
+           familyi={F\bibinitperiod},
+           given={Christopher\bibnamedelima K},
+           giveni={C\bibinitperiod\bibinitdelim K\bibinitperiod}}}%
+        {{hash=61b28bc104704cc381bf7f3fe8315d5f}{%
+           family={Siddiki},
+           familyi={S\bibinitperiod},
+           given={Saba},
+           giveni={S\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Cham}%
+      }
+      \list{publisher}{1}{%
+        {Palgrave Macmillan}%
+      }
+      \strng{namehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{fullhash}{3661819aa54460711680aa5cbb15a333}
+      \strng{bibnamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authorbibnamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authornamehash}{3661819aa54460711680aa5cbb15a333}
+      \strng{authorfullhash}{3661819aa54460711680aa5cbb15a333}
+      \field{extraname}{2}
+      \field{sortinit}{F}
+      \field{sortinithash}{2638baaa20439f1b5a8f80c6c08a13b4}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{isbn}{978-3-030-86371-5}
+      \field{title}{{Institutional Grammar}}
+      \field{year}{2022}
+      \verb{doi}
+      \verb 10.1007/978-3-030-86372-2
+      \endverb
+    \endentry
+    \entry{Hohfeld1913SomeReasoning}{article}{}
+      \name{author}{1}{}{%
+        {{hash=08fe694e1a784fe451a2f1915ec8fecd}{%
+           family={Hohfeld},
+           familyi={H\bibinitperiod},
+           given={Wesley\bibnamedelima Newcomb},
+           giveni={W\bibinitperiod\bibinitdelim N\bibinitperiod}}}%
+      }
+      \strng{namehash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \strng{fullhash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \strng{bibnamehash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \strng{authorbibnamehash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \strng{authornamehash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \strng{authorfullhash}{08fe694e1a784fe451a2f1915ec8fecd}
+      \field{sortinit}{H}
+      \field{sortinithash}{23a3aa7c24e56cfa16945d55545109b5}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{issn}{00440094}
+      \field{journaltitle}{The Yale Law Journal}
+      \field{number}{1}
+      \field{title}{{Some Fundamental Legal Conceptions as Applied in Judicial Reasoning}}
+      \field{volume}{23}
+      \field{year}{1913}
+      \verb{doi}
+      \verb 10.2307/785533
+      \endverb
+    \endentry
+    \entry{Siddiki2011}{article}{}
+      \name{author}{4}{}{%
+        {{hash=61b28bc104704cc381bf7f3fe8315d5f}{%
+           family={Siddiki},
+           familyi={S\bibinitperiod},
+           given={Saba},
+           giveni={S\bibinitperiod}}}%
+        {{hash=bc7427f3b49250ff56de16db193e861d}{%
+           family={Weible},
+           familyi={W\bibinitperiod},
+           given={Christopher\bibnamedelima M},
+           giveni={C\bibinitperiod\bibinitdelim M\bibinitperiod}}}%
+        {{hash=b779ac8e942e541e7065f274ebca6829}{%
+           family={Basurto},
+           familyi={B\bibinitperiod},
+           given={Xavier},
+           giveni={X\bibinitperiod}}}%
+        {{hash=b4e716ad19aedcb74668053a5cce3d82}{%
+           family={Calanni},
+           familyi={C\bibinitperiod},
+           given={John},
+           giveni={J\bibinitperiod}}}%
+      }
+      \strng{namehash}{1dff796647325ba3e55130f3a6f95715}
+      \strng{fullhash}{c22d9c2fe6516d5c57975f154b3b9f0f}
+      \strng{bibnamehash}{c22d9c2fe6516d5c57975f154b3b9f0f}
+      \strng{authorbibnamehash}{c22d9c2fe6516d5c57975f154b3b9f0f}
+      \strng{authornamehash}{1dff796647325ba3e55130f3a6f95715}
+      \strng{authorfullhash}{c22d9c2fe6516d5c57975f154b3b9f0f}
+      \field{sortinit}{S}
+      \field{sortinithash}{b164b07b29984b41daf1e85279fbc5ab}
+      \field{extradatescope}{labelyear}
+      \field{labeldatesource}{}
+      \true{uniqueprimaryauthor}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{The Policy Studies Journal}
+      \field{number}{1}
+      \field{title}{{Dissecting Policy Designs: An Application of the Institutional Grammar Tool}}
+      \field{volume}{39}
+      \field{year}{2011}
+      \field{pages}{79\bibrangedash 103}
+      \range{pages}{25}
+      \verb{doi}
+      \verb 10.1111/j.1541-0072.2010.00397.x
+      \endverb
+    \endentry
+  \enddatalist
+\endrefsection
+\endinput
+

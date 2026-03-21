@@ -1,0 +1,99 @@
+# @package _global_
+# Full GRPO training pipeline:
+#   norm_universe (embed raw norms) → reward_prep (judge grounding) → grpo_training
+#   sft_data_prep → sft_training ──────────────────────────────────→ grpo_training
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/grpo_training
+
+  sources:
+    structured_norms:
+      path: ${oc.env:STRUCTURED_NORMS_PATH}
+      type: parquet
+    ci_reasoning:
+      path: ${oc.env:CI_REASONING_PATH}
+      type: parquet
+    ci_extraction:
+      path: ${oc.env:CI_EXTRACTION_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      norm_universe:
+        stage: norm_universe
+        depends_on: []
+        inputs:
+          dataset: structured_norms
+        outputs:
+          dataset:
+            path: outputs/norm_universe/norm_universes.json
+            type: json
+          embeddings:
+            path: outputs/norm_universe/embeddings
+            type: dir
+        launcher: g2_slurm_gpu_1x
+        wandb_suffix: norm_universe
+
+      sft_data_prep:
+        stage: sft_data_prep
+        depends_on: []
+        inputs:
+          ci_reasoning: ci_reasoning
+          ci_extraction: ci_extraction
+        outputs:
+          dataset:
+            path: outputs/sft_data/sft_pairs.parquet
+            type: parquet
+        launcher: g2_slurm_cpu
+        wandb_suffix: sft_data_prep
+
+      sft_training:
+        stage: sft_training
+        depends_on:
+          - sft_data_prep
+        inputs:
+          dataset: sft_data_prep.dataset
+        outputs:
+          checkpoint:
+            path: outputs/sft/checkpoint
+            type: dir
+        launcher: g2_slurm_train_4x
+        wandb_suffix: sft_training
+
+      reward_prep:
+        stage: reward_prep
+        depends_on:
+          - norm_universe
+          - sft_data_prep
+        inputs:
+          dataset: sft_data_prep.dataset
+          norm_universes: norm_universe.dataset
+          embeddings: norm_universe.embeddings
+        outputs:
+          dataset:
+            path: outputs/reward_prep/reward_cache.parquet
+            type: parquet
+        launcher: g2_slurm_train_4x
+        wandb_suffix: reward_prep
+
+      grpo_training:
+        stage: grpo_training
+        depends_on:
+          - sft_training
+          - reward_prep
+          - norm_universe
+          - sft_data_prep
+        inputs:
+          sft_checkpoint: sft_training.checkpoint
+          dataset: sft_data_prep.dataset
+          reward_cache: reward_prep.dataset
+          norm_universes: norm_universe.dataset
+        outputs:
+          checkpoint:
+            path: outputs/grpo/checkpoint
+            type: dir
+        launcher: g2_slurm_train_4x
+        wandb_suffix: grpo_training

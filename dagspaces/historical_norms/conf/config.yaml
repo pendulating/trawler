@@ -26,6 +26,10 @@ defaults:
   - prompt@prompt_norm_extraction_fiction: norm_extraction_fiction
   - prompt@prompt_ci_reasoning_fiction: ci_reasoning_fiction
   - prompt@prompt_ci_extraction_fiction: ci_extraction_fiction
+  # Consolidation prompt
+  - prompt@prompt_consolidation: norm_consolidation
+  # Role abstraction prompt
+  - prompt@prompt_role_abstraction: norm_role_abstraction
 
 experiment:
   name: historical_norms

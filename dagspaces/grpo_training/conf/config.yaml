@@ -1,0 +1,39 @@
+defaults:
+  - _self_
+  - pipeline: full_training
+  - model: qwen3-8b
+  - training/sft: default
+  - training/grpo: colocate_1gpu_prod
+  - prompt@prompt_reward_judge: reward_judge
+
+experiment:
+  name: grpo_training
+
+runtime:
+  output_root: outputs/grpo_training
+  debug: false
+  sample_n: null
+  job_memory_gb: 256
+
+# Judge model for R_ground reward prep
+judge_model:
+  model_source: ${oc.env:JUDGE_MODEL_PATH,/share/pierson/matt/zoo/models/Qwen2.5-72B-Instruct-AWQ}
+  engine_kwargs:
+    tensor_parallel_size: 2
+    quantization: awq
+    max_model_len: 32768
+    max_num_batched_tokens: 32768
+    kv_cache_dtype: fp8
+
+wandb:
+  enabled: true
+  project: grpo-ci-training
+
+hydra:
+  job:
+    name: ${experiment.name}
+  run:
+    dir: ${oc.env:HYDRA_RUN_DIR,multirun}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${oc.env:HYDRA_SWEEP_DIR,multirun}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

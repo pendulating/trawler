@@ -18,6 +18,15 @@ def build_qwen2_5_vl_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]
     )
 
 
+def build_qwen3_5_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -> str:
+    """Qwen3.5 VLM chat template with thinking disabled."""
+    return (
+        f"<|im_start|>system\n{sys_msg}<|im_end|>\n"
+        f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{''.join(usr_msgs)}<|im_end|>\n"
+        "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    )
+
+
 def build_llama_vision_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -> str:
     """Llama 3.2 Vision — uses AutoTokenizer.apply_chat_template."""
     from transformers import AutoTokenizer
@@ -64,6 +73,7 @@ def build_deepseek_vl2_prompt(model_source: str, sys_msg: str, usr_msgs: List[st
 PROMPT_BUILDERS: Dict[str, Callable[[str, str, List[str]], str]] = {
     "qwen2.5-vl": build_qwen2_5_vl_prompt,
     "qwen3-vl": build_qwen2_5_vl_prompt,  # Same chat template
+    "qwen3.5": build_qwen3_5_prompt,
     "llama-vision": build_llama_vision_prompt,
     "gemma-3": build_gemma3_prompt,
     "internvl2.5": build_internvl2_5_prompt,

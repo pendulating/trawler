@@ -1,0 +1,35 @@
+# @package training.grpo
+# Server mode GRPO config for 2-GPU setups.
+# GPU 0: vLLM server, GPU 1: training.
+num_generations: 2
+learning_rate: 1.0e-6
+per_device_batch_size: 1
+gradient_accumulation_steps: 2
+num_epochs: 1
+max_steps: 10
+warmup_steps: 2
+max_completion_length: 512
+gradient_checkpointing: true
+bf16: true
+logging_steps: 1
+save_strategy: "no"
+
+use_vllm: true
+vllm_mode: server
+vllm_server_host: "0.0.0.0"
+vllm_server_port: 8192
+vllm_server_timeout: 300.0
+vllm_gpu_memory_utilization: 0.85
+vllm_server_tensor_parallel_size: 1
+
+contrastive_ratio: 0.0
+
+reward_weights:
+  - 0.25   # r_uncert
+  - 0.20   # r_complete
+  - 0.20   # r_consist
+  - 0.20   # r_context
+  - 0.15   # r_cohere
+  - 0.00   # r_ground (disabled)
+
+context_embedding_model: all-MiniLM-L6-v2

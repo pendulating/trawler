@@ -1,0 +1,148 @@
+#!/bin/bash
+#SBATCH --job-name=sft-serve
+#SBATCH --partition=pierson
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=64G
+#SBATCH --time=48:00:00
+#SBATCH --output=logs/sft-serve-%j.out
+#SBATCH --error=logs/sft-serve-%j.err
+
+set -euo pipefail
+
+echo "=== SFT Checkpoint Server (base model + LoRA adapter) ==="
+date
+echo ""
+
+# ----------------------------- CONFIGURATION ----------------------------- #
+REPO_DIR="/share/pierson/matt/UAIR"
+BASE_MODEL="${BASE_MODEL:?ERROR: BASE_MODEL must be set (e.g. /share/pierson/matt/zoo/models/Qwen3.5-0.8B)}"
+LORA_PATH="${LORA_PATH:?ERROR: LORA_PATH must be set (path to LoRA checkpoint directory)}"
+PORT="${PORT:-8924}"
+HOST="${HOST:-0.0.0.0}"
+TP_SIZE="${TP_SIZE:-1}"
+CONCURRENCY="${CONCURRENCY:-8}"
+GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-16384}"
+MAX_BATCHED_TOKENS="${MAX_BATCHED_TOKENS:-8192}"
+HF_HOME="${HF_HOME:-/share/pierson/matt/.cache/huggingface}"
+LOG_DIR="${LOG_DIR:-$REPO_DIR/logs/vllm}"
+RUN_NAME="${RUN_NAME:-sft-checkpoint}"
+
+mkdir -p "$LOG_DIR"
+mkdir -p "$HF_HOME"
+
+echo "Repository      : $REPO_DIR"
+echo "Base model      : $BASE_MODEL"
+echo "LoRA checkpoint : $LORA_PATH"
+echo "HF cache        : $HF_HOME"
+echo "Host / Port     : $HOST:$PORT"
+echo "TP size         : $TP_SIZE"
+echo "Concurrency     : $CONCURRENCY"
+echo "GPU util target : $GPU_MEM_UTIL"
+echo ""
+
+# ------------------------------ ENVIRONMENT ------------------------------ #
+cd "$REPO_DIR"
+pwd
+
+if [ ! -d ".venv" ]; then
+    echo "ERROR: .venv not found. Create the uv virtualenv before submitting this job." >&2
+    exit 1
+fi
+
+source .venv/bin/activate
+echo "Python: $(which python)"
+echo "Python version: $(python --version)"
+
+# ------------------------------ GPU SANITY ------------------------------- #
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "ERROR: nvidia-smi not found. Ensure this job runs on a GPU node." >&2
+    exit 1
+fi
+
+nvidia-smi
+nvidia-smi topo -m || true
+
+python -c 'import torch; print("torch.cuda.is_available=", torch.cuda.is_available()); print("torch.cuda.device_count=", torch.cuda.device_count()); [print(f"torch device {i}=", torch.cuda.get_device_name(i)) for i in range(torch.cuda.device_count())]'
+
+if ! command -v vllm >/dev/null 2>&1; then
+    echo "ERROR: vllm CLI not found in the current environment." >&2
+    exit 1
+fi
+
+export HF_HOME
+export WANDB_MODE=disabled
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_TARGET_DEVICE=cuda
+export VLLM_LOGGING_LEVEL=DEBUG
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64,expandable_segments:True
+export CUDA_LAUNCH_BLOCKING=0
+export TOKENIZERS_PARALLELISM=false
+
+if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    if [ -n "${SLURM_STEP_GPUS:-}" ]; then
+        export CUDA_VISIBLE_DEVICES="${SLURM_STEP_GPUS}"
+    elif [ -n "${SLURM_JOB_GPUS:-}" ]; then
+        if [[ "${SLURM_JOB_GPUS}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+            export CUDA_VISIBLE_DEVICES="${SLURM_JOB_GPUS}"
+        else
+            echo "WARNING: Ignoring SLURM_JOB_GPUS='${SLURM_JOB_GPUS}' (not CUDA indices)" >&2
+        fi
+    fi
+fi
+
+echo "SLURM_JOB_GPUS=${SLURM_JOB_GPUS:-<unset>}"
+echo "SLURM_STEP_GPUS=${SLURM_STEP_GPUS:-<unset>}"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+
+# ----------------------------- VALIDATE PATHS ---------------------------- #
+if [ ! -f "$BASE_MODEL/config.json" ]; then
+    echo "ERROR: Base model config not found at $BASE_MODEL/config.json" >&2
+    exit 1
+fi
+
+if [ ! -d "$LORA_PATH" ]; then
+    echo "ERROR: LoRA checkpoint directory not found at $LORA_PATH" >&2
+    exit 1
+fi
+
+if [ ! -f "$LORA_PATH/adapter_config.json" ]; then
+    echo "WARNING: No adapter_config.json in $LORA_PATH — may not be a valid LoRA checkpoint" >&2
+fi
+
+echo ""
+echo "LoRA adapter contents:"
+ls -la "$LORA_PATH/" | head -15
+echo ""
+
+# ------------------------------ LAUNCH VLLM ------------------------------ #
+echo "Starting vLLM server with LoRA adapter..."
+echo ""
+
+CMD=(
+    vllm serve "$BASE_MODEL"
+    --host "$HOST"
+    --port "$PORT"
+    --tensor-parallel-size "$TP_SIZE"
+    --max-model-len "$MAX_MODEL_LEN"
+    --max-num-batched-tokens "$MAX_BATCHED_TOKENS"
+    --gpu-memory-utilization "$GPU_MEM_UTIL"
+    --trust-remote-code
+    --max-num-seqs "$CONCURRENCY"
+    --served-model-name "$RUN_NAME"
+    --disable-custom-all-reduce
+    --enforce-eager
+    --enable-lora
+    --lora-modules "sft=$LORA_PATH"
+    --max-lora-rank 64
+)
+
+echo "Command line:"
+printf '  %q\n' "${CMD[@]}"
+echo ""
+
+srun --ntasks=1 --gpus-per-task="${TP_SIZE}" "${CMD[@]}"
+
+echo ""
+echo "vLLM server exited at $(date)"

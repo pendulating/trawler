@@ -50,26 +50,130 @@ system_prompt: |
   **5. Institutional and ritual practices**: Behavioral patterns embedded in the society's institutions — courtship protocols, inheritance customs, visiting rituals, social introductions, mourning practices — that embody norms.
   - The practice of a ball requiring formal introductions before dancing → reveals norms about social acquaintance.
 
-  ### Norm Categories in Fiction (Illustrative, Not Exhaustive)
+  ### CRITICAL: Character Actions vs. Societal Norms — Contrastive Examples
 
-  The following categories are common in fiction, but this list is not comprehensive. Norms from **any domain of social life** may appear depending on the text's setting, period, and cultural context. Extract norms from whatever domain the fictional society regulates.
+  The most common extraction error is producing a **character-specific plot description** instead of a **generalizable societal norm**. A norm is a second-order social expectation that applies to a *class* of agents occupying a role — it is not a description of what one character did in one scene. Study these contrastive pairs carefully.
 
-  **Information and speech norms** (these DO govern information flows):
-  - Discretion about private matters, family affairs, or romantic attachments
-  - Norms about gossip: what may or may not be discussed, and with whom
-  - Correspondence propriety: who may write to whom, what may be disclosed in letters
-  - Norms about honesty, deception, and concealment in social interaction
+  ---
 
-  **Conduct and behavioral norms** (these do NOT govern information flows):
-  - Courtship and marriage: proper conduct during courtship, who may propose, chaperonage, parental consent
-  - Class and status: deference to rank, limits on social mobility, modes of address
-  - Gender: expectations differing by sex regarding conduct, freedom, education, property, occupation
-  - Family obligation: parental authority, filial duty, sibling loyalty, inheritance expectations
-  - Social propriety: visiting customs, introductions, dining etiquette, public behavior, dress
-  - Hospitality and reciprocity: obligations of host and guest
-  - Economic conduct: honorable vs. dishonorable income, debt, patronage, trade vs. landed wealth
+  **Passage**: *Mrs. Bennet was delighted to keep Jane at Netherfield, calculating that the longer Jane stayed, the more likely Mr. Bingley would grow attached.*
 
-  Other categories that may appear include (but are not limited to): religious observance, military conduct, professional ethics, norms of mourning, norms governing servants and masters, norms of political allegiance, norms about education and learning, norms of honor and dueling, and many others specific to the fictional society.
+  WRONG (character action, not a norm):
+  - Norm subject: "Mrs. Bennet"
+  - Norm act: "hasten Jane's recovery"
+  - Condition: "when Jane's health is not in immediate danger"
+  Why this fails: The subject is a named character. The act describes one character's tactical scheme to promote a match, not a social expectation. No one in this society would articulate "mothers should delay their daughters' recoveries" as a rule of conduct. This is Mrs. Bennet's individual strategy, not a societal norm.
+
+  RIGHT (societal norm revealed by the same passage):
+  - Norm subject: "A mother of genteel standing"
+  - Norm act: "take active measures to promote advantageous matches for her unmarried daughters"
+  - Condition: "when daughters are of marriageable age and suitable prospects are available"
+  Why this works: The subject is a social role. The act captures a genuine, recurring societal expectation that *any* mother of this class would face. Mrs. Bennet's specific tactic is merely one (somewhat absurd) instantiation of this broader expectation.
+
+  ---
+
+  **Passage**: *Elizabeth could not help observing how frequently Mr. Darcy's eyes were fixed on her. She hardly knew how to suppose that she could be an object of admiration to so great a man.*
+
+  WRONG (plot event):
+  - Norm subject: "Mr. Darcy"
+  - Norm act: "not stare at Elizabeth repeatedly"
+  - Condition: "at social gatherings when he has not expressed interest"
+  Why this fails: Named characters in both subject and act. Describes what Darcy is doing in a specific scene, not what the society expects of gentlemen generally.
+
+  RIGHT (societal norm):
+  - Norm subject: "A gentleman"
+  - Norm act: "exercise discretion in directing visible attention toward an unmarried woman in company"
+  - Condition: "in public social gatherings, particularly before any courtship has been acknowledged"
+  Why this works: Abstracts from Darcy to the role "gentleman," from staring at Elizabeth to the general expectation about attention in social settings. Anyone in the role of gentleman would face this expectation.
+
+  ---
+
+  **Passage**: *Mr. Collins was not left long to the silent contemplation of his successful love; for Mrs. Bennet entered the breakfast-room and congratulated both him and herself in warm terms on the happy prospect of their nearer connection.*
+
+  WRONG (scene-specific action):
+  - Norm subject: "Mrs. Bennet"
+  - Norm act: "congratulate Mr. Collins on his proposal to Elizabeth"
+  - Condition: "upon learning that the proposal has been made"
+  Why this fails: Named characters, specific proposal scene. This describes what Mrs. Bennet did, not what society expects parents to do.
+
+  RIGHT (societal norm):
+  - Norm subject: "A parent"
+  - Norm act: "welcome and encourage a suitable proposal of marriage to one's daughter"
+  - Condition: "when the suitor is of respectable standing and the match is advantageous to the family"
+  Why this works: Role-based subject, generalizable act, recurring condition. The norm explains *why* Mrs. Bennet acts this way — she is fulfilling a parental expectation.
+
+  ---
+
+  **Passage**: *Lydia's elopement with Wickham brought shame upon the entire Bennet family. Mr. Bennet bitterly reproached himself for having permitted his younger daughters such unchecked liberty.*
+
+  WRONG (plot consequence):
+  - Norm subject: "Lydia Bennet"
+  - Norm act: "not elope with Wickham"
+  - Condition: "without parental consent"
+  Why this fails: Named characters, describes a specific plot event. This is a summary of what happened, not an articulation of what society expects.
+
+  RIGHT (two norms revealed by the same passage):
+  Norm 1:
+  - Norm subject: "An unmarried young woman"
+  - Norm act: "not enter into a marital union without the knowledge and consent of her parents"
+  - Condition: "while she remains under her family's authority and protection"
+  Norm 2:
+  - Norm subject: "A father"
+  - Norm act: "supervise and regulate the social conduct of his unmarried daughters"
+  - Condition: "while they remain in his household"
+  Why this works: Both norms abstract from specific characters to roles, from the elopement to the general class of actions, and the conditions describe recurring social situations.
+
+  ---
+
+  ### The Generalizability Test
+
+  Before including any candidate norm in your output, apply these four quick tests:
+
+  1. **Subject test**: Could you replace the character with a *different* person of the same social role and the norm would still hold? If the norm only makes sense for one specific character, it is a character description, not a norm.
+  2. **Act test**: Is the prescribed action something that could recur across multiple situations, or does it describe a one-time plot event? "Refuse Mr. Collins's proposal" is a plot event; "respond to a proposal with courtesy and serious deliberation" is a recurring expectation.
+  3. **Condition test**: Could the condition arise in other scenes, other families, other social seasons in this society? "When visiting Netherfield" is scene-specific; "when a guest in another family's household" is a recurring social situation.
+  4. **Stranger test**: If you described this norm to someone who has never read the novel, would they understand it as a freestanding social expectation of the depicted society? If understanding requires plot knowledge, the norm is insufficiently generalized.
+
+  ### Norm Domains with Canonical Examples (Illustrative, Not Exhaustive)
+
+  The following domains frequently contain norms in fiction. Each includes canonical examples to illustrate the expected level of generality — note how every example uses a social role (not a character name), a generalizable act, and a recurring condition. Extract norms from **any domain** the fictional society regulates; this list is not comprehensive.
+
+  **Courtship and marriage**:
+  - "An unmarried woman of genteel birth is expected to receive a proposal of marriage with courtesy and serious consideration when formally addressed by a suitor of respectable standing."
+  - "A gentleman must not pay marked attentions to a young woman unless he intends an honorable courtship."
+
+  **Class and social status**:
+  - "A person of lower social rank ought to defer to the preferences and convenience of their social superiors in matters of seating, precedence, and address."
+  - "A gentleman of independent fortune is expected to maintain a mode of living consistent with his station."
+
+  **Gender expectations**:
+  - "An unmarried young woman must not travel unaccompanied or appear in public places without a chaperone or suitable companion."
+  - "A gentleman is expected to offer his arm to a lady when escorting her into dinner or walking in company."
+
+  **Family obligation and parental authority**:
+  - "A father is obligated to provide for the establishment and future security of his unmarried daughters."
+  - "A child of the household ought to defer to parental judgment on matters of courtship and marriage."
+
+  **Social propriety (visiting, introductions, etiquette)**:
+  - "A gentleman of the neighborhood is expected to pay a call on any new arrival of respectable standing within a reasonable period."
+  - "A formal introduction by a mutual acquaintance is required before two strangers may converse at a social gathering."
+
+  **Hospitality and reciprocity**:
+  - "A host is obligated to provide for the comfort and entertainment of guests for the duration of their stay."
+  - "A guest ought to express gratitude and avoid overstaying the period for which they were invited."
+
+  **Information, speech, and discretion** (these DO govern information flows):
+  - "A person of good breeding must not discuss another family's private financial affairs in public company."
+  - "A confidant is expected to maintain the secrecy of information shared in confidence."
+
+  **Economic conduct and reputation**:
+  - "A gentleman must not incur debts he cannot honor."
+  - "A family of respectable standing ought to live within its means to preserve its social reputation."
+
+  **Mourning, religious observance, and ceremony**:
+  - "A widow is expected to observe a prescribed period of mourning before reentering society."
+
+  Other domains that may appear include: military conduct, professional ethics, servant-master relations, political allegiance, honor and dueling, education and learning, artistic patronage, and many others specific to the fictional society. Extract norms from whatever domain the text reveals.
 
   ### Norms Are Operative Within the Fictional Society
 
@@ -81,28 +185,44 @@ system_prompt: |
 
   Model the norms of the world the text depicts. Do not impose external moral judgments.
 
-  ### What to Reason About for Each Norm
+  ### Structured Reasoning Template (Follow These Steps IN ORDER for Each Norm)
 
-  For each norm you identify, reason through the following — this reasoning trace will feed a downstream extraction stage that decomposes it into a structured Raz tuple:
+  For each norm you identify, reason through the following steps sequentially. This structured reasoning trace feeds a downstream extraction stage — the quality of extraction depends entirely on the quality of this reasoning. Steps 3–5 are where most errors occur; give them special attention.
 
-  1. **Norm subject**: Who bears the obligation? Express this as a *social role or class*, not a named character. The model sees Elizabeth Bennet's behavior, but the norm applies to "an unmarried gentleman's daughter" or "a young woman of genteel birth."
+  **Step 1 — Narrative Evidence**: What specific textual evidence reveals a social expectation? Classify it:
+  (a) norm-conforming behavior, (b) norm violation and consequences, (c) narrator commentary, (d) character reflection on propriety, or (e) institutional/ritual practice.
+  Quote the relevant passage.
 
-  2. **Prescriptive element**: What is the deontic force? In fiction this is usually implicit — reconstructed from social consequences, narrator commentary, or characters' reflections. Express it as: "is expected to," "must," "must not," "ought to," "should," "may," "is forbidden to," etc.
+  **Step 2 — The Social Expectation**: What does this society expect someone to do (or not do)? State the expectation as a general rule using the frame: "In this society, [social role] is expected to [action] when [circumstances]." This is a preliminary articulation — you will refine each component in the following steps.
 
-  3. **Norm act**: What action is prescribed or proscribed? State this as a verb phrase describing what the norm subject is required to do or refrain from doing. Must be stated as an action, not redescribed as an information flow.
+  **Step 3 — Generalize the Subject** (CRITICAL): The text shows a specific named character. What social role or class do they represent? Apply the **substitution test**: if you replaced this character with any other person of the same social role, would the expectation still hold? If the norm only makes sense for this specific character's personality, goals, or situation, it is NOT a norm.
+  - Elizabeth Bennet → "an unmarried gentleman's daughter"
+  - Mr. Darcy → "a wealthy gentleman of high social standing"
+  - Mrs. Bennet → "a mother of the landed gentry with daughters of marriageable age"
+  - A servant in the scene → "a servant in a gentleman's household"
+  - Heathcliff → "a man of ambiguous social origin raised alongside the family's children"
 
-  4. **Condition of application**: Under what social, relational, or institutional circumstances does this norm apply? Often period-specific: "during courtship," "when introduced to one's social superior," "upon receiving a proposal of marriage," "when hosting guests," "in public company."
+  **Step 4 — Generalize the Act** (CRITICAL): The text shows a specific action in a specific scene. What is the GENERAL TYPE of action being prescribed or proscribed? Strip away plot-specific details and named characters from the act.
+  - "Elizabeth refused Mr. Collins" → the norm act is NOT "refuse Mr. Collins" — it is "respond to a proposal of marriage" (how one responds is Elizabeth's choice; the NORM is about what the society expects in that situation)
+  - "Jane was sent on horseback to Netherfield" → no norm here (this is Mrs. Bennet's individual scheme, not a societal expectation about horseback travel)
+  - "Mr. Bingley held a ball at Netherfield" → the norm act is "host social gatherings for the neighborhood" (the expectation that a gentleman of means should entertain)
 
-  5. **Normative force**: Classify as:
+  **Step 5 — Generalize the Condition** (CRITICAL): Under what RECURRING social circumstances does this norm apply? The condition must be something that could arise in other households, other families, other social seasons within this society — not something unique to this novel's plot.
+  - "at the Netherfield ball" → "at a formal social gathering"
+  - "when Mr. Collins proposes" → "when receiving a proposal of marriage"
+  - "after Lydia eloped with Wickham" → "after a family member has acted in a manner that brings public disgrace"
+  - "while Jane is ill at Netherfield" → "when a guest is convalescing in one's household"
+
+  **Step 6 — Deontic Force**: What is the strength of the societal expectation? Base this on the narrative consequences shown or implied:
      - **Obligatory**: The society treats this action as required — violation invites serious censure or punishment
      - **Prohibited**: The society treats this action as forbidden — commission invites scandal or ostracism
      - **Permitted**: The society treats this action as acceptable, especially where it might otherwise seem prohibited
      - **Recommended**: The society commends this action without strictly requiring it — it marks good breeding or virtue
      - **Discouraged**: The society frowns on this action without strictly forbidding it — it marks poor judgment or indelicacy
 
-  6. **Context/sphere**: What domain of life does this norm govern? (courtship, family, class/status, gender, social propriety, hospitality, economic conduct, governance, information/speech, religious observance, professional conduct, etc.)
+  **Step 7 — Domain Classification**: What sphere of social life does this norm govern? (courtship, family, class/status, gender, social propriety, hospitality, economic conduct, governance, information/speech, religious observance, professional conduct, etc.)
 
-  7. **Governs information flow?**: Does the norm's prescribed act regulate the transmission, disclosure, concealment, or withholding of information between agents? (true/false)
+  **Step 8 — Information Flow Check**: Does the norm's prescribed act regulate the transmission, disclosure, concealment, or withholding of information between agents? Or does it govern non-informational conduct (action, behavior, deference, ceremony)? (true/false)
 
   ### What to EXCLUDE
 
@@ -128,7 +248,7 @@ system_prompt: |
   1. Identify norms even when implicit — reconstruct the underlying social expectation from narrative evidence (behavior, consequences, narrator commentary, characters' reflections, institutional practices)
   2. Set `has_prescriptive_content: true` if the text reveals any operative social norm through any of the five categories of narrative evidence described above
   3. If `has_prescriptive_content` is `false`, the `norms` array MUST be empty
-  4. Provide 1-5 norms per chunk, focusing on the most significant
+  4. Provide up to 10 norms per chunk. Prioritize the most significant norms, but do not omit norms just to stay under a count
   5. For each norm:
      - Quote the relevant text snippet (`original_text_snippet`)
      - Provide detailed reasoning through the Raz lens: identify the norm subject (as a social role), prescriptive element (the implicit "ought"), norm act, conditions of application, normative force, and context. Explain what narrative evidence reveals this norm — is it shown through conformity, violation, narrator commentary, character reflection, or institutional practice? (`reasoning`)

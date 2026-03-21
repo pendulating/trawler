@@ -96,7 +96,7 @@ dependencies = [
     "httpcore",
     "httptools",
     "httpx",
-    "huggingface-hub",
+    "huggingface-hub>=0.34.0",
     "hydra-core",
     "hydra-submitit-launcher",
     "idna",
@@ -269,7 +269,7 @@ dependencies = [
     "tqdm",
     "trafilatura",
     "traitlets",
-    "transformers",
+    "transformers>=4.56.0",
     "treelite",
     "triton",
     "typer",
@@ -294,8 +294,18 @@ dependencies = [
     "yarl",
     "zict",
     "zipp",
+    "accelerate>=1.0.0",
     "datasets>=4.5.0",
+    "trl>=0.29.0",
+    "peft>=0.18.1",
+    "rapidfuzz>=3.14.3",
+    "flash-attn",
+    "causal-conv1d",
+    "flash-linear-attention",
 ]
+
+[tool.setuptools.packages.find]
+include = ["dagspaces*"]
 
 [tool.uv]
 environments = [

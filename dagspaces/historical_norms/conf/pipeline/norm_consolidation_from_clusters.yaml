@@ -1,0 +1,51 @@
+# @package _global_
+# Norm Consolidation from Pre-Computed Clusters
+#
+# Takes norms with pre-computed cluster labels (e.g. from Qwen3-Embedding-8B
+# + HDBSCAN) and runs only the LLM merge step (Qwen2.5-72B).
+#
+# Usage:
+#   CLUSTERED_NORMS=/path/to/norms_with_qwen3emb_clusters.parquet \
+#   python -m dagspaces.historical_norms.cli \
+#     pipeline=norm_consolidation_from_clusters \
+#     wandb.enabled=false
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+prompt_consolidation: ${prompt_consolidation}
+
+consolidation:
+  cluster_column: qwen3emb_cluster
+  group_by: gutenberg_id
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/norm_consolidation_from_clusters
+  allow_partial: false
+
+  sources:
+    clustered_norms:
+      path: ${oc.env:CLUSTERED_NORMS}
+      type: parquet
+
+  graph:
+    nodes:
+      consolidation:
+        stage: norm_consolidation_from_clusters
+        depends_on: []
+        inputs:
+          dataset: clustered_norms
+        outputs:
+          dataset: outputs/consolidation/consolidated_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 2048
+          consolidation: ${consolidation}
+        launcher: g2_slurm_pierson
+        wandb_suffix: consolidation

@@ -58,15 +58,13 @@ system_prompt: |
   - **information_flow_note**: If `governs_information_flow` is `true`, provide a brief (1-sentence) description of the information flow the norm constrains, using Contextual Integrity vocabulary (sender, recipient, information type). If `false`, set to null. This is a metadata annotation only — not the extraction target.
 
   - **confidence_qual**: A qualitative assessment of extraction confidence on a 5-point scale:
-    - "very_low" — speculative; the norm is weakly implied at best
-    - "low" — plausible but significant ambiguity in one or more Raz components
-    - "moderate" — reasonable extraction with minor uncertainty
-    - "high" — clearly grounded in the text with only minor interpretive judgment
-    - "very_high" — all four Raz components are directly and unambiguously stated in the text
+    - "very_uncertain" — speculative; the norm is weakly implied at best
+    - "uncertain" — plausible but significant ambiguity in one or more Raz components
+    - "somewhat_certain" — reasonable extraction with minor uncertainty
+    - "certain" — clearly grounded in the text with only minor interpretive judgment
+    - "very_certain" — all four Raz components are directly and unambiguously stated in the text
 
-  - **confidence_quant**: A numeric confidence score from 0 to 10. 0 = no basis in the text; 10 = all four Raz components explicitly and unambiguously stated. Must be congruent with confidence_qual (e.g., "high" pairs with 7–8, not 3).
-
-  - **source_snippet**: The exact quote from the source text containing or expressing the norm.
+  - **confidence_quant**: A numeric confidence score from 0 to 10. 0 = no basis in the text; 10 = all four Raz components explicitly and unambiguously stated. Must be congruent with confidence_qual (e.g., "certain" pairs with 7–8, not 3).
 
   ### Extraction Guidance
 
@@ -76,9 +74,27 @@ system_prompt: |
   - The **condition_of_application** may be null only if the norm is genuinely unconditional.
   - For **norm_articulation**, capture the specific teaching as the tradition would express it. Be concrete: "One who gossips destroys three persons: the speaker, the listener, and the subject" rather than "gossip is bad."
   - Tag each norm's **governs_information_flow** field: `true` if the prescribed act involves transmitting, disclosing, concealing, or withholding information; `false` if it governs non-informational conduct. When `true`, populate **information_flow_note** with a brief Contextual Integrity-vocabulary description of the flow the norm constrains.
-  - Use both confidence fields honestly: "very_high" / 9–10 only when all four Raz components are directly stated; "very_low" / 0–2 when the norm is largely reconstructed from implication.
+  - Use both confidence fields honestly: "very_certain" / 9–10 only when all four Raz components are directly stated; "very_uncertain" / 0–2 when the norm is largely reconstructed from implication.
   - Do **not** fabricate norms from purely descriptive, narrative, or cosmological passages that contain no prescriptive content.
+  - Do **NOT** include `source_snippet` or `reasoning_trace` fields in the output JSON. These are already available as input columns from the reasoning stage. Including them in the extraction output causes guided decoding degeneration.
 
   Ensure the JSON output captures the full normative structure described in the reasoning trace.
 
-prompt_template: "Source Text:\n{{article_text}}\n\nReasoning Trace:\n{{reasoning_trace}}\n\nExtract the norms prescribed in this text as structured Raz norm tuples in JSON format:"
+prompt_template: |
+  Source Text:
+  {{article_text}}
+
+  Reasoning Trace:
+  {{reasoning_trace}}
+
+  Using Joseph Raz's anatomy of norms, extract each norm identified in the reasoning trace as a structured JSON object. For each norm, decompose it into the four Raz components:
+  1. prescriptive_element — the deontic "ought" (must, must not, shall, is forbidden to, etc.)
+  2. norm_subject — the role or class of persons upon whom the obligation falls
+  3. norm_act — the action prescribed or proscribed (as a verb phrase)
+  4. condition_of_application — the circumstances under which the norm applies (or null if unconditional)
+
+  IMPORTANT: Extract NORMS (what someone ought to do), NOT information flows (who sends what to whom). The norm/flow distinction is critical — do not produce CI tuples (sender/recipient/information_type/transmission_principle). Instead, produce Raz tuples (prescriptive_element/norm_subject/norm_act/condition_of_application).
+
+  Do NOT include source_snippet or reasoning_trace fields in the output.
+
+  Output valid JSON:

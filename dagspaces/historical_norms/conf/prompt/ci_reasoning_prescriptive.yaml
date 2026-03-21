@@ -152,7 +152,7 @@ system_prompt: |
   1. Identify prescribed information flows even when implied — reconstruct the underlying information exchange from context
   2. Set `has_information_exchange: true` ONLY if the text prescribes, commands, or regulates the transmission, disclosure, concealment, or withholding of information between agents
   3. If `has_information_exchange` is `false`, the `flows` array MUST be empty
-  4. Provide 1-5 flows per chunk, focusing on the most significant
+  4. Provide up to 10 flows per chunk. Prioritize the most significant flows, but do not omit flows just to stay under a count
   5. For each flow:
      - Quote the relevant text snippet (`original_text_snippet`)
      - Explain the information exchange: what information is prescribed to flow (or not flow), between which agents, in what context, and under what principle. Reason about the flow structure (sender, recipient, subject, information type, transmission principle) — this feeds the downstream extraction stage. (`reasoning`)

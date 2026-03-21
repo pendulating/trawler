@@ -1,0 +1,30 @@
+\section{Methods}
+\label{sec:methods}
+
+To extract historical norms from large-scale literary and educational corpora, we developed a multi-stage computational pipeline based on the Institutional Grammar 2.0 (IG 2.0) framework \cite{frantz2021institutional}. Our approach integrates large language models (LLMs) with constrained decoding techniques to ensure ontological consistency and structural precision in the extracted normative statements.
+
+\subsection{Institutional Grammar 2.0 Framework}
+The IG 2.0 framework provides a rigorous specification for decomposing institutional statements into their constituent components. We implement two primary types of normative structures:
+
+\begin{enumerate}
+    \item \textbf{Regulative Statements (ADICO)}: These govern behavior and are composed of Attributes (A), Deontic (D), Aim (I), Object (B/C), and Context (C). An optional ``Or else'' (O) component represents sanctions for non-compliance.
+    \item \textbf{Constitutive Statements (E-MFP-C)}: These define entities and their properties within a system, consisting of the Constituted Entity (E), Modal (M), Constitutive Function (F), Constituting Properties (P), and Context (C).
+\end{enumerate}
+
+\subsection{Pipeline Architecture}
+The extraction pipeline is implemented as a directed acyclic graph (DAG) using the \texttt{dagspaces} orchestration framework. The process consists of three core stages:
+
+\subsubsection{Data Acquisition and Pre-processing}
+Historical texts are retrieved from the Project Gutenberg corpus. Given the length of historical volumes, we apply a semantic chunking strategy to preserve sufficient context for normative analysis while remaining within the model's effective context window. Each chunk is associated with its source metadata, including author, title, and publication year.
+
+\subsubsection{Normative Reasoning}
+Extracting latent norms from literary text often requires significant inference beyond literal surface-level parsing. We utilize the Qwen 2.5 Instruct 72B model \cite{qwen25} to generate natural language reasoning traces for each text chunk. The model is prompted to identify potential institutional statements and explain their social or historical significance before attempting formal decomposition.
+
+\subsubsection{Constrained Parameterized Extraction}
+The final stage maps the reasoning traces and source text into the structured IG 2.0 schema. To ensure adherence to the formal grammar, we employ constrained decoding (guided decoding) using Pydantic-defined JSON schemas. This prevents the generation of malformed or ontologically inconsistent components, resulting in a dataset of parameterized norms suitable for downstream quantitative analysis.
+
+\subsection{Inference Optimization}
+Large-scale processing of historical corpora necessitates significant computational throughput. We deploy our models using the vLLM inference engine \cite{vllm} within a Ray Data execution environment. This allows for tensor-parallel execution across multiple GPUs and asynchronous processing of text chunks, significantly reducing the total wall-clock time for corpus-wide norm extraction.
+
+
+

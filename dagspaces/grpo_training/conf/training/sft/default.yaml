@@ -1,0 +1,33 @@
+# @package training.sft
+num_epochs: 3
+learning_rate: 2.0e-5
+per_device_batch_size: 4
+gradient_accumulation_steps: 4
+warmup_ratio: 0.1
+weight_decay: 0.01
+max_seq_length: 8192
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+max_grad_norm: 1.0
+bf16: true
+dataloader_num_workers: 4
+logging_steps: 10
+save_strategy: epoch
+
+lora:
+  rank: 64
+  alpha: 128
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  task_type: CAUSAL_LM
+
+# Fraction of training examples to use (0.0–1.0, null = use all)
+sample_fraction: null

@@ -1,0 +1,37 @@
+# @package _global_
+# Smoke test: GRPO programmatic-only rewards.
+# No norm_universes or reward_cache needed.
+#
+# Usage:
+#   SFT_CHECKPOINT_PATH=... SFT_PAIRS_PATH=... \
+#   python -m dagspaces.grpo_training.cli \
+#     pipeline=grpo_programmatic_smoke \
+#     training/grpo=colocate_1gpu_9b \
+#     model=qwen3-8b \
+#     wandb.enabled=false
+
+pipeline:
+  output_root: ${hydra:run.dir}/grpo_smoke
+
+  sources:
+    sft_checkpoint:
+      path: ${oc.env:SFT_CHECKPOINT_PATH}
+      type: dir
+    sft_pairs:
+      path: ${oc.env:SFT_PAIRS_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      grpo_training:
+        stage: grpo_training
+        depends_on: []
+        inputs:
+          sft_checkpoint: sft_checkpoint
+          dataset: sft_pairs
+        outputs:
+          checkpoint:
+            path: outputs/grpo/checkpoint
+            type: dir
+        launcher: g2_slurm_gpu_1x
+        wandb_suffix: grpo_smoke

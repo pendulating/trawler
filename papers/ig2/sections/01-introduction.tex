@@ -1,0 +1,246 @@
+
+% Header reference level
+\clearpairofpagestyles
+\chead{\headmark}
+\automark[section]{section}
+\ifoot{\ifootertext}
+\ofoot{\ofootertext}
+\cfoot{\thepage}
+
+\section*{Acknowledgements}
+
+The authors wish to explicitly acknowledge the valuable input and feedback provided by Ute Brady, Edella Schlager, Matia Vannoni, and the IGRI interns as part of ongoing evaluation activities. We are further grateful for the constructive feedback on earlier codebook drafts received from Seth Frey, Bartosz Pieli\'{n}ski, and Marcello Ceci.
+
+
+\section*{Document Revisions}
+
+All publicly released versions of this document can be retrieved under \url{https://arxiv.org/abs/2008.08937}.
+
+\begin{table}[h]
+\begin{tabular}{p{2.2cm} p{14.3cm}}
+\toprule
+\textbf{Version} & \textbf{Description} \\
+\toprule
+
+\version & Refined selected IG Script examples to reflect current feature set, extended study checklist in Appendix A to offer clearer guidance for the development of project-specific coding instructions \\
+
+\midrule
+
+1.3~(3rd March 2022) & Recoded examples in Section 4 using the IG Script notation, aligned taxonomies with book information, revised selected figures, conceptual and methodological overview \\
+
+\midrule
+
+1.2~(20th June 2021) & 
+
+Clarified definitions, restructured Context Taxonomy, introduced explicit guidelines for Attribute/Attribute Property differentiation, revised selected examples, added statement-level annotation characterizations, refined selected figures \\
+
+\midrule
+
+1.1~(6th December 2020) &
+
+Refinement of component definitions and conceptual background; constitutive `Modal'; refinement of institutional function characterization as regulative and constitutive functions respectively; addition of differentiation heuristics for constitutive and regulative statements; addition of `Domain', `Cause/Reason' and `Event' categories in Context Taxonomy, Metatype Taxonomy; clarification of component-level nesting; extended example coding for constituted entity; introduction of Reader's Guide
+\\
+
+\midrule
+
+1.0~(15th August 2020) &
+
+Initial codebook version (underlying concepts, pre-coding steps, coding guidelines for regulative and constitutive statements, constitutive-regulative statements, polymorphic statements, annotation taxonomies) \\
+
+\toprule
+\end{tabular}
+\end{table}
+
+\section{Introduction}
+\label{sec:Introduction}
+
+\subsection{The Codebook at a Glance}
+
+The following instructions are intended to provide guidance for the coding of institutional statements, the focal unit of analysis in the Institutional Grammar~\citep{Crawford1995,Crawford2005}, with specific focus on the Institutional Grammar 2.0\index{Institutional Grammar 2.0} (IG 2.0)~\citep{Frantz2021,Frantz2022InstitutionalGrammar}, to which this text is supplementary.\footnote{In addition to \citet{Crawford1995,Crawford2005}, the specification draws on the original IG codebook \citep{Brady2018InstitutionalGuidelines}, and conceptual refinements \citep{Siddiki2011,Frantz2013} comprehensively integrated into the IG 2.0 \citep{Frantz2022InstitutionalGrammar}.} \begin{emp}An institutional statement\index{Institutional Statement} describes expected actions for actors within the presence or absence of particular constraints, or parameterizes features of an institutional system.\end{emp}~\citep{Frantz2021} Institutional statements convey information that contextualizes their applicability. They vary in prescriptiveness and force, as reflected by the presence of information that more or less strongly compels behavior and by the presence of information that specifies payoffs for compliance, or non-compliance, with statements instructions. Varying in the inclusion of these various kinds  of information, institutional statements typically take two functional forms: constitutive and regulative. \begin{emp}Constitutive statements\end{emp} parameterize an institutional setting, and in this process, introduce, modify or otherwise constitute features of an institutional system and action situations embedded therein, including aspects such as actor positions and roles, associated affordances, processes, environmental characteristics, objects and artifacts inasfar as they are institutionally relevant. \begin{emp}Regulative statements\end{emp} describe actors' duties and discretion linked to specific actions within certain contextual parameters. 
+
+According to the IG 2.0, institutional statements are commonly comprised of a set of syntactic components, with individual components associating with unique information, and which combine to convey a statement's institutional meaning. Broadly characterized,\footnote{A precise definition of each component is provided in \cref{subsec:Syntax}.} \begin{emp}regulative statements\end{emp} are composed of some or all of the following components with the corresponding syntactic labels: 
+%\begin{itemize}
+%\item 
+ (i) a responsible actor, referred to as \begin{emp}Attributes\end{emp}; 
+%\item
+ (ii) action regulated by the statement, referred to as an \begin{emp}Aim\end{emp}; 
+%\item 
+ (iii) statement context, referred to as \begin{emp}Context\end{emp}; 
+%\item
+ (iv) a receiver of action, referred to as an \begin{emp}Object\end{emp};
+%\item 
+ (v) a prescriptive operator that describes how strongly an action is compelled or restrained, referred to as a \begin{emp}Deontic\end{emp}; and 
+%\item
+ (vi) a consequence of violating the regulated action, referred to as an \begin{emp}Or else\end{emp}.
+%\end{itemize}
+
+\begin{emp}Constitutive statements\end{emp} are composed of some or all of the following components with the corresponding syntactic labels: 
+%
+%\begin{itemize}
+%\item
+ (i) the entity that is being constituted or directly modified within a statement, referred to as a \begin{emp}Constituted Entity\end{emp}; 
+%\item
+ (ii) a parameterizing activity or function that introduces or otherwise characterizes the Constituted Entity in relation to the institutional setting and potential Constituting Properties, called the \begin{emp}Constitutive Function\end{emp}; 
+%\item
+ (iii) the statement context, referred to as \begin{emp}Context\end{emp}; 
+%\item
+ (iv) properties that serve as input to the constitutive function, called \begin{emp}Constituting Properties\end{emp}; 
+%\item
+ (v) a modal operator that defines to which extent the constitutive function of an institutional statement is required (necessary) or merely possible (optional), referred to as a \begin{emp}Modal\end{emp}; and 
+%\item
+ (vi) a consequence linked to the non-fulfillment of the function referenced in the constitutive function, referred to as an \begin{emp}Or else\end{emp}. 
+%\end{itemize}
+
+The operational definition of an institutional statement is tied to the presence of certain syntactic components, or \begin{emp}necessary components\end{emp}. 
+%
+To qualify as a complete regulative institutional statement, the statement must at least contain Attributes, Aim, and Context components (\begin{emp}necessary components\end{emp}; however, they can be contextually implied or inferred\footnote{This is discussed in greater detail as part of the component definitions provided in \cref{sec:Definitions}.}). The \begin{emp}Object\end{emp}, \begin{emp}Deontic\end{emp}, and \begin{emp}Or else\end{emp} components are deemed \begin{emp}sufficient components\end{emp}. Similarly, the presence of \begin{emp}Constituted Entity\end{emp}, \begin{emp}Constitutive Function\end{emp} and \begin{emp}Context\end{emp} components is necessary to qualify as a constitutive institutional statement; \begin{emp}Constituting Properties\end{emp}, \begin{emp}Modal\end{emp} and \begin{emp}Or else\end{emp} are sufficient components. 
+
+The elementary form of an institutional statement is the \begin{emp}atomic institutional statement\end{emp}. An atomic institutional statement is a statement of regulative or constitutive kind that contains the corresponding necessary components, alongside potential optional components other than the \begin{emp}Or else\end{emp}, and in which none of the components contains \begin{emp}component-level combinations\end{emp} (e.g., multiple attributes, combinations of aims, etc.). Building on this concept, IG 2.0 introduces the concept of nested institutional statements in order to capture complex institutional configurations expressed in terms of institutional statements of various kinds interlinked in various forms, alongside additional features to facilitate structural and semantic decomposition of institutional arrangements at various levels of detail.
+
+In this codebook, guidance is offered for the encoding of regulative and constitutive institutional statements along the aforementioned syntactic components at three levels of expressiveness: (1) \begin{emp}IG Core\end{emp}; (2) \begin{emp}IG Extended\end{emp}; and (3) \begin{emp}IG Logico\end{emp}. The core definitions of syntactic components remain the same across levels of expressiveness. However, the level of granularity with which components are parsed differs across levels.  \cref{sec:Definitions} provides elaborated definitions of syntactic components that generalize across levels of expressiveness. This is followed by a terminological overview of concepts used in IG 2.0. \cref{sec:PrecodingSteps} provides an overview of the pre-coding, or pre-processing steps relevant for document preparation prior to coding. \cref{sec:CodingGuidelines} specifies the syntactic conventions used in this document, followed by the coding guidelines by syntactic component and level of expressiveness. This further includes the discussion of hybrid forms of institutional statements. \cref{sec:Taxonomies} provides a comprehensive overview of taxonomies used for semantic annotations and referenced throughout the different sections. \cref{sec:Conclusion} offers a concluding discussion of considerations of relevance in the coding process, alongside references to additional resources.
+
+To better guide the reader through the specification and guidelines provided in this document, the following section sketches potential `pathways' through the codebook that emphasize aspects of interest tailored to specific audiences.
+
+\subsection{Reader's Guide}
+\label{subsec:ReadersGuide}
+
+The codebook is intended to cover features of IG 2.0 comprehensively. While underlying conceptual principles will be discussed elsewhere,\footnote{A more comprehensive treatment of motivation and conceptual underpinnings will be provided in forthcoming companion literature.} a specific emphasis lies on providing concrete instructions to ensure a practical use, while aiming at being comprehensive at the same time. This codebook thus highlights features that are of primary concern for different audiences, such as the researcher aiming at gaining a comprehensive picture of the opportunities provided by IG 2.0, the study designer who is primarily concerned with methodological aspects, as well as operational coders of different backgrounds and experience. Finally, researchers from diverse disciplines may find interest in identifying opportunities that IG 2.0 provides more generally, but also to develop insights how  the principles of the institutional grammar can be linked to concepts established in the researcher's domain. With those audiences in mind, in the following, we highlight selected \begin{emp}pathways through the codebook\end{emp} to increase accessibility and streamline the contents for a given readership. Note that all references to sections, tables and other items throughout this document are clickable to support efficient navigation.
+
+\paragraph{Pathway `General Overview'}
+
+Where readers intend to gather a high-level understanding of IG 2.0, the basic concepts, but limited concern for specifics of coding, we suggest consulting the following sections:
+
+\begin{itemize}
+\item \fullref{sec:Definitions} provides a high-level conceptual backdrop to provide a basic understanding of all the involved concepts. 
+\item To develop an intuitive understanding syntax and features across different levels, the review of \fullref{subsec:RegulativeStatementCoding} and \fullref{subsec:ConstitutiveStatementCoding} is recommended. 
+\item Where specifics related to operational coding are of interest, readers may narrow down specific features of interest using \cref{tab:FeatureSectionCombinations}.\footnote{The pathway `Coder' highlights the exemplary use of \cref{tab:FeatureSectionCombinations}.}
+%\item Specific motivations for the concepts are not part of this document, but discussed in forthcoming companion literature.
+\item \fullref{sec:Conclusion} offers a summative overview, alongside important considerations for the use of IG 2.0, as well as pointers to further resources.
+\end{itemize}
+
+\paragraph{Pathway `Research Design'}
+
+Where readers seek to consider important aspects for study design for IG 2.0, such as a background for considering coding levels and statement types, as well as pre-processing guidelines for documents, we suggest consulting the following sections:
+
+\begin{itemize}
+\item \fullref{sec:Definitions} offers an overview of the essential concepts and high-level operationalization. 
+\item \fullref{sec:PrecodingSteps} highlight all preprocessing steps the designer needs to consider for document preparation.
+\item \fullref{sec:CodingGuidelines} should be reviewed at high level in order to 
+	\begin{itemize}
+	\item determine the suitable level of encoding (IG Core, IG Extended, IG Logico, or combinations thereof -- see \fullref{subsec:IgCodingLevels}), and 
+	\item identify the types of institutional statements to be considered in the study (regulative (\fullref{subsec:RegulativeStatementCoding}), constitutive (\fullref{subsec:ConstitutiveStatementCoding}. Where combinations of both are relevant, the reader should further consider \fullref{subsec:ConstitutiveRegulativeHybrids}. 
+	\end{itemize}
+	Note that \cref{tab:FeatureSectionCombinations}\footnote{The pathway `Coder' highlights the exemplary use of \cref{tab:FeatureSectionCombinations}.} supports the selection of relevant subsections corresponding to the desired feature set. 
+
+Especially where both constitutive and regulative statements are considered, a specific emphasis should lie on \fullref{subsec:StatementTypesHeuristics}, to inform the development of project-specific coding guidelines for both statement types.
+\item Review \fullref{subsec:IgProfiles} to identify the specific feature set to be used in the study.
+\item Where the handling of specific data structures is of concern (e.g., extraction of numerical information, collections), \fullref{subsec:DataStructurePatterns} offers specific directions.
+\item \fullref{sec:Conclusion} highlights some considerations for the use of IG 2.0.
+\end{itemize}
+
+\paragraph{Pathway `Coder'}
+
+Where the reader is primarily concerned with the operational coding of statements in a given study, the selection of consulted sections varies based on background and study design. The `Coder' pathway thus offers the most variable configuration of all suggested paths.
+
+To tailor the reading accordingly, the coder should reflect on the following questions:
+
+\begin{itemize}
+\item Is the coder fundamentally acquainted with concepts of IG 2.0? If not, consult relevant sections in \fullref{sec:Definitions} as identified in conjunction with the next question.
+
+\item Does the coding involve regulative and/or constitutive statements? 
+
+\item Which level of expressiveness is the coding performed at (IG Core, IG Extended, IG Logico)?
+
+Depending on the combination of statements and level of expressiveness, choose the corresponding sections within this document by consulting \cref{tab:FeatureSectionCombinations} (Usage instructions are provided alongside the table). 
+
+Example: Readers who wish to encode regulative statements on IG Extended level, should first consult relevant foundation sections, followed by \fullref{subsec:CodingSyntax} for an overview of the syntax employed in all coding examples. To engage in the actual coding, the reader should review \fullref{subsec:RegulativeStatementCoding}, and therein specifically \fullref{subsubsec:IGCoreRegulative} and \fullref{subsubsec:IGExtendedRegulative}. These sections provide instructions for IG Core as a coding basis, as well as IG Extended, which builds on the IG Core coding. 
+
+%To support the identification of sections corresponding to specific features, \cref{tab:FeatureSectionCombinations} highlights  relevant sections based on the statement types of interest (regulative, constitutive, combinations of both (hybrids)), as well as levels of expressiveness.
+
+Where, for example, both regulative and constitutive statements are of concern, the reader is encouraged to consult \fullref{subsec:ConstitutiveRegulativeHybrids}, in addition to the specific guidelines corresponding to statement type (\fullref{subsec:RegulativeStatementCoding} and \fullref{subsec:ConstitutiveStatementCoding}) and sections relevant for specific levels of expressiveness. 
+
+\item Note: If both regulative and constitutive statements are coded, \fullref{subsec:StatementTypesHeuristics} provides essential heuristics to ensure unambiguous characterization of statements, in addition to guidelines related to the coding of hybrid forms of institutional statements (\fullref{subsec:ConstitutiveRegulativeHybrids}). 
+
+\item Additional information related to the coding of specific data structures is provided in \fullref{subsec:DataStructurePatterns}. 
+
+\end{itemize}
+
+\begin{table}
+\begin{threeparttable}
+%\begin{tabular}{p{3.5cm} p{2.4cm} p{2.4cm} p{1.8cm} p{2.4cm} p{2cm}}
+\begin{tabular}{p{3.5cm} | c c c | c c c}
+\toprule
+{\textbf{Relevant Section}} &
+{\textbf{Regulative}} &
+{\textbf{Constitutive}} &
+{\textbf{Hybrids}} &
+{\textbf{IG Core}} &
+{\textbf{IG Extended}} &
+{\textbf{IG Logico}} \\
+\toprule
+
+Sections \ref{subsec:Syntax}, \ref{subsec:InstitutionalStatementAssumptions}, \ref{subsec:ActionSituation} \& \ref{subsec:IgCodingLevels} & \textbullet & \textbullet & \textbullet & \textbullet & \textbullet & \textbullet \\
+\cref{subsec:ComponentLevelNesting} & & & \textbullet & & \textbullet & $\circ$ \\
+\cref{subsec:AttributeObjectHierarchy} & & & & & \textbullet & $\circ$ \\
+\cref{subsec:StatementTypesHeuristics} & \textbullet & \textbullet & \textbullet & & & \\
+
+\midrule
+\cref{subsec:CodingSyntax} & \textbullet & \textbullet & \textbullet & \textbullet & \textbullet & \textbullet \\
+
+\midrule
+\cref{subsec:RegulativeStatementCoding} & \textbullet & & \textbullet & \textbullet & \textbullet & \textbullet \\
+\cref{subsubsec:IGCoreRegulative} & \textbullet & & \textbullet & \textbullet & $\circ$ & $\circ$ \\
+\cref{subsubsec:IGExtendedRegulative} & \textbullet & & \textbullet & & \textbullet & $\circ$ \\
+\cref{subsubsec:IGLogicoRegulative} & \textbullet & & $\circ$ & & & \textbullet \\
+
+\midrule
+\cref{subsec:ConstitutiveStatementCoding} & & \textbullet & \textbullet & \textbullet & \textbullet & \textbullet \\
+\cref{subsubsec:IGCoreConstitutive} & & \textbullet & \textbullet & \textbullet & $\circ$ & $\circ$ \\
+\cref{subsubsec:IGExtendedConstitutive} & & \textbullet & \textbullet & & \textbullet & $\circ$ \\
+\cref{subsubsec:IGLogicoConstitutive} & & \textbullet & $\circ$ & & & \textbullet \\
+
+\midrule
+\cref{subsec:ConstitutiveRegulativeHybrids} & & & \textbullet & & & \\
+
+\midrule
+\cref{sec:Taxonomies} & & & & & $\circ$\tnote{1} & \textbullet \\
+
+\toprule
+\end{tabular}
+\begin{tablenotes}
+\item[1] The Context Taxonomy in \cref{subsec:ContextTaxonomy} is relevant for IG Extended coding.
+
+\vspace{0.3cm}
+Usage Instructions: This table indicates the sections relevant to the coder based on feature sets of interest. Select the feature(s) of interest (types of statements; level of expression) in the columns to identify the relevant sections. Filled circles signal strong relevance for the subject of concern; hollow circle indicate indirect or partial relevance. 
+\end{tablenotes}
+
+\end{threeparttable}
+
+\caption{Relevant Coding Instructions by Feature(s) of Interest}
+\label{tab:FeatureSectionCombinations}
+\end{table}
+
+\paragraph{Pathway `Coder experienced in the Original IG'}
+
+Where coders are experienced in the coding of the original institutional grammar, and intend to adapt their coding to IG 2.0 without consideration of extended feature sets, the following sections are of relevance:
+
+\begin{itemize}
+\item \fullref{sec:Definitions} develops a basic understanding of the core concepts; specifically \fullref{subsec:Syntax}, and \fullref{subsec:InstitutionalStatementAssumptions} are important.
+\item To understand the basic coding of regulative syntax, review \fullref{subsec:CodingSyntax}, as well as the overview of statement structure in \fullref{subsec:RegulativeStatementCoding}, and the coding described in \fullref{subsubsec:IGCoreRegulative} are relevant.
+\item To capture `Context' (in loose correspondence to the Conditions characterization in the original IG (see \cite{Brady2018InstitutionalGuidelines}), the Item `Context' in \cref{tab:CodingIgExtendedRegulative} (in \cref{subsubsec:IGExtendedRegulative}) offers important clarifications, alongside the Context Taxonomy in \cref{subsec:ContextTaxonomy}.
+\end{itemize}
+
+\paragraph{Pathway `Analytical Linkage'}
+
+Where readers are primarily concerned with analytical opportunities associated with semantic annotations introduced in IG 2.0, e.g., in the form of domain-specific annotation sets, or attempt to draw relationships to concepts within their domain, the reader is encouraged to consult the following sections:
+
+\begin{itemize}
+\item \fullref{sec:Definitions} develops a basic understanding of the core concepts.
+\item The forthcoming companion literature (linked here once available) will provide the analyst with a detailed overview of levels of expressiveness and associated analytical opportunities. 
+\item The analyst should be clear about the level that corresponds to analytical needs and read sections accordingly, guided by the trade-off of shallow (IG Core) vs.~deep structural coding (IG Extended), the need for semantic annotations (IG Logico), as well as the involved statement types, or any mix thereof (see \fullref{subsec:IgCodingLevels}). To identify relevant sections, the reader is encouraged to draw on \cref{tab:FeatureSectionCombinations}. 
+\item Specifically relevant for the conceptual linkage to domain-specific frameworks or concepts is the consideration of semantic annotations more generally: IG Logico coding is shown in \fullref{subsubsec:IGLogicoRegulative} for regulative statements, and in \fullref{subsubsec:IGLogicoConstitutive} for constitutive statements; associated taxonomies can be found in \fullref{sec:Taxonomies}.
+\end{itemize}
+
+Where the reader cannot identify with a specific audience, a general guidance is to follow the `General Overview' pathway, with focus on conceptual foundations initially (\fullref{sec:Definitions}), followed by a selective overview of the coding principles for specific features in \cref{sec:CodingGuidelines}, and finally, the concluding section (\cref{sec:Conclusion}). 
+
+\newpage

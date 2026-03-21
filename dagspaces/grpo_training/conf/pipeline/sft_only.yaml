@@ -1,0 +1,45 @@
+# @package _global_
+# SFT-only pipeline: sft_data_prep → sft_training
+# No norm universe needed — SFT just fine-tunes on high-quality CI extraction examples.
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/sft_only
+
+  sources:
+    ci_reasoning:
+      path: ${oc.env:CI_REASONING_PATH}
+      type: parquet
+    ci_extraction:
+      path: ${oc.env:CI_EXTRACTION_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      sft_data_prep:
+        stage: sft_data_prep
+        depends_on: []
+        inputs:
+          ci_reasoning: ci_reasoning
+          ci_extraction: ci_extraction
+        outputs:
+          dataset:
+            path: outputs/sft_data/sft_pairs.parquet
+            type: parquet
+        launcher: g2_slurm_cpu
+        wandb_suffix: sft_data_prep
+
+      sft_training:
+        stage: sft_training
+        depends_on:
+          - sft_data_prep
+        inputs:
+          dataset: sft_data_prep.dataset
+        outputs:
+          checkpoint:
+            path: outputs/sft/checkpoint
+            type: dir
+        launcher: g2_slurm_train_2x
+        wandb_suffix: sft_training

@@ -180,5 +180,41 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
     )
 
     print(f"[norm_reasoning] Completed inference, {len(result_df)} results")
+
+    # Explode rows so each identified norm gets its own row.
+    # Must happen before _clean_for_parquet which drops reasoning_data.
+    if "reasoning_data" in result_df.columns:
+        rows = []
+        for _, row in result_df.iterrows():
+            data = row.get("reasoning_data")
+            if isinstance(data, dict):
+                norms = data.get("norms", [])
+                if norms and len(norms) > 0:
+                    added = 0
+                    for i, norm in enumerate(norms):
+                        reasoning_text = norm.get("reasoning", "")
+                        if not str(reasoning_text).strip():
+                            print(f"[norm_reasoning] Skipping norm {i} in chunk "
+                                  f"{row.get('chunk_id', '?')}: empty reasoning")
+                            continue
+                        new_row = row.to_dict()
+                        new_row["norm_index"] = i
+                        new_row["reasoning_trace"] = reasoning_text
+                        new_row["norm_snippet"] = norm.get("original_text_snippet", "")
+                        new_row["preliminary_normative_force"] = norm.get("preliminary_normative_force", "")
+                        new_row["governs_information_flow"] = norm.get("governs_information_flow", None)
+                        rows.append(new_row)
+                        added += 1
+                    if added == 0:
+                        # All norms had empty reasoning; keep chunk row
+                        rows.append(row.to_dict())
+                else:
+                    rows.append(row.to_dict())
+            else:
+                rows.append(row.to_dict())
+        pre_count = len(result_df)
+        result_df = pd.DataFrame(rows)
+        print(f"[norm_reasoning] Exploded {pre_count} rows -> {len(result_df)} rows (one per norm)")
+
     result_df = _clean_for_parquet(result_df)
     return result_df

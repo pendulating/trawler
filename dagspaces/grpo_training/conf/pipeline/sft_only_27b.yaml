@@ -1,0 +1,52 @@
+# @package _global_
+# SFT-only pipeline for Qwen3.5-27B on 4×A6000.
+# Identical DAG to sft_only but uses 4-GPU launcher for QLoRA DDP.
+#
+# Usage:
+#   python -m dagspaces.grpo_training.cli -m \
+#     pipeline=sft_only_27b \
+#     model=qwen3.5-27b \
+#     training/sft=sft_27b \
+#     CI_REASONING_PATH=... CI_EXTRACTION_PATH=...
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/sft_only_27b
+
+  sources:
+    ci_reasoning:
+      path: ${oc.env:CI_REASONING_PATH}
+      type: parquet
+    ci_extraction:
+      path: ${oc.env:CI_EXTRACTION_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      sft_data_prep:
+        stage: sft_data_prep
+        depends_on: []
+        inputs:
+          ci_reasoning: ci_reasoning
+          ci_extraction: ci_extraction
+        outputs:
+          dataset:
+            path: outputs/sft_data/sft_pairs.parquet
+            type: parquet
+        launcher: g2_slurm_cpu
+        wandb_suffix: sft_data_prep
+
+      sft_training:
+        stage: sft_training
+        depends_on:
+          - sft_data_prep
+        inputs:
+          dataset: sft_data_prep.dataset
+        outputs:
+          checkpoint:
+            path: outputs/sft/checkpoint
+            type: dir
+        launcher: g2_slurm_train_4x
+        wandb_suffix: sft_training

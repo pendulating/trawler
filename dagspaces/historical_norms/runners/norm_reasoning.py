@@ -28,37 +28,19 @@ class NormReasoningRunner(StageRunner):
             
         cfg = context.cfg
         df, _, _ = prepare_stage_input(cfg, dataset_path, self.stage_name)
+        input_rows = len(df) if isinstance(df, pd.DataFrame) else 0
+        print(f"[{self.stage_name}] Input: {input_rows} rows")
 
         out = run_norm_reasoning_stage(df, cfg)
 
-        # Explode the reasoning data into individual norms
-        if isinstance(out, pd.DataFrame) and "reasoning_data" in out.columns:
-            rows = []
-            for _, row in out.iterrows():
-                data = row.get("reasoning_data")
-                if isinstance(data, dict):
-                    # Use .get() to handle missing "norms" key gracefully
-                    norms = data.get("norms", [])
-                    if norms is None or (hasattr(norms, "__len__") and len(norms) == 0):
-                        # Keep the row but mark it as no norms found
-                        rows.append(row.to_dict())
-                    else:
-                        for i, norm in enumerate(norms):
-                            new_row = row.to_dict()
-                            new_row["norm_index"] = i
-                            new_row["reasoning_trace"] = norm.get("reasoning", "")
-                            new_row["norm_snippet"] = norm.get("original_text_snippet", "")
-                            new_row["preliminary_normative_force"] = norm.get("preliminary_normative_force", "")
-                            new_row["governs_information_flow"] = norm.get("governs_information_flow", None)
-                            rows.append(new_row)
-                else:
-                    rows.append(row.to_dict())
-            out = pd.DataFrame(rows)
-
+        output_rows = len(out) if isinstance(out, pd.DataFrame) else 0
+        print(f"[{self.stage_name}] Output: {output_rows} rows "
+              f"(ratio: {output_rows / max(input_rows, 1):.2f}x)")
         _save_stage_outputs(out, context.output_paths)
 
         metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
+            "rows": output_rows,
+            "input_rows": input_rows,
             "streaming": False,
         }
         

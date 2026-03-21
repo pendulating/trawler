@@ -1,0 +1,49 @@
+# Prompt template for R_ground normative grounding judge.
+# The judge evaluates whether a model's completion correctly grounds
+# its reasoning in the provided normative universe N_hat_b.
+
+system_prompt: |
+  You are an expert evaluator of normative reasoning about information flows
+  and social norms. You will be given:
+
+  1. A text chunk from a literary or prescriptive source
+  2. A model's completion containing reasoning and structured extraction
+  3. A normative universe (a set of canonical norms extracted from the source text)
+
+  Your task is to evaluate whether the model's completion is properly grounded
+  in the provided normative universe. Specifically:
+
+  - Do the norms invoked in the model's reasoning match norms in the universe?
+  - If the model identifies information flows, are they governed by universe norms?
+  - Does the model's appropriateness judgment follow logically from matched norms?
+
+  Respond with a JSON object matching the required schema.
+
+prompt_template: |
+  ## Text Chunk
+  {{chunk_text}}
+
+  ## Model's Completion
+  {{completion_text}}
+
+  ## Normative Universe (N_hat_b)
+  {{norm_universe_json}}
+
+  ## Evaluation Task
+  Evaluate the normative grounding of the model's completion against the
+  provided normative universe. Consider:
+
+  1. **Norm matching**: Do the norms referenced in the reasoning correspond
+     to actual norms in the universe? Exact matches are not required —
+     semantic equivalence is sufficient.
+
+  2. **Flow governance**: If information flows are identified, are they
+     governed by norms in the universe? A flow that violates or upholds
+     a universe norm should reference that norm.
+
+  3. **Appropriateness coherence**: Does the appropriateness judgment
+     (appropriate/inappropriate/ambiguous) follow from the matched norms?
+     An "inappropriate" judgment should cite a violated norm; an "appropriate"
+     judgment should cite an upheld norm.
+
+  Provide your evaluation as a JSON object.

@@ -6,7 +6,7 @@ from text. Separate from the IG 2.0 schemas in schema.py.
 
 from __future__ import annotations
 
-from typing import List, Optional, Literal
+from typing import Dict, List, Optional, Literal
 from pydantic import BaseModel, Field
 
 
@@ -58,7 +58,7 @@ class CIReasoningList(BaseModel):
         description=(
             "Information flows identified in the text. "
             "Output an empty array [] if no information exchanges are found. "
-            "Limit to 1-5 most significant flows per chunk."
+            "Provide up to 10 flows per chunk."
         ),
         max_length=10,
     )
@@ -162,21 +162,31 @@ class RazNormTuple(BaseModel):
     norm_subject: str = Field(
         ...,
         description=(
-            "The role or class of persons upon whom the obligation falls "
-            "(e.g., 'the believer', 'a parent', 'every witness')"
+            "The social role or class of persons upon whom the obligation falls. "
+            "MUST be a social role, NEVER a named character. "
+            "Examples: 'a gentleman', 'an unmarried woman of marriageable age', "
+            "'a parent', 'a host', 'a servant in a gentleman's household'. "
+            "NEVER use character names like 'Elizabeth', 'Mr. Darcy', 'Mrs. Bennet'."
         ),
     )
     norm_act: str = Field(
         ...,
         description=(
-            "The action prescribed or proscribed, stated as a verb phrase "
-            "(e.g., 'bear false testimony', 'teach scripture to one's children')"
+            "The generalizable action prescribed or proscribed, stated as a verb "
+            "phrase. Must describe a recurring type of action, not a one-time plot "
+            "event. Examples: 'receive a proposal with courtesy', 'call on new "
+            "neighbors', 'supervise the social conduct of one's unmarried daughters'. "
+            "NEVER reference specific characters or scene-specific plot events."
         ),
     )
     condition_of_application: Optional[str] = Field(
         None,
         description=(
-            "The circumstances under which the norm applies. "
+            "The recurring social circumstances under which the norm applies. "
+            "Must describe a situation that could arise across multiple scenes, "
+            "families, or social occasions — not a scene-specific plot event. "
+            "Examples: 'at a formal social gathering', 'when receiving a proposal "
+            "of marriage', 'while a guest is convalescing in one's household'. "
             "Null if the norm is unconditional."
         ),
     )
@@ -225,7 +235,7 @@ class PrescriptiveNormExtraction(BaseModel):
         ),
     )
     confidence_qual: Literal[
-        "very_low", "low", "moderate", "high", "very_high"
+        "very_uncertain", "uncertain", "somewhat_certain", "certain", "very_certain"
     ] = Field(
         ...,
         description="Qualitative extraction confidence (5-point Likert)",
@@ -236,14 +246,6 @@ class PrescriptiveNormExtraction(BaseModel):
         le=10,
         description="Numeric extraction confidence (0-10)",
     )
-    source_snippet: str = Field(
-        ...,
-        description="The exact quote from the source text containing the norm",
-    )
-    reasoning_trace: str = Field(
-        ...,
-        description="The reasoning chain produced by the model for this norm",
-    )
 
 
 class PrescriptiveNormExtractionResult(BaseModel):
@@ -251,6 +253,85 @@ class PrescriptiveNormExtractionResult(BaseModel):
     norms: List[PrescriptiveNormExtraction] = Field(
         ...,
         description="All extracted norms (Raz anatomy) from the text",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Norm consolidation schemas
+# ---------------------------------------------------------------------------
+
+class ConsolidatedNormTuple(BaseModel):
+    """Canonical merged Raz norm tuple produced by consolidation."""
+    prescriptive_element: str = Field(
+        ...,
+        description="The deontic 'ought' that best captures the shared force of the cluster",
+    )
+    norm_subject: str = Field(
+        ...,
+        description="The role or class of persons, abstracted to cover all cluster members",
+    )
+    norm_act: str = Field(
+        ...,
+        description="The action prescribed or proscribed, merged into a single verb phrase",
+    )
+    condition_of_application: Optional[str] = Field(
+        None,
+        description="The broadest condition satisfied by all cluster members, or null",
+    )
+
+
+class AbstractionMapEntry(BaseModel):
+    """Shows how a specific Raz component was abstracted during merge."""
+    canonical: str = Field(
+        ...,
+        description="The canonical (merged) term chosen for this component",
+    )
+    originals: List[str] = Field(
+        ...,
+        description="The original terms from cluster members that were abstracted",
+    )
+
+
+class ConsolidatedNormResult(BaseModel):
+    """LLM output for merging a cluster of similar norms."""
+    canonical_norm: ConsolidatedNormTuple = Field(
+        ...,
+        description="The merged 4-component Raz norm tuple",
+    )
+    canonical_articulation: str = Field(
+        ...,
+        description="The merged norm stated as a complete sentence",
+    )
+    normative_force: Literal[
+        "obligatory", "prohibited", "permitted", "recommended", "discouraged"
+    ] = Field(
+        ...,
+        description="Deontic classification of the canonical norm (majority of cluster)",
+    )
+    context: str = Field(
+        ...,
+        description="Societal sphere of the canonical norm",
+    )
+    governs_information_flow: bool = Field(
+        ...,
+        description="Whether the canonical norm regulates information exchange",
+    )
+    information_flow_note: Optional[str] = Field(
+        None,
+        description="CI-vocabulary description if governs_information_flow is true",
+    )
+    abstraction_map: Optional[Dict[str, AbstractionMapEntry]] = Field(
+        None,
+        description=(
+            "Map of Raz components where abstraction occurred. "
+            "Keys are component names (norm_subject, norm_act, etc.), "
+            "values show canonical vs original terms. "
+            "Null if no abstraction was needed."
+        ),
+    )
+    consolidation_rationale: str = Field(
+        ...,
+        description="1-3 sentences explaining why these norms were merged and what nuance was lost",
     )
 
 
@@ -305,7 +386,7 @@ class RazNormReasoningList(BaseModel):
         description=(
             "Norms identified in the text. "
             "Output an empty array [] if no prescriptive norms are found. "
-            "Limit to 1-5 most significant norms per chunk."
+            "Provide up to 10 norms per chunk."
         ),
         max_length=10,
     )
@@ -315,4 +396,104 @@ class RazNormReasoningList(BaseModel):
             "Whether the text contains any prescriptive statements — "
             "norms about what agents ought or ought not to do"
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Role abstraction schemas
+# ---------------------------------------------------------------------------
+
+class RoleAbstractedNorm(BaseModel):
+    """A norm rewritten with functional social roles instead of character names.
+
+    Preserves all metadata fields from the extraction stage; only rewrites
+    the Raz tuple components and articulation to use social roles.
+    """
+    prescriptive_element: str = Field(
+        ...,
+        description="The deontic 'ought' — preserved exactly from input, never changed",
+    )
+    norm_subject: str = Field(
+        ...,
+        description=(
+            "The functional social role rewritten from any character name. "
+            "Must capture: (1) social position, (2) relational context, "
+            "(3) functional capacity that makes the norm binding. "
+            "Example: 'a mother of unmarried daughters whose social duty "
+            "includes securing advantageous matches'. "
+            "MUST NOT contain any character names or place names."
+        ),
+    )
+    norm_act: str = Field(
+        ...,
+        description=(
+            "The prescribed action, rewritten only if it contained character "
+            "names or plot-specific references. Must be a generalizable verb phrase."
+        ),
+    )
+    condition_of_application: Optional[str] = Field(
+        None,
+        description=(
+            "The condition rewritten to remove character names, place names, "
+            "or scene-specific references. Must describe a recurring social "
+            "situation. Null if unconditional."
+        ),
+    )
+    normative_force: Literal[
+        "obligatory", "prohibited", "permitted", "recommended", "discouraged"
+    ] = Field(
+        ...,
+        description="Preserved exactly from input — never changed",
+    )
+    norm_articulation: str = Field(
+        ...,
+        description=(
+            "The norm restated as a complete sentence using the abstracted "
+            "role, act, and condition. Must be name-free."
+        ),
+    )
+    context: str = Field(
+        ...,
+        description="Preserved from input — the societal domain",
+    )
+    norm_source: Literal["explicit", "implicit", "both"] = Field(
+        ...,
+        description="Preserved from input",
+    )
+    governs_information_flow: bool = Field(
+        ...,
+        description="Preserved from input",
+    )
+    information_flow_note: Optional[str] = Field(
+        None,
+        description="Preserved from input",
+    )
+    confidence_qual: Literal[
+        "very_uncertain", "uncertain", "somewhat_certain", "certain", "very_certain"
+    ] = Field(
+        ...,
+        description="Preserved from input",
+    )
+    confidence_quant: int = Field(
+        ...,
+        ge=0,
+        le=10,
+        description="Preserved from input",
+    )
+    role_rationale: str = Field(
+        ...,
+        description=(
+            "1-3 sentences explaining: (a) what social position the character "
+            "occupies, (b) what relational context activates the norm, "
+            "(c) what functional capacity or duty makes the norm binding. "
+            "If the input was already fully abstracted, state that no rewrite was needed."
+        ),
+    )
+
+
+class RoleAbstractionResult(BaseModel):
+    """Top-level output for the role abstraction stage."""
+    norm: RoleAbstractedNorm = Field(
+        ...,
+        description="The norm rewritten with functional social roles",
     )

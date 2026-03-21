@@ -1,0 +1,60 @@
+# @package _global_
+# Standalone Role Abstraction Pipeline
+#
+# Runs role abstraction independently on the output of a prior norm
+# extraction run.  Rewrites character-specific norms into functional
+# social roles (position + relational context + functional capacity).
+#
+# Usage:
+#   python -m dagspaces.historical_norms.cli \
+#     pipeline=role_abstraction_standalone \
+#     extraction_input=/path/to/structured_norms.parquet
+#
+#   # Or use the environment variable:
+#   EXTRACTION_PARQUET=/path/to/structured_norms.parquet \
+#     python -m dagspaces.historical_norms.cli \
+#     pipeline=role_abstraction_standalone
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# Prompt for the role abstraction stage
+prompt_role_abstraction: ${prompt_role_abstraction}
+
+# Path to the extraction parquet to abstract.
+extraction_input: ${oc.env:EXTRACTION_PARQUET,${data.parquet_path}}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/role_abstraction_standalone
+  allow_partial: false
+
+  sources:
+    extraction_output:
+      path: ${extraction_input}
+      type: parquet
+
+  graph:
+    nodes:
+      # ============================================================
+      # Stage 1 (only): Role Abstraction
+      # Rewrites character-specific norms into functional social
+      # roles using a focused LLM rewrite pass.
+      # ============================================================
+      role_abstraction:
+        stage: norm_role_abstraction
+        depends_on: []
+        inputs:
+          dataset: extraction_output
+        outputs:
+          dataset: outputs/role_abstraction/abstracted_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 1024
+        launcher: g2_slurm_pierson
+        wandb_suffix: role_abstraction

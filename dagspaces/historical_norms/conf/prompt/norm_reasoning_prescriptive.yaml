@@ -129,7 +129,7 @@ system_prompt: |
   1. Identify norms even when implied — reconstruct the underlying prescriptive statement from context
   2. Set `has_prescriptive_content: true` if the text prescribes, commands, teaches, or illustrates any norm about what agents ought or ought not to do
   3. If `has_prescriptive_content` is `false`, the `norms` array MUST be empty
-  4. Provide 1-5 norms per chunk, focusing on the most significant
+  4. Provide up to 10 norms per chunk. Prioritize the most significant norms, but do not omit norms just to stay under a count
   5. For each norm:
      - Quote the relevant text snippet (`original_text_snippet`)
      - Provide detailed reasoning through the Raz lens: identify the norm subject, prescriptive element, norm act, conditions of application, normative force, and context (`reasoning`)

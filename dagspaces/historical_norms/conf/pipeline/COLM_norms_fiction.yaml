@@ -1,0 +1,109 @@
+# @package _global_
+# Raz Norm Extraction Pipeline -- Fiction Texts (COLM)
+#
+# Extracts structured Raz norm tuples from a sample of fiction:
+#   Pride and Prejudice, Alice in Wonderland, Frankenstein,
+#   The Age of Innocence, 1984
+#
+# Pipeline: Fetch -> Norm Reasoning -> Norm Extraction -> Role Abstraction
+#
+# Usage:
+#   python -m dagspaces.historical_norms.cli -m \
+#     pipeline=COLM_norms_fiction
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# Override prompts to use fiction variants
+prompt_reasoning: ${prompt_norm_reasoning_fiction}
+prompt_extraction: ${prompt_norm_extraction_fiction}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/COLM_norms_fiction
+  allow_partial: false
+
+  sources:
+    gutenberg_config:
+      path: ${oc.env:GUTENBERG_CONFIG,dagspaces/historical_norms/conf/data/fiction_sample_for_colm.yaml}
+      type: yaml
+
+  graph:
+    nodes:
+      # ============================================================
+      # Stage 1: Fetch and Chunk
+      # ============================================================
+      fetch:
+        stage: fetch_gutenberg
+        depends_on: []
+        inputs:
+          config: gutenberg_config
+        outputs:
+          dataset: outputs/fetch/chunks.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+        launcher: g2_slurm_cpu
+        wandb_suffix: fetch
+
+      # ============================================================
+      # Stage 2: Raz Norm Reasoning
+      # Identifies norms using Raz's anatomy and reasons about
+      # prescriptive elements, subjects, acts, and conditions.
+      # ============================================================
+      reasoning:
+        stage: norm_reasoning
+        depends_on: [fetch]
+        inputs:
+          dataset: fetch.dataset
+        outputs:
+          dataset: outputs/reasoning/reasoning.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 4096
+        launcher: g2_slurm_pierson
+        wandb_suffix: reasoning
+
+      # ============================================================
+      # Stage 3: Raz Norm Extraction
+      # Converts reasoning traces to structured Raz norm tuples
+      # via constrained decoding.
+      # ============================================================
+      extraction:
+        stage: norm_extraction
+        depends_on: [reasoning]
+        inputs:
+          dataset: reasoning.dataset
+        outputs:
+          dataset: outputs/extraction/structured_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 8192
+        launcher: g2_slurm_pierson
+        wandb_suffix: extraction
+
+      # ============================================================
+      # Stage 4: Role Abstraction
+      # Rewrites character-specific norms into functional social
+      # roles (position + relational context + functional capacity).
+      # ============================================================
+      role_abstraction:
+        stage: norm_role_abstraction
+        depends_on: [extraction]
+        inputs:
+          dataset: extraction.dataset
+        outputs:
+          dataset: outputs/role_abstraction/abstracted_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 1024
+        launcher: g2_slurm_pierson
+        wandb_suffix: role_abstraction

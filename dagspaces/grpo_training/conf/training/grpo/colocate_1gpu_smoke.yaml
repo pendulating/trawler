@@ -1,0 +1,31 @@
+# @package training.grpo
+# Colocate mode, 1 GPU, smoke test with 4B model.
+num_generations: 2
+learning_rate: 1.0e-6
+per_device_batch_size: 1
+gradient_accumulation_steps: 2
+num_epochs: 1
+max_steps: 10
+warmup_steps: 2
+max_completion_length: 256
+gradient_checkpointing: true
+bf16: true
+logging_steps: 1
+save_strategy: "no"
+
+use_vllm: true
+vllm_mode: colocate
+vllm_gpu_memory_utilization: 0.4
+vllm_enable_sleep_mode: true
+
+contrastive_ratio: 0.0
+
+reward_weights:
+  - 0.25
+  - 0.20
+  - 0.20
+  - 0.20
+  - 0.15
+  - 0.00
+
+context_embedding_model: all-MiniLM-L6-v2

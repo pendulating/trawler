@@ -1,0 +1,353 @@
+\documentclass[12pt, oneside, paper=letter, DIV=15, BCOR=0mm, abstract=true, headings=small]{scrartcl}
+\usepackage[utf8]{inputenc}
+
+% scrpage format, Header and footer separation
+\usepackage[headsepline %, footsepline
+]{scrlayer-scrpage}
+
+% Appendix
+\usepackage[toc,page]{appendix}
+
+% Version number
+\newcommand{\versionnumber}{1.4}
+
+\newcommand{\version}{\versionnumber~(20th October 2024)}
+
+\newcommand{\ifootertext}{IG 2.0 Codebook (Version:~\versionnumber)}
+
+\newcommand{\ofootertext}{}
+%{Release Candidate -- do not cite or distribute}
+
+% Head mark with subsection reference
+%\clearpairofpagestyles
+\chead{\headmark}
+\automark[subsubsection]{subsubsection}
+\cfoot{\thepage}
+\ifoot{\ifootertext}
+\ofoot{\ofootertext}
+
+% Figure include
+\usepackage{graphicx}
+
+% Color palette
+\usepackage[x11names]{xcolor}
+
+\usepackage{makeidx}         % allows index generation
+
+% Refined lines in tables
+\usepackage{booktabs}
+
+% Table formatting (centering)
+%\usepackage{array}
+% Three part table (with table notes)
+\usepackage{threeparttable}
+
+\usepackage{multirow}
+
+\usepackage[hidelinks]{hyperref}        % Links to TOC entries, etc.
+%\usepackage{natbib}          % Enables APA-like output with style apalike
+
+\usepackage[style=apa,natbib,uniquename=false]{biblatex} % uniquename suppresses initials in citations
+\addbibresource{references.bib}
+%\usepackage[style=apa, natbib]{biblatex}
+
+\DeclareSourcemap{ % Used when .bib/Bibliography is compiled, not when document is
+    \maps[overwrite, datatype=bibtex]{
+        \map{ % Replaces '{\_}', '{_}' or '\_' with just '_'
+            \step[fieldsource=doi,
+                  match=\regexp{\{\\\_\}|\{\_\}|\\\_},
+                  replace=\regexp{\_}]
+        }
+        \map{ % Replaces '{'$\sim$'}', '$\sim$' or '{~}' with just '~'
+            \step[fieldsource=doi,
+                  match=\regexp{\{\$\\sim\$\}|\{\~\}|\$\\sim\$},
+                  replace=\regexp{\~}]
+        }
+        \map{ % Replaces '{\$}'
+            \step[fieldsource=doi,
+                  match=\regexp{\{\\\x{26}\}},
+                  replace=\regexp{\x{26}}]
+        }
+    }
+}
+
+% Multi-page tables
+\usepackage{longtable}
+
+% Scales math sub- and superscripts correctly
+%\usepackage{amsmath}
+\usepackage{mathtools}
+\usepackage{bm}
+
+% Refines math fonts
+\usepackage{newtxmath}
+
+% Resolves reference target entity (e.g., Figure, Section)
+\usepackage[capitalize, noabbrev]{cleveref}
+
+% Sans serif font
+\renewcommand{\familydefault}{\sfdefault}
+
+\newcommand*\subtxt[1]{_{\textbf{#1}}} % Formatting of subscript - separated from other formatting
+
+\newcommand*\subtxtNormal[1]{_{\textup{#1}}} % Formatting of subscript - separated from other formatting
+
+\newcommand{\corecolor}{blue}
+\newcommand{\corecolorname}{blue}
+\newcommand{\corecolorconst}{purple}
+\newcommand{\corecolorconstname}{purple}
+\newcommand{\extendedcolor}{Green4}
+\newcommand{\extendedcolorname}{green}
+\newcommand{\logicocolor}{OrangeRed2}
+\newcommand{\logicocolorname}{orange}
+\newcommand{\neutralcolor}{black}
+
+% Level-specific formatting
+\newcommand{\format}[1]{\textbf{\textcolor{\corecolor}{#1}}} % Formatting for IG Core for regulative statements
+\newcommand{\formatConst}[1]{\textbf{\textcolor{\corecolorconst}{#1}}} % Formatting for IG Core for constitutive statements
+\newcommand{\formatExt}[1]{\textbf{\textcolor{\extendedcolor}{#1}}} % Formatting for IG Extended
+\newcommand{\formatLog}[1]{\textbf{\textcolor{\logicocolor}{#1}}} % Formatting for IG Logico
+\newcommand{\formatNeutral}[1]{\textbf{\textcolor{\neutralcolor}{#1}}} % Neutral formatting in bold
+\newcommand{\formatNeutralIt}[1]{\textit{\textcolor{\neutralcolor}{#1}}} % Neutral formatting in bold
+
+% IG-specific Symbols
+%\newcommand{\mformat}[1]{\bm{#1}} % Formatting
+%\newcommand{\A}{\format{A}} % Attributes\
+
+\newcommand{\A}[1]{\textcolor{\corecolor}{$\textbf{A#1}$}} % Attributes, accepts subscript parameter (e.g., \A{1}; can be empty, e.g., \A{})
+
+\newcommand{\B}[1]{\textcolor{\corecolor}{$\textbf{B#1}$}} % Object with subscript (e.g., \B{1}) (or original IG 1.0 object, i.e., B{})
+\newcommand{\Bext}[1]{\textcolor{\extendedcolor}{$\textbf{B#1}$}} % Object with subscript (e.g., \B{1}) (or original IG 1.0 object, i.e., B{})
+
+\newcommand{\Bdirraw}{Bdir} % Raw formatted direct object
+\newcommand{\Bdir}[1]{\textcolor{\corecolor}{$\textbf{Bdir#1}$}} % direct object
+
+\newcommand{\Bindraw}{Bind} % Raw formatted indirect object
+\newcommand{\Bind}[1]{\textcolor{\corecolor}{$\textbf{Bind#1}$}} % indirect object
+
+\newcommand{\Cacraw}{C$\subtxtNormal{ac}$} % Raw formatted activation condition
+\newcommand{\Cac}{\textcolor{\corecolor}{$\textbf{Cac}$}} % Conditions for regulative statements - mind formatting in math mode
+\newcommand{\Cacconst}{\textcolor{\corecolorconst}{$\textbf{Cac}$}} % Conditions for constitutive statements - mind formatting in math mode
+
+\newcommand{\Cexraw}{C$\subtxtNormal{ex}$} % Raw formatted execution constraint
+\newcommand{\Cex}{\textcolor{\corecolor}{$\textbf{Cex}$}} % Constraints for regulative statements - mind formatting in math mode
+\newcommand{\Cexconst}{\textcolor{\corecolorconst}{$\textbf{Cex}$}} % Constraints for constitutive statements - mind formatting in math mode
+
+\newcommand{\I}{\format{I}} % Aims
+
+\newcommand{\D}{\format{D}} % Deontic
+
+\newcommand{\M}{\formatConst{M}} % Modal
+
+\newcommand{\Pp}{\formatConst{P}} % Constituting Properties
+
+\newcommand{\PpExt}[1]{\textcolor{\extendedcolor}{$\textbf{P#1}$}} % Properties, accepts subscript parameter (e.g., \A{1}; can be empty, e.g., \A{})
+
+\newcommand{\E}{\formatConst{E}} % Constituted Entities
+
+\newcommand{\F}{\formatConst{F}} % Constitutive Functions
+
+\newcommand{\Oe}{\format{O}} % Or else
+
+\newcommand{\Oeconst}{\formatConst{O}} % Or else
+
+% Generic properties
+
+\newcommand{\prop}[1]{\format{p#1}} % Formats property annotations, takes suffix as parameter (e.g., \prop{1} --> "prop1") - IG Core formatting
+\newcommand{\propconst}[1]{\formatConst{p#1}} % Formats property annotations, takes suffix as parameter (e.g., \prop{1} --> "prop1") - IG Core formatting
+\newcommand{\propExt}[1]{\formatExt{p#1}} % Formats property annotations, takes suffix as parameter (e.g., \prop{1} --> "prop1") - IG Extended formatting
+
+% Parentheses, brackets, braces
+\newcommand{\lp}{\formatNeutral{(}} % left parenthesis for horizontal nesting
+\newcommand{\rp}{\formatNeutral{)}} % right parenthesis for horizontal nesting
+\newcommand{\lpconst}{\formatNeutral{(}} % left parenthesis for horizontal nesting
+\newcommand{\rpconst}{\formatNeutral{)}} % right parenthesis for horizontal nesting
+\newcommand{\lb}{\formatExt{\{}} % left brace for component-level nesting
+\newcommand{\rb}{\formatExt{\}}} % right brace for component-level nesting
+\newcommand{\ls}{\formatNeutral{[}} % left square bracket for annotations
+\newcommand{\rs}{\formatNeutral{]}} % right square bracket for annotations
+\newcommand{\lsconst}{\formatNeutral{[}} % left square bracket for annotations (constitutive statements)
+\newcommand{\rsconst}{\formatNeutral{]}} % right square bracket for annotations (constitutive statements)
+\newcommand{\lsi}{\formatNeutralIt{[}} % left square bracket for inferred component
+\newcommand{\rsi}{\formatNeutralIt{]}} % right square bracket for inferred component
+
+% Custom annotations
+
+\newcommand{\custom}[1]{\format{#1}} % Formats anything according to the shared formatting configuration for IG Core
+\newcommand{\customExtRaw}[1]{\formatExt{#1}} % Formats according to IG Extended in raw form
+\newcommand{\customExt}[1]{\formatExt{\ls{}#1\rs{}}} % Formats according to IG Extended
+\newcommand{\customLog}[1]{\formatLog{\ls{}#1\rs{}}} % Formats according to IG Logico
+
+
+% Logical operators
+\newcommand{\AND}{\formatNeutral{[AND]}}
+\newcommand{\ANDconst}{\formatNeutral{[AND]}}
+\newcommand{\OR}{\formatNeutral{[OR]}}
+\newcommand{\ORconst}{\formatNeutral{[OR]}}
+\newcommand{\XOR}{\formatNeutral{[XOR]}}
+\newcommand{\XORconst}{\formatNeutral{[XOR]}}
+\newcommand{\NOT}{\formatNeutral{[NOT]}}
+\newcommand{\NOTconst}{\formatNeutral{[NOT]}}
+\newcommand{\ORELSE}{\formatNeutral{OR ELSE}}
+\newcommand{\ORELSEconst}{\formatNeutral{OR ELSE}}
+
+
+% IG Profiles Specifications
+
+\newcommand{\Ureg}{U$\subtxtNormal{reg}$}
+\newcommand{\Ucon}{U$\subtxtNormal{con}$}
+
+
+% Coding Guidelines Table Entry
+
+\newcommand{\EntryDecompositionOfComponentLevelCombinations}{\begin{emp}Decomposition of component-level combinations\end{emp}}
+
+\newcommand{\EntryLogicalRelationshipsAmongComponents}{\begin{emp}Logical relationships among statement components\end{emp}}
+
+\newcommand{\EntryCrossComponentSemanticAnnotations}{\begin{emp}Cross-Component Semantic Annotations\end{emp}}
+
+% Taxonomy Prefixes
+
+\newcommand{\ctx}{ctx}
+\newcommand{\anim}{anim}
+\newcommand{\metatype}{metatype}
+\newcommand{\role}{role}
+\newcommand{\polref}{ref}
+\newcommand{\confunc}{confunc}
+\newcommand{\regfunc}{regfunc}
+\newcommand{\proptype}{proptype} % Property Types
+
+
+% Custom standard spacing in tables where separation is needed, or for paragraphs
+\renewcommand{\sp}{\vspace{0.5cm}}
+
+% Environments
+\newenvironment{hil} % Highlights
+{\bfseries}{}
+
+\newenvironment{emp} % Emphasis (for calling out phrases)
+{\itshape}
+{}
+
+\newcommand{\fullref}[1]{\begin{emp}\cref{#1} \nameref{#1}\end{emp}} % Full reference to relevant section, including formatted number and title
+
+\newenvironment{ptit} % Paragraph title within section without new section
+{
+\vspace{0.2cm}
+\bfseries
+\noindent}
+{\vspace{0.2cm}}
+
+\newenvironment{exa} % Examples
+%{ \rule{1ex}{1ex}\hspace{\stretch{1}} }
+%{ \hspace{\stretch{1}}\rule{1ex}{1ex} }
+%{\bfseries\itshape}
+{   
+    \vspace{0.1cm}
+    \bgroup
+    \par
+    \itshape
+    %\fontfamily{\ttfamily}%\selectfont\small
+    %\fontfamily{jkpkvos}\selectfont\small
+}
+{%
+    \par\egroup
+    \vspace{0.1cm}
+}
+
+\newenvironment{exi} % Inline example (without leading or trailing spaces)
+{\itshape}
+{}
+
+\usepackage{soul} % Package used for underline command
+
+% Underline for coding specifications
+\newcommand{\udl}[1]{\ul{#1}}
+
+% Comment
+\newcommand{\cmt}[1]{\textcolor{red}{#1}}
+
+% Coloured framing of figures
+\usepackage[most]{tcolorbox}
+
+% Frame for figures
+\newcommand{\framedfigure}[1]{
+% green!30!black
+\tcbox[colframe=black,
+               colback=Snow1!30]{#1}
+}
+
+% Background color for fboxes
+\newcommand{\boxbgcolor}{Snow1}
+
+% Landscape pages
+\usepackage{pdflscape}
+
+\usepackage[vmargin=1.4cm,hmargin=2cm,
+% header positioning (+ is down)
+headsep = \dimexpr2\baselineskip-5mm\relax,
+% footer positioning (+ is down)
+footskip = \dimexpr1\baselineskip+5mm\relax]{geometry}
+
+% Generic specification of table
+\newcommand{\tabledims}{
+% portrait
+%{p{3cm} p{5cm} p{4cm} p{4cm}}
+% landscape
+%{
+p{3cm} p{7cm} p{7cm} p{6cm} %}
+}
+
+% Multi-column specification for coding tables
+\newcommand{\tablespan}{
+% portrait
+%p{17cm}
+%landscape
+p{25cm}
+}
+
+% Exceptional specification for flexible alignments in case of unused columns
+\newcommand{\tabledimsNarrow}{
+% portrait
+%{p{3cm} p{5cm} p{4cm} p{4cm}}
+% landscape
+%{
+p{7cm} p{7cm} p{7cm} p{1cm} %}
+}
+% Exceptional specification for multicolumn specs for varying table specifications
+\newcommand{\tablespanNarrow}{p{17cm}}
+
+\title{Institutional Grammar 2.0 Codebook}
+\author{Christopher K.~Frantz\footnote{Affiliation: Norwegian University of Science and Technology, E-mail: christopher.frantz@ntnu.no}\qquad Saba N.~Siddiki\setcounter{footnote}{6}\footnote{Affiliation: Syracuse University, E-mail: ssiddiki@maxwell.syr.edu}}
+
+\date{Version: \version}
+
+\begin{document}
+
+\maketitle
+
+\section*{Abstract}
+The Grammar of Institutions, or Institutional Grammar, is an established approach to encode policy information in terms of institutional statements based on a set of pre-defined syntactic components. This codebook provides coding guidelines for a revised version of the Institutional Grammar, the Institutional Grammar 2.0 (IG 2.0)~\citep{Frantz2021,Frantz2022InstitutionalGrammar}. IG 2.0 is a specification that aims at facilitating the encoding of policy to meet varying analytical objectives. To this end, it revises the grammar with respect to comprehensiveness, flexibility, and specificity by offering multiple levels of expressiveness (IG Core, IG Extended, IG Logico). In addition to the encoding of regulative statements, it further introduces the encoding of constitutive institutional statements, as well as statements that exhibit both constitutive and regulative characteristics. As a supplementary resource to the IG 2.0 specification, the codebook initially covers fundamental concepts of IG 2.0, before providing an overview of pre-coding steps relevant for document preparation. Detailed coding guidelines are provided for both regulative and constitutive statements across all levels of expressiveness, along with the encoding guidelines for statements of mixed form -- hybrid and polymorphic institutional statements. The document further provides an overview of taxonomies used in the encoding process and referred to throughout the codebook. The codebook concludes with a summary and discussion of relevant considerations to facilitate the coding process. An initial Reader's Guide helps the reader tailor the content to her interest.
+
+
+\tableofcontents
+
+\newpage
+
+\input{sections/01-introduction}
+\input{sections/02-definitions}
+\input{sections/03-precoding}
+\input{sections/04-guidelines}
+\input{sections/05-taxonomies}
+\input{sections/06-conclusion}
+
+% Print references
+\printbibliography[heading=bibintoc]
+
+\newpage
+
+\begin{appendices}
+\input{sections/a1-checklist.tex}
+\end{appendices}
+
+\end{document}

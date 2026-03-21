@@ -28,13 +28,19 @@ class NormExtractionRunner(StageRunner):
 
         cfg = context.cfg
         df, _, _ = prepare_stage_input(cfg, dataset_path, self.stage_name)
+        input_rows = len(df) if isinstance(df, pd.DataFrame) else 0
+        print(f"[{self.stage_name}] Input: {input_rows} rows")
 
         out = run_norm_extraction_stage(df, cfg)
 
+        output_rows = len(out) if isinstance(out, pd.DataFrame) else 0
+        print(f"[{self.stage_name}] Output: {output_rows} rows "
+              f"(ratio: {output_rows / max(input_rows, 1):.2f}x)")
         _save_stage_outputs(out, context.output_paths)
 
         metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
+            "rows": output_rows,
+            "input_rows": input_rows,
             "streaming": False,
         }
         

@@ -1,0 +1,39 @@
+# @package _global_
+# GRPO-only pipeline: assumes SFT checkpoint, reward cache, and norm universes exist.
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/grpo_only
+
+  sources:
+    sft_checkpoint:
+      path: ${oc.env:SFT_CHECKPOINT_PATH}
+      type: dir
+    reward_cache:
+      path: ${oc.env:REWARD_CACHE_PATH}
+      type: parquet
+    norm_universes:
+      path: ${oc.env:NORM_UNIVERSES_PATH}
+      type: json
+    sft_pairs:
+      path: ${oc.env:SFT_PAIRS_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      grpo_training:
+        stage: grpo_training
+        depends_on: []
+        inputs:
+          sft_checkpoint: sft_checkpoint
+          dataset: sft_pairs
+          reward_cache: reward_cache
+          norm_universes: norm_universes
+        outputs:
+          checkpoint:
+            path: outputs/grpo/checkpoint
+            type: dir
+        launcher: g2_slurm_gpu_1x
+        wandb_suffix: grpo_training

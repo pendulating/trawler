@@ -1,0 +1,115 @@
+# @package _global_
+# Raz Norm Extraction Pipeline -- Prescriptive Texts (COLM)
+#
+# Extracts structured Raz norm tuples from major religious texts:
+#   Bible (KJV), Quran (Rodwell), Dhammapada, Bhagavad-Gita, Tao Te Ching, Book of Mormon
+#
+# Pipeline: Fetch (Gutenberg) -> Norm Reasoning -> Norm Extraction
+#
+# Usage:
+#   python -m dagspaces.historical_norms.cli -m \
+#     pipeline=COLM_norms_prescriptive
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# Override prompts to use prescriptive variants tailored for religious/ethical texts
+prompt_reasoning: ${prompt_norm_reasoning_prescriptive}
+prompt_extraction: ${prompt_norm_extraction_prescriptive}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/COLM_norms_prescriptive
+  allow_partial: false
+
+  sources:
+    gutenberg_config:
+      path: ${oc.env:GUTENBERG_CONFIG,dagspaces/historical_norms/conf/data/religious_texts.yaml}
+      type: yaml
+
+  graph:
+    nodes:
+      # ============================================================
+      # Stage 1: Fetch and Chunk
+      # ============================================================
+      fetch:
+        stage: fetch_gutenberg
+        depends_on: []
+        inputs:
+          config: gutenberg_config
+        outputs:
+          dataset: outputs/fetch/chunks.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+        launcher: g2_slurm_cpu
+        wandb_suffix: fetch
+
+      # ============================================================
+      # Stage 2: Raz Norm Reasoning
+      # Identifies norms using Raz's anatomy and reasons about
+      # prescriptive elements, subjects, acts, and conditions.
+      # ============================================================
+      reasoning:
+        stage: norm_reasoning
+        depends_on: [fetch]
+        inputs:
+          dataset: fetch.dataset
+        outputs:
+          dataset: outputs/reasoning/reasoning.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 4096
+        launcher: g2_slurm_pierson
+        wandb_suffix: reasoning
+
+      # ============================================================
+      # Stage 3: Raz Norm Extraction
+      # Converts reasoning traces to structured Raz norm tuples
+      # via constrained decoding.
+      # ============================================================
+      extraction:
+        stage: norm_extraction
+        depends_on: [reasoning]
+        inputs:
+          dataset: reasoning.dataset
+        outputs:
+          dataset: outputs/extraction/structured_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 8192
+        launcher: g2_slurm_pierson
+        wandb_suffix: extraction
+
+      # ============================================================
+      # Stage 4: Norm Consolidation
+      # Groups by gutenberg_id, partitions by normative_force,
+      # clusters with HDBSCAN, then LLM-merges each cluster
+      # into a canonical norm with abstracted components + provenance.
+      # ============================================================
+      consolidation:
+        stage: norm_consolidation
+        depends_on: [extraction]
+        inputs:
+          dataset: extraction.dataset
+        outputs:
+          dataset: outputs/consolidation/consolidated_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 2048
+          consolidation:
+            embedding_model: all-MiniLM-L6-v2
+            min_cluster_size: 3
+            min_samples: 2
+            cluster_selection_epsilon: 0.0
+            group_by: gutenberg_id
+        launcher: g2_slurm_pierson
+        wandb_suffix: consolidation
