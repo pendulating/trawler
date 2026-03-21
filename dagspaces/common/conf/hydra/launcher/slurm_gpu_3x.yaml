@@ -12,7 +12,6 @@ gpus_per_node: 3
 name: ${experiment.name}
 additional_parameters:
   gres: gpu:3
-  wckey: ""
 setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc

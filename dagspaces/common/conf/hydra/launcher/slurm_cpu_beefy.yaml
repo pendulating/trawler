@@ -11,7 +11,6 @@ array_parallelism: 1
 name: ${experiment.name}
 additional_parameters:
   gres: "none"
-  wckey: ""
 srun_args:
   - --gres=none
   - --cpu-bind=none
