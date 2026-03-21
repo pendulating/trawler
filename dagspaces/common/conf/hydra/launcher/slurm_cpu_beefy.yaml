@@ -7,6 +7,7 @@ tasks_per_node: 1
 cpus_per_task: 8
 mem_gb: 64
 partition: ${oc.env:SLURM_PARTITION,pierson}
+wckey: null
 array_parallelism: 1
 name: ${experiment.name}
 additional_parameters:
