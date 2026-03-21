@@ -6,8 +6,8 @@ historical_norms-specific defaults:
 - project:                "historical-norms-extraction"
 - env_var_prefix:         "HISTORICAL_NORMS"  (reads HISTORICAL_NORMS_GPU_SANITIZE_* etc.)
 - default_experiment_name: "historical_norms"
-- full_column_stages:     norm_reasoning / norm_extraction / ci_reasoning /
-                          ci_extraction / fetch_gutenberg
+- full_column_stages:     norm_reasoning / norm_extraction / norm_role_abstraction /
+                          ci_reasoning / ci_extraction / fetch_gutenberg
 - extra_internal_columns: reasoning_data, ci_flows_raw
 - extra_pattern_prefixes: (none — these columns are handled by extra_internal_columns)
 - extra_pattern_names:    (none)
@@ -40,6 +40,7 @@ _HN_FULL_COLUMN_STAGES = frozenset(
     {
         "norm_reasoning",
         "norm_extraction",
+        "norm_role_abstraction",
         "ci_reasoning",
         "ci_extraction",
         "fetch_gutenberg",
@@ -50,6 +51,7 @@ _HN_FULL_COLUMN_KEY_PREFIXES = frozenset(
     {
         "norm_reasoning/",
         "norm_extraction/",
+        "norm_role_abstraction/",
         "ci_reasoning/",
         "ci_extraction/",
         "fetch_gutenberg/",
