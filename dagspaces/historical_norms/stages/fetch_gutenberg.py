@@ -50,7 +50,18 @@ def clean_gutenberg_boilerplate(text: str) -> str:
             end_idx = match.start()
             break
             
-    return text[start_idx:end_idx].strip()
+    text = text[start_idx:end_idx].strip()
+
+    # Normalize line endings (Windows → Unix)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Remove Gutenberg illustration markers
+    text = re.sub(r"\[Illustration[^\]]*\]", "", text)
+
+    # Collapse excessive whitespace (3+ newlines → 2)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip()
 
 def chunk_text(text: str, chunk_size: int = 2000, overlap: int = 200) -> List[str]:
     """Simple semantic chunking by paragraph/sentence."""

@@ -53,6 +53,21 @@ def _find_plot_section(page):
     return _search(page.sections)
 
 
+def _strip_wiki_headers(text):
+    """Remove Wikipedia section headers from the start of plot summaries."""
+    import re
+    # Strip leading headers like "Plot", "Synopsis", "Summary",
+    # "Plot summary", "Plot introduction", "Volume I: Fantine", etc.
+    text = re.sub(
+        r"^(?:Plot summary|Plot introduction|Synopsis|Summary|Plot)\s*",
+        "", text, count=1
+    )
+    # Strip sub-section headers like "Volume I: Fantine" or "Marseille and Château d'If"
+    # (lines that are short, title-cased, and followed by a longer sentence)
+    text = re.sub(r"^[A-Z][^\n]{0,60}\n", "", text, count=1)
+    return text.strip()
+
+
 def _truncate(text, max_words=MAX_SUMMARY_WORDS):
     """Truncate text to approximately max_words, ending at a sentence boundary."""
     words = text.split()
@@ -87,6 +102,7 @@ def main():
             print(f"  No plot section for '{title}', using page summary")
             plot_text = page.summary
 
+        plot_text = _strip_wiki_headers(plot_text)
         summary = _truncate(plot_text)
         summaries[gid] = {
             "title": title,
