@@ -19,13 +19,10 @@ setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
   - source /share/pierson/matt/UAIR/.venv/bin/activate
-  # W&B is controlled via config; avoid forcing mode here
   - unset WANDB_DISABLED
   - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
-  # propagate base URL if configured
   - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
   - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
-  - export RULE_TUPLES_SILENT=1
   - export WANDB_SILENT=true
   # Disable wandb service for distributed environments (uses in-process mode)
   - export WANDB_DISABLE_SERVICE=true

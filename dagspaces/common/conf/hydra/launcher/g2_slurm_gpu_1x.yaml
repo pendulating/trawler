@@ -33,7 +33,6 @@ setup:
   - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
   - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
   - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
-  - export RULE_TUPLES_SILENT=1
   - export WANDB_SILENT=true
   # Disable wandb service for distributed environments (uses in-process mode)
   - export WANDB_DISABLE_SERVICE=true
@@ -47,7 +46,8 @@ setup:
   - export NCCL_CUMEM_HOST_ENABLE=0
   # SHM transport can hang on PCIe, disable it
   - export NCCL_SHM_DISABLE=1
-  - export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512,expandable_segments:True
+  - export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+  - export VLLM_ENFORCE_EAGER=1
   - export CUDA_LAUNCH_BLOCKING=0
   - export TOKENIZERS_PARALLELISM=false
   # Set local TMPDIR to avoid issues with network drives
