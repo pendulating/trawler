@@ -1,0 +1,58 @@
+# @package _global_
+# Norm extraction + role abstraction from existing reasoning output.
+#
+# Skips fetch and reasoning stages. Loads pre-computed reasoning parquet.
+#
+# Usage:
+#   REASONING_PATH=/path/to/reasoning.parquet \
+#     python -m dagspaces.historical_norms.cli pipeline=COLM_extraction_from_reasoning
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+prompt_extraction: ${prompt_norm_extraction_fiction}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:run.dir}/COLM_norms_fiction
+  allow_partial: false
+
+  sources:
+    reasoning_data:
+      path: ${oc.env:REASONING_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      extraction:
+        stage: norm_extraction
+        depends_on: []
+        inputs:
+          dataset: reasoning_data
+        outputs:
+          dataset: outputs/extraction/structured_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 8192
+        launcher: slurm_gpu_2x
+        wandb_suffix: extraction
+
+      role_abstraction:
+        stage: norm_role_abstraction
+        depends_on: [extraction]
+        inputs:
+          dataset: extraction.dataset
+        outputs:
+          dataset: outputs/role_abstraction/abstracted_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 2048
+        launcher: slurm_gpu_2x
+        wandb_suffix: role_abstraction
