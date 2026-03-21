@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -68,6 +69,19 @@ def run_vlm_inference(
     from vllm import LLM
     from vllm.multimodal.utils import fetch_image
 
+    # Check for LoRA adapter
+    lora_path = None
+    lora_request = None
+    try:
+        from omegaconf import OmegaConf
+        lora_path = str(OmegaConf.select(cfg, "model.lora_path") or "")
+    except Exception:
+        pass
+    if lora_path:
+        from vllm.lora.request import LoRARequest
+        lora_request = LoRARequest("sft", 1, lora_path)
+        print(f"[{stage_name}] LoRA adapter: {lora_path}")
+
     # Build engine kwargs from common builder, then overlay VLM-specific kwargs
     engine_kwargs = _build_engine_kwargs(cfg)
 
@@ -89,6 +103,19 @@ def run_vlm_inference(
     print(f"[{stage_name}] Model: {engine_kwargs.get('model')}")
 
     llm = LLM(**engine_kwargs)
+
+    # Determine whether to strip <think> blocks
+    _strip_thinking = False
+    try:
+        ctk = getattr(cfg.model, "chat_template_kwargs", None) or {}
+        if hasattr(ctk, "enable_thinking"):
+            _strip_thinking = not bool(ctk.enable_thinking)
+        elif isinstance(ctk, dict):
+            _strip_thinking = not bool(ctk.get("enable_thinking", True))
+    except Exception:
+        pass
+    if _strip_thinking:
+        print(f"[{stage_name}] Thinking block stripping enabled (enable_thinking=false)")
 
     # Build sampling params
     sp_dict = dict(getattr(cfg, "sampling_params", {}) or {})
@@ -129,14 +156,18 @@ def run_vlm_inference(
     for start in range(0, len(batch_inputs), batch_size):
         end = min(start + batch_size, len(batch_inputs))
         print(f"[{stage_name}] Generating batch {start // batch_size + 1}: rows {start}-{end - 1}")
-        outputs.extend(llm.generate(batch_inputs[start:end], sampling_params))
+        outputs.extend(llm.generate(batch_inputs[start:end], sampling_params, lora_request=lora_request))
 
     # Attach results to dataframe
     result_df = df.copy()
     result_df["generated_text"] = ""
+    from dagspaces.common.vllm_inference import _strip_think_blocks
     for idx, output in zip(valid_indices, outputs):
         if output.outputs:
-            result_df.at[idx, "generated_text"] = output.outputs[0].text.strip()
+            gen_text = output.outputs[0].text.strip()
+            if _strip_thinking and gen_text:
+                gen_text = _strip_think_blocks(gen_text)
+            result_df.at[idx, "generated_text"] = gen_text
 
     print(f"[{stage_name}] Completed VLM inference, {len(outputs)} results")
     return result_df
