@@ -29,7 +29,7 @@ NOVELS = {
     "1984": ("Nineteen Eighty-Four", "George Orwell"),
 }
 
-MAX_SUMMARY_WORDS = 500
+SUMMARY_WARN_WORDS = 2000
 
 
 def _find_plot_section(page):
@@ -68,18 +68,11 @@ def _strip_wiki_headers(text):
     return text.strip()
 
 
-def _truncate(text, max_words=MAX_SUMMARY_WORDS):
-    """Truncate text to approximately max_words, ending at a sentence boundary."""
-    words = text.split()
-    if len(words) <= max_words:
-        return text
-    truncated = " ".join(words[:max_words])
-    # Try to end at a sentence boundary
-    for end in (".", "!", "?"):
-        last = truncated.rfind(end)
-        if last > len(truncated) * 0.7:
-            return truncated[: last + 1]
-    return truncated + "..."
+def _warn_if_long(title, text, threshold=SUMMARY_WARN_WORDS):
+    """Log a warning if the summary exceeds the word threshold."""
+    n = len(text.split())
+    if n > threshold:
+        print(f"  WARNING: '{title}' summary is {n} words (>{threshold})", file=sys.stderr)
 
 
 def main():
@@ -103,7 +96,8 @@ def main():
             plot_text = page.summary
 
         plot_text = _strip_wiki_headers(plot_text)
-        summary = _truncate(plot_text)
+        summary = plot_text
+        _warn_if_long(title, summary)
         summaries[gid] = {
             "title": title,
             "author": author,
