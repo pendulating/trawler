@@ -29,6 +29,7 @@ import os
 from typing import Any, Dict, Iterable, List, Optional
 
 __all__ = [
+    "ensure_dotenv",
     "maybe_silence_vllm_logs",
     "to_json_str",
     "serialize_arrow_unfriendly_in_row",
@@ -36,8 +37,34 @@ __all__ = [
     "sanitize_for_json",
 ]
 
-# Module-level guard so the one-time setup work only runs once per process.
+# Module-level guards so one-time setup work only runs once per process.
+_DOTENV_LOADED = False
 _VLLM_LOGS_SILENCED = False
+
+
+def ensure_dotenv() -> None:
+    """Load the project-root ``.env`` file into ``os.environ`` (idempotent).
+
+    Walks up from this file's directory to find the nearest ``.env``.
+    Existing env vars are NOT overwritten (``override=False``).
+    """
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED:
+        return
+    try:
+        from dotenv import load_dotenv as _load
+
+        search_dir = os.path.dirname(os.path.abspath(__file__))
+        # Walk up to repo root (max 5 levels: common/ -> dagspaces/ -> repo/)
+        for _ in range(5):
+            candidate = os.path.join(search_dir, ".env")
+            if os.path.isfile(candidate):
+                _load(candidate, override=False)
+                break
+            search_dir = os.path.dirname(search_dir)
+    except ImportError:
+        pass
+    _DOTENV_LOADED = True
 
 
 def maybe_silence_vllm_logs() -> None:

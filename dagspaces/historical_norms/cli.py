@@ -9,6 +9,8 @@ def main(cfg: DictConfig) -> None:
     run_experiment(cfg)
 
 if __name__ == "__main__":
+    from dagspaces.common.stage_utils import ensure_dotenv
+    ensure_dotenv()
     main()
 
 
