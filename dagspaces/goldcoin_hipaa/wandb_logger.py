@@ -28,6 +28,7 @@ class WandbConfig(_WandbConfigBase):
         kwargs.setdefault("env_var_prefix", "")
         kwargs.setdefault("full_column_stages", _FULL_COLUMN_STAGES)
         kwargs.setdefault("extra_runtime_keys", [])
+        kwargs.setdefault("dagspace_name", "goldcoin_hipaa")
         return super().from_hydra_config(cfg, **kwargs)
 
 

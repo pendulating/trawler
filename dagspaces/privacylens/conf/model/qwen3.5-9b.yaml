@@ -1,0 +1,10 @@
+model_source: /share/pierson/matt/zoo/models/Qwen3.5-9B
+model_family: qwen3.5
+chat_template_kwargs:
+  enable_thinking: false
+engine_kwargs:
+  max_model_len: 8192
+  max_num_seqs: 32
+  trust_remote_code: true
+batch_size: 0
+concurrency: 1

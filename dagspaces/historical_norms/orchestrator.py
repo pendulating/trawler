@@ -39,6 +39,7 @@ from dagspaces.common.orchestrator import (
     _save_stage_outputs,
     _safe_log_table,
     _print_status,
+    build_run_config,
     _probe_single_gpu,
     _update_slurm_gpu_envs,
     _adjust_tensor_parallel_env,
@@ -98,6 +99,8 @@ _STAGE_REGISTRY: Dict[str, StageRunner] = get_stage_registry()
 
 def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a single stage - designed to be submitted as a SLURM job."""
+    from dagspaces.common.stage_utils import ensure_dotenv
+    ensure_dotenv()
     # Reconstruct context from serialized data
     from omegaconf import OmegaConf
     cfg = OmegaConf.create(context_data["cfg"])
@@ -142,13 +145,8 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
     
     # Execute stage with wandb logging context
     wandb_run_id = node.wandb_suffix or node.key
-    run_config = {
-        "node": node.key,
-        "stage": node.stage,
-        "inputs": list(context.inputs.keys()),
-        "outputs": list(context.output_paths.keys()),
-    }
-    
+    run_config = build_run_config(cfg, node, context.inputs, context.output_paths, dagspace_name="historical_norms")
+
     with _get_wandb_logger(cfg, stage=node.stage, run_id=wandb_run_id, run_config=run_config) as logger:
         try:
             # Update context with logger
@@ -405,7 +403,14 @@ def run_experiment(cfg: DictConfig) -> None:
                         except Exception as inner_exc:
                             _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": f"{exc} (inner: {inner_exc})"})
                             raise
-                    
+
+                    # Submitit may return (outcome, payload) tuple or the payload directly
+                    if isinstance(job_result, tuple) and len(job_result) == 2:
+                        outcome, payload = job_result
+                        if outcome == "error":
+                            raise RuntimeError(f"SLURM job {job.job_id} failed:\n{payload}")
+                        job_result = payload
+
                     result = StageResult(
                         outputs=job_result["outputs"],
                         metadata=job_result["metadata"],

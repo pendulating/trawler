@@ -1,0 +1,14 @@
+model_source: /share/pierson/matt/zoo/models/Qwen3.5-9B
+model_family: qwen3.5
+lora_path: /share/pierson/matt/UAIR/outputs/2026-03-14/14-18-47/sft_only/outputs/sft/checkpoint_vlm_patched
+chat_template_kwargs:
+  enable_thinking: false
+engine_kwargs:
+  max_model_len: 8192
+  max_num_seqs: 16
+  trust_remote_code: true
+  enforce_eager: true
+  enable_lora: true
+  max_lora_rank: 64
+batch_size: 0
+concurrency: 1

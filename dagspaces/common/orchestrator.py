@@ -1,7 +1,7 @@
 """Shared orchestrator utilities for all dagspace pipelines.
 
 Functions and classes extracted from uair, historical_norms, and
-contextual_integrity_eval orchestrators. Each orchestrator imports from
+privacylens orchestrators. Each orchestrator imports from
 this module and re-exports the symbols for backward-compatibility with
 runner files that do ``from ..orchestrator import X``.
 """
@@ -155,6 +155,107 @@ def prepare_node_config(
 
 
 # ---------------------------------------------------------------------------
+# Standardized run_config for W&B logging
+# ---------------------------------------------------------------------------
+
+
+def build_run_config(
+    cfg: DictConfig,
+    node: PipelineNodeSpec,
+    inputs: Dict[str, str],
+    output_paths: Dict[str, str],
+    *,
+    dagspace_name: str = "",
+) -> Dict[str, Any]:
+    """Build a standardized run_config dict for W&B logging.
+
+    Centralises the run_config construction that was previously duplicated
+    across all dagspace orchestrators.  Adds pipeline_name, eval_task,
+    dagspace, and checkpoint_name metadata for cross-model comparison.
+    """
+    run_config: Dict[str, Any] = {
+        "node": node.key,
+        "stage": node.stage,
+        "inputs": list(inputs.keys()),
+        "outputs": list(output_paths.keys()),
+    }
+
+    if dagspace_name:
+        run_config["dagspace"] = dagspace_name
+
+    pipeline_name = _resolve_pipeline_name()
+    if pipeline_name:
+        run_config["pipeline_name"] = pipeline_name
+
+    eval_task = _resolve_eval_task(cfg, node)
+    if eval_task:
+        run_config["eval_task"] = eval_task
+
+    checkpoint_name = _resolve_checkpoint_name(cfg)
+    if checkpoint_name:
+        run_config["checkpoint_name"] = checkpoint_name
+
+    return run_config
+
+
+def _resolve_pipeline_name() -> Optional[str]:
+    """Extract pipeline name from Hydra overrides."""
+    try:
+        from hydra.core.hydra_config import HydraConfig
+        hydra_cfg = HydraConfig.get()
+        if hydra_cfg and getattr(hydra_cfg, "job", None):
+            override_dir = getattr(hydra_cfg.job, "override_dirname", None)
+            if override_dir:
+                for part in str(override_dir).split(","):
+                    p = part.strip()
+                    if p.startswith("pipeline="):
+                        return p.split("=", 1)[1]
+    except Exception:
+        pass
+    return os.environ.get("WANDB_PIPELINE_NAME") or None
+
+
+def _resolve_eval_task(cfg: DictConfig, node: PipelineNodeSpec) -> Optional[str]:
+    """Extract eval task identifier from node overrides or prompt config."""
+    try:
+        task = (node.overrides or {}).get("prompt", {}).get("task")
+        if task:
+            return str(task)
+    except Exception:
+        pass
+    try:
+        task = OmegaConf.select(cfg, "prompt.task")
+        if task:
+            return str(task)
+    except Exception:
+        pass
+    return None
+
+
+def _resolve_checkpoint_name(cfg: DictConfig) -> Optional[str]:
+    """Derive checkpoint name from model config."""
+    try:
+        model_cfg = getattr(cfg, "model", None)
+        if not model_cfg:
+            return None
+        cn = getattr(model_cfg, "checkpoint_name", None)
+        if cn:
+            return str(cn)
+        model_source = getattr(model_cfg, "model_source", None)
+        lora_path = getattr(model_cfg, "lora_path", None)
+        if lora_path:
+            from dagspaces.common.wandb_logger import _derive_checkpoint_name
+            return _derive_checkpoint_name(
+                str(lora_path), str(model_source) if model_source else ""
+            )
+        elif model_source:
+            return os.path.basename(str(model_source))
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Prompt / launcher config injection (requires caller-supplied config_dir)
 # ---------------------------------------------------------------------------
 
@@ -238,37 +339,18 @@ def _load_parquet_dataset(
     if not os.path.isabs(parquet_path):
         parquet_path = os.path.abspath(parquet_path)
     df = pd.read_parquet(parquet_path)
-    col_map = {
-        columns.get("article_text", "article_text"): "article_text",
-        columns.get("article_path", "article_path"): "article_path",
-        columns.get("country", "country"): "country",
-        columns.get("year", "year"): "year",
-        columns.get("article_id", "article_id"): "article_id",
-    }
-    present = {src: dst for src, dst in col_map.items() if src in df.columns}
-    if present:
-        df = df.rename(columns=present)
+
+    # Apply caller-specified column renames (e.g. data.columns in Hydra config).
+    # Only rename columns that are explicitly mapped and present in the data.
+    if columns:
+        col_map = {src: dst for src, dst in columns.items() if src in df.columns}
+        if col_map:
+            df = df.rename(columns=col_map)
+
     if "article_text" not in df.columns and "chunk_text" not in df.columns:
         raise RuntimeError(
             "Parquet missing required text column (article_text) or chunk_text"
         )
-
-    def _safe_str(x: Any) -> str:
-        if x is None:
-            return ""
-        try:
-            return "" if (isinstance(x, float) and pd.isna(x)) else str(x).strip()
-        except Exception:
-            return str(x) if x is not None else ""
-
-    for column in ("article_path", "country", "year", "article_id"):
-        if column not in df.columns:
-            df[column] = None
-        else:
-            try:
-                df[column] = df[column].apply(_safe_str)
-            except Exception:
-                pass
 
     # Apply sample_n regardless of debug flag - it's a runtime limit, not just for
     # debugging.
@@ -881,7 +963,7 @@ def _create_submitit_executor(
         Directory where submitit writes stdout/stderr and result pickles.
     use_srun:
         Pass ``slurm_use_srun=True`` to submitit (default ``False``).
-        contextual_integrity_eval explicitly disables srun; other dagspaces
+        privacylens explicitly disables srun; other dagspaces
         rely on the submitit default.
     """
     if not _SUBMITIT_AVAILABLE or submitit is None:
@@ -901,7 +983,7 @@ def _create_submitit_executor(
         slurm_nodes=int(launcher_cfg.get("nodes", 1)),
         slurm_tasks_per_node=int(launcher_cfg.get("tasks_per_node", 1)),
         slurm_array_parallelism=int(launcher_cfg.get("array_parallelism", 1)),
-        name=job_name,
+        name=f"matt-{job_name}",
         slurm_additional_parameters=launcher_cfg.get("additional_parameters", {}),
         slurm_setup=launcher_cfg.get("setup", []),
     )

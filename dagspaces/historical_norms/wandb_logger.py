@@ -89,6 +89,7 @@ class WandbConfig(_WandbConfigBase):
         kwargs.setdefault("extra_pattern_names", frozenset())
         kwargs.setdefault("extra_runtime_keys", [])
         kwargs.setdefault("classify_variant_field", None)
+        kwargs.setdefault("dagspace_name", "historical_norms")
         return super().from_hydra_config(cfg, **kwargs)
 
 

@@ -1,0 +1,14 @@
+# @package _global_
+# Judge model config — used by reward_prep stage for R_ground pre-computation.
+# Override judge_model section, NOT the policy model.
+judge_model:
+  model_source: ${oc.env:JUDGE_MODEL_PATH,/share/pierson/matt/zoo/models/Qwen2.5-72B-Instruct-AWQ}
+  model_family: qwen2.5
+  engine_kwargs:
+    tensor_parallel_size: 2
+    quantization: awq
+    max_model_len: 32768
+    max_num_batched_tokens: 32768
+    kv_cache_dtype: fp8
+  batch_size: 0
+  concurrency: 1

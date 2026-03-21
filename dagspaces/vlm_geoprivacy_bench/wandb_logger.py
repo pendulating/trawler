@@ -30,6 +30,7 @@ class WandbConfig(_WandbConfigBase):
         kwargs.setdefault("env_var_prefix", "")
         kwargs.setdefault("full_column_stages", _VLM_FULL_COLUMN_STAGES)
         kwargs.setdefault("extra_runtime_keys", [])
+        kwargs.setdefault("dagspace_name", "vlm_geoprivacy_bench")
         return super().from_hydra_config(cfg, **kwargs)
 
 

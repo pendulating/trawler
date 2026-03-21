@@ -61,7 +61,7 @@ def ensure_local_tmpdir(dagspace_name: str) -> None:
 
     Args:
         dagspace_name: Sub-directory name placed under the local base
-                       (e.g. "historical_norms", "contextual_integrity_eval").
+                       (e.g. "historical_norms", "privacylens").
     """
     current_tmp = os.environ.get("TMPDIR", "")
     if not current_tmp or current_tmp.startswith("/share"):
@@ -200,6 +200,7 @@ class WandbConfig:
     )
     extra_runtime_keys: List[str] = field(default_factory=list)
     classify_variant_field: Optional[str] = None
+    dagspace_name: str = ""
 
     @classmethod
     def from_hydra_config(
@@ -216,6 +217,7 @@ class WandbConfig:
         extra_pattern_names: Optional[FrozenSet[str]] = None,
         extra_runtime_keys: Optional[List[str]] = None,
         classify_variant_field: Optional[str] = None,
+        dagspace_name: str = "",
     ) -> "WandbConfig":
         """Extract W&B config from Hydra config.
 
@@ -236,11 +238,14 @@ class WandbConfig:
             extra_runtime_keys: Extra runtime config keys to log as metadata.
             classify_variant_field: cfg.runtime field to append to run names
                 when stage == "classify".
+            dagspace_name: Dagspace identifier for auto-tagging runs.
         """
         try:
             wandb_cfg = getattr(cfg, "wandb", None)
             env_entity = os.environ.get("WANDB_ENTITY")
             env_project = os.environ.get("WANDB_PROJECT")
+            auto_tags = build_wandb_tags(cfg, dagspace_name=dagspace_name)
+
             if wandb_cfg is None:
                 return cls(
                     enabled=False,
@@ -249,7 +254,7 @@ class WandbConfig:
                         env_entity if env_entity and env_entity.strip() else None
                     ),
                     group=_get_group_from_config(cfg),
-                    tags=[],
+                    tags=list(dict.fromkeys(auto_tags)),
                     table_sample_rows=1000,
                     table_sample_seed=777,
                     default_experiment_name=default_experiment_name,
@@ -262,6 +267,7 @@ class WandbConfig:
                     extra_pattern_names=extra_pattern_names or frozenset(),
                     extra_runtime_keys=extra_runtime_keys or [],
                     classify_variant_field=classify_variant_field,
+                    dagspace_name=dagspace_name,
                 )
 
             # Resolve project with fallback to environment, then default
@@ -276,12 +282,14 @@ class WandbConfig:
             entity = entity_cfg or (
                 env_entity if env_entity and env_entity.strip() else None
             )
+            user_tags = _get_list(wandb_cfg, "tags")
+            merged_tags = list(dict.fromkeys(user_tags + auto_tags))
             return cls(
                 enabled=bool(getattr(wandb_cfg, "enabled", False)),
                 project=project,
                 entity=entity,
                 group=_get_group_from_config(cfg),
-                tags=_get_list(wandb_cfg, "tags"),
+                tags=merged_tags,
                 table_sample_rows=int(
                     getattr(wandb_cfg, "table_sample_rows", 1000)
                 ),
@@ -297,6 +305,7 @@ class WandbConfig:
                 extra_pattern_names=extra_pattern_names or frozenset(),
                 extra_runtime_keys=extra_runtime_keys or [],
                 classify_variant_field=classify_variant_field,
+                dagspace_name=dagspace_name,
             )
         except Exception as e:
             print(
@@ -684,6 +693,66 @@ _SANITIZER_SUFFIXES = (
 )
 
 
+def _derive_checkpoint_name(lora_path: str, model_source: str) -> str:
+    """Derive a human-readable checkpoint name from lora_path and model_source.
+
+    Combines the base model name with a meaningful path segment from the LoRA
+    path, skipping generic directory names like "checkpoint", "outputs", "sft".
+    """
+    base_name = os.path.basename(model_source) if model_source else "unknown"
+    _generic = {"checkpoint", "outputs", "sft", "checkpoints", "output", "model",
+                "models", "grpo", "lora"}
+    parts = lora_path.rstrip("/").split("/")
+    suffix = None
+    for part in reversed(parts):
+        if part and part.lower() not in _generic and not part.startswith("."):
+            suffix = part
+            break
+    if suffix:
+        return f"{base_name}+{suffix}"
+    return base_name
+
+
+def build_wandb_tags(
+    cfg,
+    *,
+    dagspace_name: str = "",
+) -> List[str]:
+    """Build standardized W&B tags from config for cross-run filtering.
+
+    Auto-generates tags for benchmark/dagspace name, model family,
+    finetuned vs. base, and eval task type.
+    """
+    tags: List[str] = []
+
+    if dagspace_name:
+        tags.append(f"bench:{dagspace_name}")
+
+    try:
+        model_cfg = getattr(cfg, "model", None)
+        if model_cfg:
+            family = getattr(model_cfg, "model_family", None)
+            if family:
+                tags.append(f"family:{family}")
+            lora_path = getattr(model_cfg, "lora_path", None)
+            if lora_path:
+                tags.append("finetuned")
+            else:
+                tags.append("base")
+    except Exception:
+        pass
+
+    try:
+        from omegaconf import OmegaConf
+        task = OmegaConf.select(cfg, "prompt.task")
+        if task:
+            tags.append(f"task:{task}")
+    except Exception:
+        pass
+
+    return tags
+
+
 def collect_compute_metadata(
     cfg=None,
     *,
@@ -853,6 +922,42 @@ def collect_compute_metadata(
                 concurrency = getattr(model_cfg, "concurrency", None)
                 if concurrency is not None:
                     model_info["concurrency"] = int(concurrency)
+
+                # --- Fields for cross-model comparison ---
+                model_family = getattr(model_cfg, "model_family", None)
+                if model_family:
+                    model_info["model_family"] = str(model_family)
+
+                lora_path = getattr(model_cfg, "lora_path", None)
+                if lora_path:
+                    model_info["lora_path"] = str(lora_path)
+                    model_info["is_finetuned"] = True
+                else:
+                    model_info["is_finetuned"] = False
+
+                chat_template_kwargs = getattr(model_cfg, "chat_template_kwargs", None)
+                if chat_template_kwargs:
+                    try:
+                        ctk = {}
+                        for key in ("enable_thinking",):
+                            val = getattr(chat_template_kwargs, key, None)
+                            if val is not None:
+                                ctk[key] = val
+                        if ctk:
+                            model_info["chat_template_kwargs"] = ctk
+                    except Exception:
+                        pass
+
+                # Derive checkpoint_name for human-readable identification
+                checkpoint_name = getattr(model_cfg, "checkpoint_name", None)
+                if checkpoint_name:
+                    model_info["checkpoint_name"] = str(checkpoint_name)
+                elif lora_path:
+                    model_info["checkpoint_name"] = _derive_checkpoint_name(
+                        str(lora_path), str(model_source) if model_source else ""
+                    )
+                elif model_source:
+                    model_info["checkpoint_name"] = os.path.basename(str(model_source))
 
                 if model_info:
                     metadata["model"] = model_info

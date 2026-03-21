@@ -1,0 +1,18 @@
+# @package _global_
+# Qwen3.5-9B VLM + SFT LoRA (text layers only, vision encoder untouched)
+model:
+  model_source: /share/pierson/matt/zoo/models/Qwen3.5-9B
+  model_family: qwen3.5
+  lora_path: /share/pierson/matt/UAIR/outputs/2026-03-14/14-18-47/sft_only/outputs/sft/checkpoint_vlm_patched
+  engine_kwargs:
+    max_model_len: 4096
+    max_num_seqs: 5
+    enforce_eager: true
+    enable_lora: true
+    max_lora_rank: 64
+  vlm_kwargs:
+    mm_processor_kwargs:
+      min_pixels: 784
+      max_pixels: 1003520
+    limit_mm_per_prompt:
+      image: 1

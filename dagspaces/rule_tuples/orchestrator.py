@@ -137,6 +137,9 @@ def run_experiment(cfg) -> None:
                 "python_version": sys.version.split()[0],
                 "os": platform.platform(),
                 "hostname": socket.gethostname(),
+                # Cross-model comparison metadata
+                "dagspace": "rule_tuples",
+                "checkpoint_name": os.path.basename(model_source) if model_source else None,
             }
             try:
                 proj = str(getattr(cfg.wandb, "project", "UAIR") or "UAIR")

@@ -103,6 +103,7 @@ class WandbConfig(_WandbConfigBase):
         kwargs.setdefault(
             "classify_variant_field", "classification_profile"
         )
+        kwargs.setdefault("dagspace_name", "uair")
         return super().from_hydra_config(cfg, **kwargs)
 
 

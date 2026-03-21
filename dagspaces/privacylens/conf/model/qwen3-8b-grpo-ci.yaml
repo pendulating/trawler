@@ -1,0 +1,14 @@
+model_source: ${oc.env:MAR19_K20_GRPO_QWEN3_8B}/_merged_sft
+model_family: qwen3
+lora_path: ${oc.env:MAR19_K20_GRPO_QWEN3_8B}
+chat_template_kwargs:
+  enable_thinking: false
+engine_kwargs:
+  max_model_len: 8192
+  max_num_seqs: 16
+  trust_remote_code: true
+  enforce_eager: true
+  enable_lora: true
+  max_lora_rank: 64
+batch_size: 0
+concurrency: 1

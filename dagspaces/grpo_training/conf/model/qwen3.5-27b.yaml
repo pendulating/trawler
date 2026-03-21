@@ -1,0 +1,10 @@
+# @package _global_
+model:
+  model_source: ${oc.env:POLICY_MODEL_PATH,Qwen/Qwen3.5-27B}
+  model_family: qwen3.5
+  engine_kwargs:
+    tensor_parallel_size: 2
+    max_model_len: 16384
+    dtype: bfloat16
+  batch_size: 0
+  concurrency: 1
