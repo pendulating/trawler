@@ -86,9 +86,7 @@ dagspaces/
 ├── grpo_training/               # SFT + GRPO fine-tuning
 ├── goldcoin_hipaa/              # GoldCoin-HIPAA evaluation
 ├── privacylens/                 # PrivacyLens evaluation
-├── vlm_geoprivacy_bench/        # VLM-GeoPrivacy evaluation
-├── uair/                        # AI risk analysis (news)
-└── rule_tuples/                 # Reddit rule CI classification
+└── vlm_geoprivacy_bench/        # VLM-GeoPrivacy evaluation
 ```
 
 Each dagspace is a self-contained pipeline with `cli.py` (Hydra entry), `orchestrator.py` (DAG execution), `runners/` (stage implementations), `stages/` (logic), and `conf/` (YAML configs).

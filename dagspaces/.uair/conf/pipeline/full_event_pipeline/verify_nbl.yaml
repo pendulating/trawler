@@ -40,6 +40,6 @@ pipeline:
           verify.windowing.enabled: null
           verify.windowing.window_size: 5
           verify.windowing.stride: 2
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: verify_nbl
 

@@ -44,6 +44,6 @@ pipeline:
           sampling_params_risks_and_benefits.max_tokens: 4096
           sampling_params_risks_and_benefits.temperature: 0
           runtime.sample_rb_v1: true
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: risk_benefits
 

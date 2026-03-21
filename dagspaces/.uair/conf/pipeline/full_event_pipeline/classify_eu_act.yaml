@@ -41,6 +41,6 @@ pipeline:
           model.batch_size: 4
           sampling_params_eu_ai_act.max_tokens: 4096
           sampling_params_eu_ai_act.temperature: 0
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: eu_act
 

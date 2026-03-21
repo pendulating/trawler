@@ -40,6 +40,6 @@ pipeline:
           model.engine_kwargs.max_num_seqs: 8
           model.engine_kwargs.enable_prefix_caching: false
           model.batch_size: 16
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: classify
 

@@ -42,14 +42,14 @@ Each domain pipeline is a self-contained "dagspace" under `dagspaces/{name}/` wi
 - `runners/` - Stage runner classes extending `StageRunner` base; lazy-loaded via `get_stage_registry()`
 - `stages/` - Stage implementation functions
 
-Seven dagspaces:
+Five active dagspaces:
 - **historical_norms** — Norm extraction from fiction novels (CI tuples + Raz norms → normative simulacra)
 - **grpo_training** — SFT + GRPO fine-tuning with composite reward (6 components including normative grounding judge)
 - **goldcoin_hipaa** — GoldCoin-HIPAA benchmark evaluation (healthcare CI)
 - **privacylens** — PrivacyLens benchmark evaluation (QA probing + leakage judgment)
 - **vlm_geoprivacy_bench** — VLM-GeoPrivacy benchmark evaluation (visual geolocation CI)
-- **uair** — News AI risk analysis
-- **rule_tuples** — Reddit rule CI classification
+
+Deprecated (dot-prefixed, not used for COLM): `.uair`, `.rule_tuples`.
 
 ### Shared Configuration
 

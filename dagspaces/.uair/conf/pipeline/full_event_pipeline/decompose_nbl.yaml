@@ -38,6 +38,6 @@ pipeline:
           model.engine_kwargs.max_num_seqs: 4
           model.batch_size: 4
           sampling_params_decompose_nbl.max_tokens: 2048
-        launcher: g2_slurm_pierson
+        launcher: slurm_gpu_2x
         wandb_suffix: decompose_nbl
 
