@@ -148,6 +148,12 @@ def run_grpo_training_stage(
     # Drop chunks with no text
     chunks_df = chunks_df[chunks_df["chunk_text"].notna()].reset_index(drop=True)
 
+    # Optional: subsample for debug/smoke tests
+    sample_n = OmegaConf.select(cfg, "runtime.sample_n", default=None)
+    if sample_n is not None and int(sample_n) < len(chunks_df):
+        chunks_df = chunks_df.sample(n=int(sample_n), random_state=42).reset_index(drop=True)
+        print(f"[grpo_training] Sampled {sample_n} chunks for debug")
+
     # Load reward cache (legacy cached R_ground)
     if reward_cache_path and os.path.exists(reward_cache_path):
         reward_cache = pd.read_parquet(reward_cache_path)
