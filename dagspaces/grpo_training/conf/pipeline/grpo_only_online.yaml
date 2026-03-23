@@ -1,13 +1,11 @@
 # @package _global_
-# GRPO-only pipeline with online R_ground (same as grpo_only).
-# Kept as an alias for backward compatibility.
+# GRPO-only pipeline with online R_ground (alias for grpo_only).
 #
 # Usage:
-#   SFT_CHECKPOINT_PATH=... NORM_UNIVERSES_PATH=... NORM_EMBEDDINGS_PATH=... \
-#   CI_REASONING_PATH=... \
+#   SFT_CHECKPOINT_PATH=... NORM_UNIVERSES_PATH=... CI_REASONING_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
 #     pipeline=grpo_only_online \
-#     training/grpo=online_rground_5gpu \
+#     training/grpo=online_rground_4gpu \
 #     model=qwen3-8b
 
 defaults:
@@ -23,9 +21,6 @@ pipeline:
     norm_universes:
       path: ${oc.env:NORM_UNIVERSES_PATH}
       type: json
-    norm_embeddings:
-      path: ${oc.env:NORM_EMBEDDINGS_PATH}
-      type: dir
     ci_reasoning:
       path: ${oc.env:CI_REASONING_PATH}
       type: parquet
@@ -39,7 +34,6 @@ pipeline:
           sft_checkpoint: sft_checkpoint
           chunks: ci_reasoning
           norm_universes: norm_universes
-          embeddings: norm_embeddings
         outputs:
           checkpoint:
             path: outputs/grpo/checkpoint
