@@ -2,7 +2,10 @@
 # Full GRPO training pipeline:
 #   norm_universe (embed norms) ───────────────────────────────────→ grpo_training
 #   sft_data_prep → sft_training ──────────────────────────────────→ grpo_training
+#                                                                    ↑
+#   ci_reasoning (text chunks) ────────────────────────────────────→ grpo_training
 #
+# GRPO consumes text chunks directly (ci_reasoning) — no dependency on sft_data_prep.
 # R_ground is evaluated online during GRPO (via embedding + judge servers).
 # reward_prep runs in parallel as an inspection tool but is NOT a dependency.
 
@@ -87,10 +90,9 @@ pipeline:
         depends_on:
           - sft_training
           - norm_universe
-          - sft_data_prep
         inputs:
           sft_checkpoint: sft_training.checkpoint
-          dataset: sft_data_prep.dataset
+          chunks: ci_reasoning
           norm_universes: norm_universe.dataset
           embeddings: norm_universe.embeddings
         outputs:

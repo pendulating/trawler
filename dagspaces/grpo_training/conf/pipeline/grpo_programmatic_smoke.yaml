@@ -3,7 +3,7 @@
 # No norm_universes or reward_cache needed.
 #
 # Usage:
-#   SFT_CHECKPOINT_PATH=... SFT_PAIRS_PATH=... \
+#   SFT_CHECKPOINT_PATH=... CI_REASONING_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
 #     pipeline=grpo_programmatic_smoke \
 #     training/grpo=colocate_1gpu_9b \
@@ -17,8 +17,8 @@ pipeline:
     sft_checkpoint:
       path: ${oc.env:SFT_CHECKPOINT_PATH}
       type: dir
-    sft_pairs:
-      path: ${oc.env:SFT_PAIRS_PATH}
+    ci_reasoning:
+      path: ${oc.env:CI_REASONING_PATH}
       type: parquet
 
   graph:
@@ -28,7 +28,7 @@ pipeline:
         depends_on: []
         inputs:
           sft_checkpoint: sft_checkpoint
-          dataset: sft_pairs
+          chunks: ci_reasoning
         outputs:
           checkpoint:
             path: outputs/grpo/checkpoint

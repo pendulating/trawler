@@ -50,8 +50,8 @@ pipeline:
     norm_universes:
       path: ${oc.env:NORM_UNIVERSES_PATH}
       type: json
-    sft_pairs:
-      path: ${oc.env:SFT_PAIRS_PATH}
+    ci_reasoning:
+      path: ${oc.env:CI_REASONING_PATH}
       type: parquet
 
   graph:
@@ -61,7 +61,7 @@ pipeline:
         depends_on: []
         inputs:
           sft_checkpoint: sft_checkpoint
-          dataset: sft_pairs
+          chunks: ci_reasoning
           norm_universes: norm_universes
         outputs:
           checkpoint:

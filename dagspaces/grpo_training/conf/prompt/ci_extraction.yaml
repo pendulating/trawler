@@ -1,0 +1,17 @@
+# Prompt template for CI information flow extraction.
+# Used by both SFT data prep (gold completions) and GRPO (online generation).
+# The chunk text is substituted into {{chunk_text}}.
+
+instruction: |
+  Analyze the following text passage for information flows using the
+  Contextual Integrity framework. First, reason about what information
+  exchanges are described — identify senders, recipients, subjects,
+  information types, and transmission principles. Then provide a structured
+  extraction of each information flow as a flat JSON object with the
+  5-component CI tuple (sender, recipient, subject, information_type,
+  transmission_principle) and contextual metadata.
+
+prompt_template: |
+  {{instruction}}
+
+  {{chunk_text}}

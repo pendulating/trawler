@@ -26,59 +26,46 @@ from omegaconf import OmegaConf
 
 
 def _build_grpo_dataset(
-    sft_df: pd.DataFrame,
+    chunks_df: pd.DataFrame,
     tokenizer,
-    norm_universes: Optional[Dict[str, list]] = None,
-    contrastive_ratio: float = 0.1,
+    prompt_template: str,
     enable_thinking: bool = True,
 ) -> "Dataset":
-    """Build GRPO training dataset with contrastive normative pairing.
+    """Build GRPO training dataset from text chunks.
 
-    When *enable_thinking* is True (default), the chat template is applied
-    with ``enable_thinking=True``, allowing the model to produce ``<think>``
-    blocks during GRPO generation.  When False, an empty ``<think></think>``
-    block is inserted to suppress reasoning (legacy behaviour).
-
-    Pre-applies the chat template to produce raw-text prompts so TRL routes
+    Constructs prompts by applying the CI extraction instruction template
+    to each chunk, then pre-applies the chat template so TRL routes
     through vLLM's ``llm.generate()`` instead of ``llm.chat()``.
+
+    Args:
+        chunks_df: DataFrame with columns: chunk_text, source_id.
+        tokenizer: Model tokenizer for chat template formatting.
+        prompt_template: CI extraction prompt with ``{{chunk_text}}`` placeholder.
+        enable_thinking: Allow ``<think>`` blocks during GRPO generation.
+
+    Returns:
+        (dataset, raw_prompts) where raw_prompts maps formatted prompt → raw
+        user prompt (for passing clean text to the judge).
     """
     import hashlib
     from datasets import Dataset
 
     rows: List[Dict[str, Any]] = []
-    # Also collect raw user prompts (pre-template) for the reward function.
-    # Keyed by formatted_prompt → raw user_prompt, so OnlineRGround can pass
-    # clean chunk text to the judge instead of chat-templated text.
+    # Maps formatted_prompt → raw user_prompt so OnlineRGround can pass
+    # clean text to the judge instead of chat-templated text.
     raw_prompts: Dict[str, str] = {}
 
-    if norm_universes:
-        all_source_ids = list(norm_universes.keys())
-    else:
-        all_source_ids = list(sft_df["source_id"].unique())
-
-    for _, row in sft_df.iterrows():
-        messages_raw = row.get("messages", "[]")
-        if isinstance(messages_raw, str):
-            messages = json.loads(messages_raw)
-        else:
-            messages = messages_raw
+    for _, row in chunks_df.iterrows():
+        chunk_text = row.get("chunk_text", "")
+        if not chunk_text or (isinstance(chunk_text, float) and pd.isna(chunk_text)):
+            continue
 
         source_id = str(row.get("source_id", ""))
 
-        # Extract the user prompt (instruction + chunk)
-        user_prompt = ""
-        for msg in messages:
-            if msg.get("role") == "user":
-                user_prompt = msg.get("content", "")
-                break
+        # Build user prompt from template
+        user_prompt = prompt_template.replace("{{chunk_text}}", str(chunk_text)).strip()
 
-        if not user_prompt:
-            continue
-
-        # Pre-apply chat template so TRL routes through vLLM's llm.generate().
-        # When enable_thinking=True the model can produce <think> blocks during
-        # GRPO generation (stripped before reward scoring).  When False, an empty
-        # <think></think> block suppresses reasoning.
+        # Pre-apply chat template so TRL routes through vLLM's llm.generate()
         formatted_prompt = tokenizer.apply_chat_template(
             [{"role": "user", "content": user_prompt}],
             tokenize=False,
@@ -93,47 +80,34 @@ def _build_grpo_dataset(
             "prompt": formatted_prompt,
             "source_id": source_id,
             "prompt_id": prompt_id,
-            "is_contrastive": False,
         })
 
-        # Contrastive pairing: wrong normative universe
-        if random.random() < contrastive_ratio and len(all_source_ids) > 1:
-            wrong_sources = [s for s in all_source_ids if s != source_id]
-            rows.append({
-                "prompt": formatted_prompt,
-                "source_id": source_id,
-                "prompt_id": prompt_id,
-                "is_contrastive": True,
-                "contrastive_source": random.choice(wrong_sources),
-            })
-
     dataset = Dataset.from_list(rows)
-    n_standard = sum(1 for r in rows if not r["is_contrastive"])
-    n_contrastive = sum(1 for r in rows if r["is_contrastive"])
     thinking_label = "enabled" if enable_thinking else "disabled"
-    print(f"[grpo_training] Dataset: {len(dataset)} prompts ({n_standard} standard, {n_contrastive} contrastive, thinking={thinking_label})")
+    print(f"[grpo_training] Dataset: {len(dataset)} prompts "
+          f"(thinking={thinking_label})")
     return dataset, raw_prompts
 
 
 def run_grpo_training_stage(
     sft_checkpoint: str,
-    dataset_path: str,
-    reward_cache_path: str,
+    chunks_path: str,
     norm_universes_path: str,
     output_dir: str,
     cfg: Any,
     embeddings_dir: str = "",
+    reward_cache_path: str = "",
 ) -> None:
     """Run GRPO training with TRL + vLLM.
 
     Args:
         sft_checkpoint: Path to SFT LoRA checkpoint directory.
-        dataset_path: Path to sft_pairs.parquet.
-        reward_cache_path: Path to reward_cache.parquet (pre-computed R_ground).
+        chunks_path: Path to chunks parquet (chunk_text + source_id).
         norm_universes_path: Path to norm_universes.json.
         output_dir: Directory to save GRPO checkpoint.
         cfg: Hydra config with training.grpo section.
         embeddings_dir: Path to per-book .npy embeddings (for online R_ground).
+        reward_cache_path: Path to reward_cache.parquet (legacy cached R_ground).
     """
     from trl import GRPOTrainer, GRPOConfig
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -144,19 +118,49 @@ def run_grpo_training_stage(
         OmegaConf.select(cfg, "training.grpo"), resolve=True
     )
 
-    # Load data
-    sft_df = pd.read_parquet(dataset_path)
+    # Load chunks
+    chunks_df = pd.read_parquet(chunks_path)
+
+    # Resolve text and source columns (ci_reasoning uses article_text/gutenberg_id)
+    text_col = None
+    for candidate in ("chunk_text", "article_text", "text"):
+        if candidate in chunks_df.columns:
+            text_col = candidate
+            break
+    if text_col is None:
+        raise ValueError(
+            f"[grpo_training] No text column found in {chunks_path}. "
+            f"Available: {list(chunks_df.columns)}"
+        )
+    if text_col != "chunk_text":
+        chunks_df = chunks_df.rename(columns={text_col: "chunk_text"})
+
+    source_col = None
+    for candidate in ("source_id", "gutenberg_id", "book_id"):
+        if candidate in chunks_df.columns:
+            source_col = candidate
+            break
+    if source_col and source_col != "source_id":
+        chunks_df["source_id"] = chunks_df[source_col].astype(str)
+    elif "source_id" not in chunks_df.columns:
+        chunks_df["source_id"] = "unknown"
+
+    # Drop chunks with no text
+    chunks_df = chunks_df[chunks_df["chunk_text"].notna()].reset_index(drop=True)
+
+    # Load reward cache (legacy cached R_ground)
     if reward_cache_path and os.path.exists(reward_cache_path):
         reward_cache = pd.read_parquet(reward_cache_path)
     else:
         reward_cache = pd.DataFrame()
+
+    # Load norm universes
     norm_universes = {}
     if norm_universes_path and os.path.exists(norm_universes_path):
         with open(norm_universes_path, "r", encoding="utf-8") as f:
             norm_universes = json.load(f)
 
-    print(f"[grpo_training] SFT pairs: {len(sft_df)}")
-    print(f"[grpo_training] Reward cache: {len(reward_cache)} entries")
+    print(f"[grpo_training] Chunks: {len(chunks_df)}")
     print(f"[grpo_training] Norm universes: {len(norm_universes)} sources")
 
     # Build composite reward function
@@ -348,9 +352,21 @@ def run_grpo_training_stage(
 
     # Build dataset (needs tokenizer for chat template pre-formatting)
     enable_thinking_grpo = grpo_cfg.get("enable_thinking_grpo", True)
-    contrastive_ratio = grpo_cfg.get("contrastive_ratio", 0.1)
+
+    # Load CI extraction prompt template from config
+    prompt_cfg = OmegaConf.select(cfg, "prompt_ci_extraction")
+    if prompt_cfg:
+        ci_instruction = str(OmegaConf.select(prompt_cfg, "instruction") or "")
+        ci_prompt_template = str(OmegaConf.select(prompt_cfg, "prompt_template") or "")
+        # Substitute instruction into template if it uses {{instruction}}
+        ci_prompt_template = ci_prompt_template.replace("{{instruction}}", ci_instruction.strip())
+    else:
+        # Fallback: bare instruction + chunk
+        from .sft_data_prep import _CI_INSTRUCTION
+        ci_prompt_template = _CI_INSTRUCTION + "\n\n{{chunk_text}}"
+
     dataset, raw_prompts = _build_grpo_dataset(
-        sft_df, tokenizer, norm_universes, contrastive_ratio, enable_thinking_grpo,
+        chunks_df, tokenizer, ci_prompt_template, enable_thinking_grpo,
     )
 
     # Build prompt→metadata lookup so the reward function can access

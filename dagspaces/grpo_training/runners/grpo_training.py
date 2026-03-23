@@ -202,7 +202,7 @@ class GRPOTrainingRunner(StageRunner):
         from ..stages.grpo_training import run_grpo_training_stage
 
         sft_checkpoint = context.inputs.get("sft_checkpoint")
-        dataset_path = context.inputs.get("dataset")
+        chunks_path = context.inputs.get("chunks")
         reward_cache_path = context.inputs.get("reward_cache", "")
         norm_universes_path = context.inputs.get("norm_universes", "")
         embeddings_dir = context.inputs.get("embeddings", "")
@@ -210,8 +210,8 @@ class GRPOTrainingRunner(StageRunner):
         missing = []
         if not sft_checkpoint:
             missing.append("sft_checkpoint")
-        if not dataset_path:
-            missing.append("dataset")
+        if not chunks_path:
+            missing.append("chunks")
         if missing:
             raise ValueError(
                 f"Node '{context.node.key}' requires inputs: {missing}"
@@ -323,12 +323,12 @@ class GRPOTrainingRunner(StageRunner):
 
             run_grpo_training_stage(
                 sft_checkpoint=sft_checkpoint,
-                dataset_path=dataset_path,
-                reward_cache_path=reward_cache_path or "",
+                chunks_path=chunks_path,
                 norm_universes_path=norm_universes_path or "",
                 output_dir=checkpoint_dir,
                 cfg=cfg,
                 embeddings_dir=embeddings_dir or "",
+                reward_cache_path=reward_cache_path or "",
             )
         finally:
             _shutdown_vllm_server(vllm_server_proc)

@@ -5,6 +5,7 @@ defaults:
   - training/sft: default
   - training/grpo: colocate_1gpu_prod
   - prompt@prompt_reward_judge: reward_judge
+  - prompt@prompt_ci_extraction: ci_extraction
 
 experiment:
   name: grpo_training
@@ -13,7 +14,7 @@ runtime:
   output_root: outputs/grpo_training
   debug: false
   sample_n: null
-  job_memory_gb: 256
+  job_memory_gb: 64
 
 # Judge model for R_ground reward prep
 judge_model:
@@ -21,9 +22,13 @@ judge_model:
   engine_kwargs:
     tensor_parallel_size: 2
     quantization: awq
-    max_model_len: 32768
-    max_num_batched_tokens: 32768
+    max_model_len: 16384
+    max_num_batched_tokens: 16384
+    max_num_seqs: 64
     kv_cache_dtype: fp8
+    enforce_eager: false
+    enable_chunked_prefill: true
+    enable_prefix_caching: true
 
 wandb:
   enabled: true

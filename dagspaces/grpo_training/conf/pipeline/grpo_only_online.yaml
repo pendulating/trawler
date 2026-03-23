@@ -1,11 +1,10 @@
 # @package _global_
-# GRPO-only pipeline with online R_ground evaluation.
-# Assumes SFT checkpoint, norm universes, and norm embeddings exist.
-# Does NOT require reward_cache (R_ground is evaluated live).
+# GRPO-only pipeline with online R_ground (same as grpo_only).
+# Kept as an alias for backward compatibility.
 #
 # Usage:
 #   SFT_CHECKPOINT_PATH=... NORM_UNIVERSES_PATH=... NORM_EMBEDDINGS_PATH=... \
-#   SFT_PAIRS_PATH=... \
+#   CI_REASONING_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
 #     pipeline=grpo_only_online \
 #     training/grpo=online_rground_5gpu \
@@ -27,8 +26,8 @@ pipeline:
     norm_embeddings:
       path: ${oc.env:NORM_EMBEDDINGS_PATH}
       type: dir
-    sft_pairs:
-      path: ${oc.env:SFT_PAIRS_PATH}
+    ci_reasoning:
+      path: ${oc.env:CI_REASONING_PATH}
       type: parquet
 
   graph:
@@ -38,7 +37,7 @@ pipeline:
         depends_on: []
         inputs:
           sft_checkpoint: sft_checkpoint
-          dataset: sft_pairs
+          chunks: ci_reasoning
           norm_universes: norm_universes
           embeddings: norm_embeddings
         outputs:
