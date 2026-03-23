@@ -1,0 +1,37 @@
+io:
+  base_output_dir: outputs/prompt_dev
+
+server:
+  mode: external
+  endpoint: http://127.0.0.1:8924
+  slurm_script: scripts/run_qwen25_72b_llm.sub
+  startup_timeout_sec: 180
+  poll_interval_sec: 5
+  skip_submission_if_healthy: true
+
+model:
+  name: qwen25-72b-llm
+  timeout_sec: 180
+  max_retries: 3
+  retry_backoff_sec: 2.0
+
+sampling:
+  default_temperature: 0.2
+  default_top_p: 0.95
+  default_max_tokens: 2048
+  active_prompt_temperature: 0.7
+  active_prompt_k: 5
+  step_temperatures:
+    step01: 0.3
+    step02: 0.1
+    step03: 0.1
+    step04: 0.2
+    step05: 0.1
+    step07: 0.4
+    step08: 0.7
+    step11: 0.1
+
+iterations:
+  overview_refine_t: 2
+  definition_refine_t: 2
+
