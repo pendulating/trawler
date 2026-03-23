@@ -4,7 +4,7 @@ submitit_folder: ${hydra.sweep.dir}/.submitit/%j
 timeout_min: 14400
 nodes: 1
 tasks_per_node: 1
-cpus_per_task: 8
+cpus_per_task: 4
 mem_gb: ${runtime.job_memory_gb}
 partition: ${oc.env:SLURM_PARTITION,pierson}
 array_parallelism: 1
