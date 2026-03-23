@@ -1,0 +1,8 @@
+name: privacylens
+hf_dataset: SALT-NLP/PrivacyLens
+hf_config: null
+split: train
+max_examples: 0
+allow_mock_fallback: false
+hf_token: ${oc.env:HF_TOKEN,null}
+

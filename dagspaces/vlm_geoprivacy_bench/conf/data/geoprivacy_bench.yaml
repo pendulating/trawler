@@ -1,0 +1,7 @@
+# @package _global_
+data:
+  annotations_path: ${oc.env:BENCH_DATA,/share/pierson/matt/UAIR/data/ci_benchmarks/VLM-GeoPrivacyBench/data}/annotation_labels.csv
+  metadata_path: ${oc.env:BENCH_DATA,/share/pierson/matt/UAIR/data/ci_benchmarks/VLM-GeoPrivacyBench/data}/images_metadata.csv
+  image_dir: ${oc.env:BENCH_DATA,/share/pierson/matt/UAIR/data/ci_benchmarks/VLM-GeoPrivacyBench/data}/images
+  exclude_sources:
+    - Flickr-yfcc26k

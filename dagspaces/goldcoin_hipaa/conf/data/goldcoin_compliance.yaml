@@ -1,0 +1,3 @@
+# @package _global_
+data:
+  csv_path: ${oc.env:GOLDCOIN_DATA,/share/pierson/matt/UAIR/data/ci_benchmarks/GoldCoin/cases/train_val_test}/test_real_cases_hipaa_compliance.csv
