@@ -1,49 +1,54 @@
-# Prompt template for R_ground normative grounding judge.
-# The judge evaluates whether a model's completion correctly grounds
-# its reasoning in the provided normative universe N_hat_b.
+# Prompt template for R_ground per-flow normative governance judge.
+# Evaluates whether a single extracted information flow is grounded in
+# the normative universe N_hat_b via two decomposable signals:
+#   1. Norm awareness: do the model's invoked norms match retrieved norms?
+#   2. Flow governance: is this flow governed by the retrieved norms?
 
 system_prompt: |
-  You are an expert evaluator of normative reasoning about information flows
-  and social norms. You will be given:
+  You are an expert in Helen Nissenbaum's Contextual Integrity framework.
+  You evaluate whether a specific extracted information flow is grounded in
+  a set of norms from a normative universe.
 
-  1. A text chunk from a literary or prescriptive source
-  2. A model's completion containing reasoning and structured extraction
-  3. A normative universe (a set of canonical norms extracted from the source text)
+  You assess two independent criteria:
 
-  Your task is to evaluate whether the model's completion is properly grounded
-  in the provided normative universe. Specifically:
+  1. NORM AWARENESS: The model's extraction includes a "norms_invoked" field
+     listing the norms it believes apply to this flow. Do any of those invoked
+     norms semantically match the provided norms from the universe?
+     Semantic equivalence is sufficient — exact wording match is not required.
+     Score from 0.0 (no match at all) to 1.0 (strong semantic match).
 
-  - Do the norms invoked in the model's reasoning match norms in the universe?
-  - If the model identifies information flows, are they governed by universe norms?
-  - Does the model's appropriateness judgment follow logically from matched norms?
+  2. FLOW GOVERNANCE: Independently of what norms the model invoked, is this
+     information flow actually governed by any of the provided norms?
+     "Governed" means the norm regulates, constrains, or establishes
+     expectations about information flows of this type — between these kinds
+     of actors, about this kind of information, in this context.
+     Score from 0.0 (flow is unrelated to all norms) to 1.0 (directly governed).
+
+  Also assess whether the flow's appropriateness judgment
+  (appropriate/inappropriate/ambiguous) is consistent with the governing norm.
 
   Respond with a JSON object matching the required schema.
 
 prompt_template: |
-  ## Text Chunk
+  ## Source Text
   {{chunk_text}}
 
-  ## Model's Completion
-  {{completion_text}}
+  ## Extracted Information Flow
+  {{flow_json}}
 
-  ## Normative Universe (N_hat_b)
+  ## Retrieved Norms (top-k from normative universe)
   {{norm_universe_json}}
 
-  ## Evaluation Task
-  Evaluate the normative grounding of the model's completion against the
-  provided normative universe. Consider:
+  ## Evaluation
+  Assess both criteria independently for this specific information flow:
 
-  1. **Norm matching**: Do the norms referenced in the reasoning correspond
-     to actual norms in the universe? Exact matches are not required —
-     semantic equivalence is sufficient.
+  1. **Norm awareness** (norm_match_score): Do the flow's norms_invoked
+     match any of the retrieved norms? Score 0.0–1.0.
 
-  2. **Flow governance**: If information flows are identified, are they
-     governed by norms in the universe? A flow that violates or upholds
-     a universe norm should reference that norm.
+  2. **Flow governance** (governance_score): Is this flow governed by any
+     of the retrieved norms, regardless of what the model invoked? Score 0.0–1.0.
 
-  3. **Appropriateness coherence**: Does the appropriateness judgment
-     (appropriate/inappropriate/ambiguous) follow from the matched norms?
-     An "inappropriate" judgment should cite a violated norm; an "appropriate"
-     judgment should cite an upheld norm.
+  3. **Appropriateness consistency**: Is the flow's appropriateness judgment
+     consistent with the governing norm?
 
   Provide your evaluation as a JSON object.

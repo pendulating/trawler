@@ -63,10 +63,41 @@ class CICompletionResult(BaseModel):
 # Reward judge output schema
 # ---------------------------------------------------------------------------
 
-class NormGroundingJudgment(BaseModel):
-    """Output schema for the R_ground LLM judge."""
-    norms_match_universe: bool
-    matched_universe_norms: List[str] = Field(default_factory=list)
-    appropriateness_grounded: bool
-    grounding_explanation: str
-    score: float = Field(ge=0.0, le=1.0)
+class FlowGovernanceJudgment(BaseModel):
+    """Per-flow R_ground judge output with two decomposable signals.
+
+    norm_match_score: Does the model's norms_invoked match retrieved norms?
+    governance_score: Is this flow governed by the retrieved norms?
+    """
+    norm_match: bool = Field(
+        description="Whether any of the flow's norms_invoked semantically match a retrieved norm",
+    )
+    norm_match_score: float = Field(
+        ge=0.0, le=1.0,
+        description="How well the invoked norms match retrieved norms (0=no match, 1=strong match)",
+    )
+    matched_norm: Optional[str] = Field(
+        None,
+        description="The retrieved norm that best matches the invoked norms, or null",
+    )
+    flow_governed: bool = Field(
+        description="Whether this information flow is governed by at least one retrieved norm",
+    )
+    governance_score: float = Field(
+        ge=0.0, le=1.0,
+        description="How well the flow is governed by the retrieved norms (0=unrelated, 1=directly governed)",
+    )
+    governing_norm: Optional[str] = Field(
+        None,
+        description="The norm that most directly governs this flow, or null",
+    )
+    appropriateness_consistent: bool = Field(
+        description="Whether the appropriateness judgment is consistent with the governing norm",
+    )
+    explanation: str = Field(
+        description="Brief explanation of norm matching and governance assessment",
+    )
+
+
+# Keep backward-compatible alias
+NormGroundingJudgment = FlowGovernanceJudgment

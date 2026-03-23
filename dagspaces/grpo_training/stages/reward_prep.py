@@ -133,10 +133,16 @@ def run_reward_prep_stage(
     _use_retrieval = bool(norm_embeddings_by_source) and retrieval_model is not None
 
     def _retrieve_relevant_norms(
-        completion_text: str, source_id: str, is_contrastive_source: Optional[str] = None,
+        query: str, source_id: str, contrastive_source: Optional[str] = None,
     ) -> str:
-        """Retrieve top-k norms from the universe most relevant to the completion."""
-        target_id = is_contrastive_source or source_id
+        """Retrieve top-k norms from the universe most relevant to a query.
+
+        Args:
+            query: Free-text query built from a single flow's fields.
+            source_id: The source book's ID.
+            contrastive_source: If set, retrieve from this (wrong) source instead.
+        """
+        target_id = contrastive_source or source_id
         norms = norm_universes.get(target_id, [])
         if not norms:
             return "[]"
@@ -144,24 +150,7 @@ def run_reward_prep_stage(
         if len(norms) <= TOP_K_NORMS:
             return json.dumps(norms, ensure_ascii=False, indent=1)
 
-        # Build query from completion's invoked norms + context
-        try:
-            completion = json.loads(completion_text)
-            query_parts = []
-            flows = completion.get("flows", [])
-            for f in flows:
-                invoked = f.get("norms_invoked", [])
-                if isinstance(invoked, list):
-                    query_parts.extend(str(n) for n in invoked)
-                ctx = f.get("context", "")
-                if ctx:
-                    query_parts.append(ctx)
-            query = " ".join(query_parts) if query_parts else completion_text[:500]
-        except (json.JSONDecodeError, AttributeError):
-            query = completion_text[:500]
-
         if _use_retrieval and target_id in norm_embeddings_by_source:
-            # Use same instruction prefix as norm embedding
             query_emb = retrieval_model.encode(
                 [EMBED_INSTRUCTION + query],
                 normalize_embeddings=True,
@@ -174,10 +163,25 @@ def run_reward_prep_stage(
 
         return json.dumps(selected, ensure_ascii=False, indent=1)
 
+    def _flow_to_query(flow: Dict[str, Any]) -> str:
+        """Build a retrieval query from a single flow's CI tuple fields."""
+        parts = []
+        for key in ("sender", "recipient", "information_type",
+                     "context", "transmission_principle", "subject"):
+            val = flow.get(key, "")
+            if val:
+                parts.append(str(val))
+        # Also include invoked norms as query signal
+        invoked = flow.get("norms_invoked", [])
+        if isinstance(invoked, list):
+            parts.extend(str(n) for n in invoked)
+        return " ".join(parts) if parts else "information flow"
+
     # ---------------------------------------------------------------
-    # Build evaluation rows
+    # Build per-flow evaluation rows
     # ---------------------------------------------------------------
     eval_rows: List[Dict[str, Any]] = []
+    no_flow_rows: List[Dict[str, Any]] = []
     all_source_ids = list(norm_universes.keys())
 
     for _, row in sft_df.iterrows():
@@ -204,37 +208,66 @@ def run_reward_prep_stage(
 
         prompt_id = _make_prompt_id(chunk_text)
 
-        relevant_norms = _retrieve_relevant_norms(completion_text, source_id)
-        eval_rows.append({
-            "prompt_id": prompt_id,
-            "source_id": source_id,
-            "is_contrastive": False,
-            "chunk_text": chunk_text,
-            "completion_text": completion_text,
-            "norm_universe_json": relevant_norms,
-        })
+        # Parse completion to extract individual flows
+        try:
+            completion = json.loads(completion_text)
+            flows = completion.get("flows", [])
+        except (json.JSONDecodeError, AttributeError):
+            flows = []
 
-        if random.random() < contrastive_ratio and len(all_source_ids) > 1:
-            wrong_sources = [s for s in all_source_ids if s != source_id]
-            wrong_source = random.choice(wrong_sources)
-            contrastive_norms = _retrieve_relevant_norms(
-                completion_text, source_id, is_contrastive_source=wrong_source,
-            )
+        # No-flow completions: score 1.0 directly, no judge call
+        if not flows:
+            no_flow_rows.append({
+                "prompt_id": prompt_id,
+                "source_id": source_id,
+                "is_contrastive": False,
+                "judge_score": 1.0,
+                "norm_match_score": 1.0,
+                "governance_score": 1.0,
+                "judge_response": json.dumps({"no_flows": True}),
+            })
+            continue
+
+        # Explode into per-flow eval rows
+        for flow_idx, flow in enumerate(flows):
+            flow_query = _flow_to_query(flow)
+            flow_json = json.dumps(flow, ensure_ascii=False, indent=1)
+            relevant_norms = _retrieve_relevant_norms(flow_query, source_id)
+
             eval_rows.append({
                 "prompt_id": prompt_id,
                 "source_id": source_id,
-                "is_contrastive": True,
-                "contrastive_source": wrong_source,
+                "flow_index": flow_idx,
+                "is_contrastive": False,
                 "chunk_text": chunk_text,
-                "completion_text": completion_text,
-                "norm_universe_json": contrastive_norms,
+                "flow_json": flow_json,
+                "norm_universe_json": relevant_norms,
             })
 
+            # Contrastive pairing: same flow, norms from wrong source
+            if random.random() < contrastive_ratio and len(all_source_ids) > 1:
+                wrong_sources = [s for s in all_source_ids if s != source_id]
+                wrong_source = random.choice(wrong_sources)
+                contrastive_norms = _retrieve_relevant_norms(
+                    flow_query, source_id, contrastive_source=wrong_source,
+                )
+                eval_rows.append({
+                    "prompt_id": prompt_id,
+                    "source_id": source_id,
+                    "flow_index": flow_idx,
+                    "is_contrastive": True,
+                    "contrastive_source": wrong_source,
+                    "chunk_text": chunk_text,
+                    "flow_json": flow_json,
+                    "norm_universe_json": contrastive_norms,
+                })
+
     eval_df = pd.DataFrame(eval_rows)
-    n_correct = len(eval_df[eval_df["is_contrastive"] == False]) if len(eval_df) else 0
+    n_flows = len(eval_df[eval_df["is_contrastive"] == False]) if len(eval_df) else 0
     n_contrastive = len(eval_df[eval_df["is_contrastive"] == True]) if len(eval_df) else 0
-    print(f"[reward_prep] Built {len(eval_df)} judge evaluation rows "
-          f"({n_correct} correct, {n_contrastive} contrastive)")
+    print(f"[reward_prep] Built {len(eval_df)} per-flow judge rows "
+          f"({n_flows} correct, {n_contrastive} contrastive, "
+          f"{len(no_flow_rows)} no-flow prompts scored 1.0)")
 
     if len(eval_df) == 0:
         return pd.DataFrame(columns=[
@@ -257,11 +290,11 @@ def run_reward_prep_stage(
 
     sampling_params = {
         "temperature": 0.0,
-        "max_tokens": 1024,
+        "max_tokens": 512,
     }
 
-    from ..schemas import NormGroundingJudgment
-    json_schema = NormGroundingJudgment.model_json_schema()
+    from ..schemas import FlowGovernanceJudgment
+    json_schema = FlowGovernanceJudgment.model_json_schema()
     sampling_params["guided_decoding"] = {"json": json_schema}
 
     def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -269,7 +302,7 @@ def run_reward_prep_stage(
         user_prompt = prompt_template.replace(
             "{{chunk_text}}", str(row.get("chunk_text", ""))
         ).replace(
-            "{{completion_text}}", str(row.get("completion_text", ""))
+            "{{flow_json}}", str(row.get("flow_json", "{}"))
         ).replace(
             "{{norm_universe_json}}", str(row.get("norm_universe_json", "[]"))
         )
@@ -288,9 +321,15 @@ def run_reward_prep_stage(
 
         parsed = extract_last_json(gen_text)
         if parsed and isinstance(parsed, dict):
-            result_row["judge_score"] = float(parsed.get("score", 0.0))
+            nm = float(parsed.get("norm_match_score", 0.0))
+            gov = float(parsed.get("governance_score", 0.0))
+            result_row["norm_match_score"] = nm
+            result_row["governance_score"] = gov
+            result_row["judge_score"] = 0.5 * nm + 0.5 * gov
             result_row["judge_response"] = json.dumps(parsed, ensure_ascii=False)
         else:
+            result_row["norm_match_score"] = 0.0
+            result_row["governance_score"] = 0.0
             result_row["judge_score"] = 0.0
             result_row["judge_response"] = gen_text
 
@@ -304,20 +343,54 @@ def run_reward_prep_stage(
         stage_name="reward_prep",
     )
 
+    # -------------------------------------------------------------------
+    # Aggregate per-flow scores back to prompt level
+    # -------------------------------------------------------------------
+    group_cols = ["prompt_id", "source_id", "is_contrastive"]
+    score_cols = ["judge_score", "norm_match_score", "governance_score"]
+
+    # Ensure score columns exist
+    for col in score_cols:
+        if col not in result_df.columns:
+            result_df[col] = 0.0
+
+    agg_df = (
+        result_df
+        .groupby(group_cols, as_index=False)[score_cols]
+        .mean()
+    )
+
+    # Collect per-flow judge responses as JSON array per prompt
+    if "judge_response" in result_df.columns:
+        resp_agg = (
+            result_df
+            .groupby(group_cols, as_index=False)["judge_response"]
+            .agg(lambda x: json.dumps(list(x)))
+        )
+        agg_df = agg_df.merge(resp_agg, on=group_cols, how="left")
+
+    # Append no-flow rows (pre-scored 1.0, no judge call)
+    if no_flow_rows:
+        no_flow_df = pd.DataFrame(no_flow_rows)
+        agg_df = pd.concat([agg_df, no_flow_df], ignore_index=True)
+
     keep_cols = [
         "prompt_id", "source_id", "is_contrastive",
-        "judge_score", "judge_response",
+        "judge_score", "norm_match_score", "governance_score",
+        "judge_response",
     ]
-    if "contrastive_source" in result_df.columns:
-        keep_cols.append("contrastive_source")
+    out_cols = [c for c in keep_cols if c in agg_df.columns]
+    out_df = agg_df[out_cols].copy()
 
-    out_cols = [c for c in keep_cols if c in result_df.columns]
-    out_df = result_df[out_cols].copy()
-
-    correct_mean = out_df.loc[out_df["is_contrastive"] == False, "judge_score"].mean()
-    contrastive_mean = out_df.loc[out_df["is_contrastive"] == True, "judge_score"].mean()
+    correct_mask = out_df["is_contrastive"] == False
+    contrastive_mask = out_df["is_contrastive"] == True
+    correct_mean = out_df.loc[correct_mask, "judge_score"].mean()
+    contrastive_mean = out_df.loc[contrastive_mask, "judge_score"].mean() if contrastive_mask.any() else float("nan")
+    nm_mean = out_df.loc[correct_mask, "norm_match_score"].mean() if "norm_match_score" in out_df.columns else float("nan")
+    gov_mean = out_df.loc[correct_mask, "governance_score"].mean() if "governance_score" in out_df.columns else float("nan")
     print(f"[reward_prep] Judge evaluation complete. "
-          f"Mean score (correct): {correct_mean:.3f}, "
+          f"Mean score (correct): {correct_mean:.3f} "
+          f"(norm_match={nm_mean:.3f}, governance={gov_mean:.3f}), "
           f"Mean score (contrastive): {contrastive_mean:.3f}")
 
     return out_df

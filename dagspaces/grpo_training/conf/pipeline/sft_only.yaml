@@ -41,5 +41,5 @@ pipeline:
           checkpoint:
             path: outputs/sft/checkpoint
             type: dir
-        launcher: slurm_train_2x
+        launcher: slurm_gpu_1x
         wandb_suffix: sft_training
