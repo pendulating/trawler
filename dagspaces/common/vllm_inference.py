@@ -7,11 +7,17 @@ with direct vLLM LLM.generate() calls. Designed for single-machine multi-GPU set
 from __future__ import annotations
 
 import json
-import multiprocessing
+import logging
 import os
+import pickle
 import re
 import subprocess
+import sys
+import tempfile
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 from omegaconf import OmegaConf
@@ -304,44 +310,79 @@ def _build_sampling_params(sp_dict: Dict[str, Any]):
 # Data-parallel worker
 # ---------------------------------------------------------------------------
 
-def _dp_worker(
-    rank: int,
-    dp_size: int,
-    master_ip: str,
-    master_port: int,
-    engine_kwargs: Dict[str, Any],
-    prompts: List[str],
-    sp_dict: Dict[str, Any],
-    result_queue: multiprocessing.Queue,
-    stage_name: str,
-):
-    """Run vLLM inference in a data-parallel worker process.
+_DP_WORKER_SCRIPT = r'''
+"""Standalone DP worker script — executed as a fresh subprocess.
 
-    Each worker sets DP env vars, creates its own LLM instance on a subset
-    of GPUs, runs generate() on its shard of prompts, and puts serialisable
-    results into `result_queue`.
-    """
+Reads task from a pickle file, runs vLLM inference, writes results to a
+pickle file.  Completely isolated from the parent process (no shared CUDA
+context, no inherited NCCL state).
+"""
+import json, os, pickle, sys, time, traceback
+
+def main():
+    task_path = sys.argv[1]
+    result_path = sys.argv[2]
+
+    with open(task_path, "rb") as f:
+        task = pickle.load(f)
+
+    rank        = task["rank"]
+    dp_size     = task["dp_size"]
+    engine_kwargs = task["engine_kwargs"]
+    prompts     = task["prompts"]
+    sp_dict     = task["sp_dict"]
+    stage_name  = task["stage_name"]
+    pcie_env    = task["pcie_env"]
+    runtime_env = task["runtime_env"]
+
+    # Apply env vars (set before any CUDA/torch import)
+    for k, v in {**pcie_env, **runtime_env}.items():
+        os.environ.setdefault(k, v)
+
+    # Clear any inherited vLLM DP coordination vars
+    for var in ("VLLM_DP_RANK", "VLLM_DP_RANK_LOCAL", "VLLM_DP_SIZE",
+                "VLLM_DP_MASTER_IP", "VLLM_DP_MASTER_PORT"):
+        os.environ.pop(var, None)
+
+    print(f"[{stage_name}] DP rank {rank}/{dp_size}: starting "
+          f"(pid={os.getpid()}, CUDA_VISIBLE_DEVICES="
+          f"{os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}, "
+          f"prompts={len(prompts)})", flush=True)
+
     try:
-        os.environ["VLLM_DP_RANK"] = str(rank)
-        os.environ["VLLM_DP_RANK_LOCAL"] = str(rank)
-        os.environ["VLLM_DP_SIZE"] = str(dp_size)
-        os.environ["VLLM_DP_MASTER_IP"] = master_ip
-        os.environ["VLLM_DP_MASTER_PORT"] = str(master_port)
+        t0 = time.time()
+        from vllm import LLM, SamplingParams
 
-        # Set runtime env vars
-        for k, v in {**get_pcie_nccl_env_vars(), **get_vllm_runtime_env_vars()}.items():
-            os.environ.setdefault(k, v)
+        print(f"[{stage_name}] DP rank {rank}/{dp_size}: vLLM imported in "
+              f"{time.time() - t0:.1f}s, creating LLM engine...", flush=True)
 
-        from vllm import LLM
-
-        print(f"[{stage_name}] DP rank {rank}/{dp_size}: creating LLM with "
-              f"{len(prompts)} prompts", flush=True)
+        t1 = time.time()
         llm = LLM(**engine_kwargs)
+        print(f"[{stage_name}] DP rank {rank}/{dp_size}: LLM created in "
+              f"{time.time() - t1:.1f}s, starting generation...", flush=True)
 
-        sampling_params = _build_sampling_params(sp_dict)
+        # Build SamplingParams (inline to avoid import from parent package)
+        sp = dict(sp_dict or {})
+        guided = sp.pop("guided_decoding", None) or sp.pop("structured_output", None)
+        for k in ("early_stopping", "length_penalty", "response_format", "detokenize"):
+            sp.pop(k, None)
+        if guided and isinstance(guided, dict):
+            try:
+                from vllm.sampling_params import StructuredOutputsParams
+                sp["structured_outputs"] = StructuredOutputsParams(**guided)
+            except ImportError:
+                try:
+                    from vllm.sampling_params import GuidedDecodingParams
+                    sp["guided_decoding"] = GuidedDecodingParams(**guided)
+                except ImportError:
+                    pass
+        sampling_params = SamplingParams(**sp)
+
+        t2 = time.time()
         outputs = llm.generate(prompts, sampling_params)
+        print(f"[{stage_name}] DP rank {rank}/{dp_size}: generation done in "
+              f"{time.time() - t2:.1f}s ({len(outputs)} outputs)", flush=True)
 
-        # Serialise outputs: extract text and token counts
         serialised = []
         for out in outputs:
             text = out.outputs[0].text if out.outputs else ""
@@ -356,17 +397,23 @@ def _dp_worker(
                 "completion_tokens": completion_tokens,
             })
 
-        print(f"[{stage_name}] DP rank {rank}/{dp_size}: done, "
-              f"{len(serialised)} outputs", flush=True)
-        result_queue.put((rank, serialised, None))
+        with open(result_path, "wb") as f:
+            pickle.dump({"rank": rank, "outputs": serialised, "error": None}, f)
 
-        # Give engine time to pause processing loops before exit
-        # (matches official vLLM DP example)
-        import time
-        time.sleep(1)
-    except Exception as e:
-        import traceback
-        result_queue.put((rank, None, traceback.format_exc()))
+        print(f"[{stage_name}] DP rank {rank}/{dp_size}: wrote {len(serialised)} "
+              f"results, total elapsed {time.time() - t0:.1f}s", flush=True)
+
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[{stage_name}] DP rank {rank}/{dp_size}: FAILED\n{tb}",
+              flush=True, file=sys.stderr)
+        with open(result_path, "wb") as f:
+            pickle.dump({"rank": rank, "outputs": None, "error": tb}, f)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+'''
 
 
 def _run_data_parallel(
@@ -377,61 +424,148 @@ def _run_data_parallel(
     stage_name: str,
     timeout: int = 86400,
 ) -> List[Dict[str, Any]]:
-    """Spawn dp_size worker processes, each running vLLM on a prompt shard.
+    """Spawn dp_size fully-isolated subprocess workers for vLLM inference.
 
-    Returns a list of output dicts in the same order as `prompts`.
+    Each worker is a fresh Python interpreter (subprocess.Popen) with its own
+    CUDA_VISIBLE_DEVICES slice.  This avoids the NCCL deadlocks that occur
+    when multiprocessing.Process is used with vLLM's ``mp`` executor backend
+    (inherited CUDA context + competing NCCL process groups).
+
+    Returns a list of output dicts in the same order as ``prompts``.
     """
     if len(prompts) < dp_size:
         raise RuntimeError(
             f"[{stage_name}] Too few prompts ({len(prompts)}) for "
-            f"data_parallel_size={dp_size}. Each DP rank needs at least 1 "
-            f"prompt. Reduce dp_size or increase input data."
+            f"data_parallel_size={dp_size}."
         )
 
-    from vllm.utils.network_utils import get_open_port
-
-    master_ip = "127.0.0.1"
-    master_port = get_open_port()
+    tp_size = engine_kwargs.get("tensor_parallel_size", 1)
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    all_devices = [d.strip() for d in visible.split(",") if d.strip()] if visible else []
+    needed = dp_size * tp_size
+    if all_devices and len(all_devices) < needed:
+        raise RuntimeError(
+            f"[{stage_name}] data_parallel_size={dp_size} x "
+            f"tensor_parallel_size={tp_size} = {needed} GPUs required, "
+            f"but only {len(all_devices)} visible: {all_devices}"
+        )
 
     # Split prompts across DP ranks
-    floor = len(prompts) // dp_size
+    floor_n = len(prompts) // dp_size
     remainder = len(prompts) % dp_size
 
-    def shard_start(rank):
-        return rank * floor + min(rank, remainder)
+    def shard_range(rank: int) -> tuple:
+        start = rank * floor_n + min(rank, remainder)
+        end = (rank + 1) * floor_n + min(rank + 1, remainder)
+        return start, end
 
     shards = []
     for r in range(dp_size):
-        s = prompts[shard_start(r):shard_start(r + 1)]
-        shards.append(s)
-        print(f"[{stage_name}] DP rank {r}: {len(s)} prompts")
+        s, e = shard_range(r)
+        shards.append(prompts[s:e])
 
-    result_queue: multiprocessing.Queue = multiprocessing.Queue()
-    procs = []
+    # Prepare per-rank env and task files
+    pcie_env = get_pcie_nccl_env_vars()
+    runtime_env = get_vllm_runtime_env_vars()
+
+    tmpdir = os.environ.get("TMPDIR", "/tmp")
+    task_files = []
+    result_files = []
+    procs: List[subprocess.Popen] = []
+
+    # Write worker script to a temp file
+    worker_script = tempfile.NamedTemporaryFile(
+        mode="w", suffix="_dp_worker.py", dir=tmpdir, delete=False,
+    )
+    worker_script.write(_DP_WORKER_SCRIPT)
+    worker_script.close()
+
+    print(f"[{stage_name}] Launching {dp_size} DP workers "
+          f"(TP={tp_size}, {len(prompts)} total prompts)...", flush=True)
+
     for rank in range(dp_size):
-        proc = multiprocessing.Process(
-            target=_dp_worker,
-            args=(rank, dp_size, master_ip, master_port,
-                  engine_kwargs, shards[rank], sp_dict, result_queue, stage_name),
+        # GPU slice for this rank
+        if all_devices:
+            rank_devices = all_devices[rank * tp_size:(rank + 1) * tp_size]
+        else:
+            rank_devices = []
+
+        task = {
+            "rank": rank,
+            "dp_size": dp_size,
+            "engine_kwargs": engine_kwargs,
+            "prompts": shards[rank],
+            "sp_dict": sp_dict,
+            "stage_name": stage_name,
+            "pcie_env": pcie_env,
+            "runtime_env": runtime_env,
+        }
+
+        task_path = os.path.join(tmpdir, f"{stage_name}_dp{rank}_task.pkl")
+        result_path = os.path.join(tmpdir, f"{stage_name}_dp{rank}_result.pkl")
+        with open(task_path, "wb") as f:
+            pickle.dump(task, f)
+        task_files.append(task_path)
+        result_files.append(result_path)
+
+        # Build a clean env: inherit parent env, override GPU assignment,
+        # and strip any vLLM DP coordination vars.
+        child_env = dict(os.environ)
+        if rank_devices:
+            child_env["CUDA_VISIBLE_DEVICES"] = ",".join(rank_devices)
+        for var in ("VLLM_DP_RANK", "VLLM_DP_RANK_LOCAL", "VLLM_DP_SIZE",
+                     "VLLM_DP_MASTER_IP", "VLLM_DP_MASTER_PORT"):
+            child_env.pop(var, None)
+
+        devices_str = child_env.get("CUDA_VISIBLE_DEVICES", "<unset>")
+        print(f"[{stage_name}] DP rank {rank}: {len(shards[rank])} prompts, "
+              f"CUDA_VISIBLE_DEVICES={devices_str}", flush=True)
+
+        proc = subprocess.Popen(
+            [sys.executable, worker_script.name, task_path, result_path],
+            env=child_env,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
         )
-        proc.start()
         procs.append(proc)
+
+    # Wait for all workers
+    print(f"[{stage_name}] Waiting for {dp_size} DP workers "
+          f"(timeout={timeout}s)...", flush=True)
+    errors = []
+    for rank, proc in enumerate(procs):
+        try:
+            retcode = proc.wait(timeout=timeout)
+            if retcode != 0:
+                errors.append(
+                    f"DP rank {rank} (pid={proc.pid}) exited with code {retcode}"
+                )
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            errors.append(
+                f"DP rank {rank} (pid={proc.pid}) timed out after {timeout}s, killed"
+            )
 
     # Collect results
     rank_results: Dict[int, List[Dict[str, Any]]] = {}
-    errors = []
-    for _ in range(dp_size):
-        rank, outputs, error = result_queue.get(timeout=timeout)
-        if error:
-            errors.append(f"DP rank {rank} failed:\n{error}")
+    for rank in range(dp_size):
+        result_path = result_files[rank]
+        if not os.path.exists(result_path):
+            errors.append(f"DP rank {rank}: no result file at {result_path}")
+            continue
+        with open(result_path, "rb") as f:
+            result = pickle.load(f)
+        if result.get("error"):
+            errors.append(f"DP rank {rank} failed:\n{result['error']}")
         else:
-            rank_results[rank] = outputs
+            rank_results[rank] = result["outputs"]
 
-    for proc in procs:
-        proc.join(timeout=30)
-        if proc.is_alive():
-            print(f"[{stage_name}] Killing hung DP process {proc.pid}")
-            proc.kill()
+    # Cleanup temp files
+    for p in [worker_script.name, *task_files, *result_files]:
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
 
     if errors:
         raise RuntimeError(
@@ -439,7 +573,7 @@ def _run_data_parallel(
             + "\n".join(errors)
         )
 
-    # Reassemble in original order (rank 0 first, then rank 1, etc.)
+    # Reassemble in original order
     all_outputs = []
     for rank in range(dp_size):
         results = rank_results[rank]
