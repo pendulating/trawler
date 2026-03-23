@@ -193,6 +193,16 @@ def run_grpo_training_stage(
     # Online R_ground: use embedding + judge servers instead of cached lookup
     online_rground = None
     use_online_rground = grpo_cfg.get("online_rground", False) and weights[5] > 0.0
+    _contrastive = grpo_cfg.get("contrastive_ratio", 0.1)
+    if use_online_rground and _contrastive > 0.0:
+        print(
+            "[grpo_training] WARNING: online_rground=true with contrastive_ratio="
+            f"{_contrastive}. Contrastive pairing is incompatible with "
+            "online R_ground (TRL generates identical completions for duplicate "
+            "prompts, so contrastive rows waste training steps with identical "
+            "reward signals). Forcing contrastive_ratio=0.0."
+        )
+        grpo_cfg["contrastive_ratio"] = 0.0
     if use_online_rground:
         from .clients import EmbeddingClient, JudgeClient, NormRetriever
         from .online_rground import OnlineRGround
