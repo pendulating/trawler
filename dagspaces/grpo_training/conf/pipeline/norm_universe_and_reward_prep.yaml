@@ -1,28 +1,24 @@
 # @package _global_
-# GRPO pipeline with norm universe embedding + online R_ground.
-# Assumes SFT checkpoint and SFT pairs already exist.
-# reward_prep runs in parallel as an inspection tool but is NOT a GRPO dependency.
+# Norm universe embedding + reward prep only (no GRPO training).
+# Use to rebuild norm universes and reward cache after upstream norm changes,
+# then inspect before triggering GRPO.
 #
 # Usage:
-#   ABSTRACTED_NORMS_PATH=... SFT_CHECKPOINT_PATH=... SFT_PAIRS_PATH=... \
+#   ABSTRACTED_NORMS_PATH=... SFT_PAIRS_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
-#     pipeline=grpo_with_norms \
-#     training/grpo=online_rground_5gpu \
+#     pipeline=norm_universe_and_reward_prep \
 #     model=qwen3-8b
 
 defaults:
   - override /hydra/launcher: slurm_monitor
 
 pipeline:
-  output_root: ${hydra:run.dir}/grpo_with_norms
+  output_root: ${hydra:run.dir}/norm_universe_and_reward_prep
 
   sources:
     abstracted_norms:
       path: ${oc.env:ABSTRACTED_NORMS_PATH}
       type: parquet
-    sft_checkpoint:
-      path: ${oc.env:SFT_CHECKPOINT_PATH}
-      type: dir
     sft_pairs:
       path: ${oc.env:SFT_PAIRS_PATH}
       type: parquet
@@ -56,21 +52,7 @@ pipeline:
           dataset:
             path: outputs/reward_prep/reward_cache.parquet
             type: parquet
-        launcher: slurm_train_2x
+        overrides:
+          judge_model.engine_kwargs.data_parallel_size: 2
+        launcher: slurm_gpu_4x
         wandb_suffix: reward_prep
-
-      grpo_training:
-        stage: grpo_training
-        depends_on:
-          - norm_universe
-        inputs:
-          sft_checkpoint: sft_checkpoint
-          dataset: sft_pairs
-          norm_universes: norm_universe.dataset
-          embeddings: norm_universe.embeddings
-        outputs:
-          checkpoint:
-            path: outputs/grpo/checkpoint
-            type: dir
-        launcher: slurm_gpu_5x
-        wandb_suffix: grpo_training

@@ -1,6 +1,6 @@
 """Norm universe construction: embed raw norms per book with Qwen3-Embedding-8B.
 
-Takes structured_norms.parquet (raw extracted norms) and:
+Takes abstracted_norms.parquet (role-abstracted norms) and:
 1. Groups by gutenberg_id (each book = one normative universe N_hat_b)
 2. Embeds each norm's articulation with Qwen3-Embedding-8B (4096-dim)
 3. Outputs a JSON universe file + .npy embeddings matrix
@@ -70,7 +70,7 @@ def run_norm_universe_stage(
     """Build per-book normative universes with Qwen3-Embedding-8B embeddings.
 
     Args:
-        df: structured_norms DataFrame with raz_* columns and gutenberg_id.
+        df: abstracted_norms DataFrame with raz_* columns and gutenberg_id.
         cfg: Hydra config with model.embedding_model_source for Qwen3-Embedding.
         output_dir: Directory to write norm_universes.json and embeddings.
 

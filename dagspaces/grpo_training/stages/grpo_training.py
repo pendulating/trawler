@@ -116,6 +116,7 @@ def run_grpo_training_stage(
     norm_universes_path: str,
     output_dir: str,
     cfg: Any,
+    embeddings_dir: str = "",
 ) -> None:
     """Run GRPO training with TRL + vLLM.
 
@@ -126,6 +127,7 @@ def run_grpo_training_stage(
         norm_universes_path: Path to norm_universes.json.
         output_dir: Directory to save GRPO checkpoint.
         cfg: Hydra config with training.grpo section.
+        embeddings_dir: Path to per-book .npy embeddings (for online R_ground).
     """
     from trl import GRPOTrainer, GRPOConfig
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -182,6 +184,56 @@ def run_grpo_training_stage(
     total_steps = grpo_cfg.get("max_steps") or (len(sft_df) // max(grpo_cfg.get("num_generations", 2), 1))
     trace_every = max(total_steps // 10, 1)
 
+    # Online R_ground: use embedding + judge servers instead of cached lookup
+    online_rground = None
+    use_online_rground = grpo_cfg.get("online_rground", False) and weights[5] > 0.0
+    if use_online_rground:
+        from .clients import EmbeddingClient, JudgeClient, NormRetriever
+        from .online_rground import OnlineRGround
+        from ..schemas import FlowGovernanceJudgment
+
+        emb_port = grpo_cfg.get("embedding_server_port", 8001)
+        judge_port = grpo_cfg.get("judge_server_port", 8002)
+
+        # Load judge prompt template
+        prompt_cfg = (
+            OmegaConf.select(cfg, "prompt_reward_judge")
+            or OmegaConf.select(cfg, "prompt")
+        )
+        system_prompt = str(OmegaConf.select(prompt_cfg, "system_prompt") or "")
+        prompt_template = str(OmegaConf.select(prompt_cfg, "prompt_template") or "")
+
+        embedding_client = EmbeddingClient(
+            base_url=f"http://localhost:{emb_port}",
+        )
+        judge_client = JudgeClient(
+            base_url=f"http://localhost:{judge_port}",
+            system_prompt=system_prompt,
+            prompt_template=prompt_template,
+            json_schema=FlowGovernanceJudgment.model_json_schema(),
+        )
+
+        if not embeddings_dir:
+            raise ValueError(
+                "[grpo_training] online_rground=true requires embeddings_dir "
+                "(pass embeddings input from norm_universe stage)"
+            )
+        norm_retriever = NormRetriever(
+            norm_universes=norm_universes,
+            embeddings_dir=embeddings_dir,
+        )
+
+        online_rground = OnlineRGround(
+            embedding_client=embedding_client,
+            judge_client=judge_client,
+            norm_retriever=norm_retriever,
+        )
+        print(f"[grpo_training] Online R_ground enabled "
+              f"(embed=:{emb_port}, judge=:{judge_port})")
+    elif not use_online_rground and weights[5] > 0.0:
+        print(f"[grpo_training] R_ground using cached lookup "
+              f"({len(reward_cache)} entries)")
+
     reward_fn = CompositeRewardFunction(
         weights=weights,
         norm_universes=norm_universes,
@@ -190,6 +242,7 @@ def run_grpo_training_stage(
         source_contexts=source_contexts,
         trace_log_path=trace_log_path,
         trace_every_n_calls=trace_every,
+        online_rground=online_rground,
     )
     reward_fn.enable_thinking_grpo = enable_thinking_grpo
     print(f"[grpo_training] Reward traces → {trace_log_path} (every {trace_every} calls)")

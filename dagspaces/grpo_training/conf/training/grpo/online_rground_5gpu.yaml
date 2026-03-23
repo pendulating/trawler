@@ -1,0 +1,47 @@
+# @package training.grpo
+# Online R_ground: 5-GPU config (1 embed + 2 judge + 2 policy).
+# Evaluates normative grounding on the model's actual GRPO completions
+# rather than using cached scores from gold-standard SFT extractions.
+#
+# GPU allocation:
+#   GPU 0:   Qwen3-Embedding-8B (embed server, port 8001)
+#   GPU 1-2: Qwen2.5-72B-Instruct-AWQ (judge server, TP=2, port 8002)
+#   GPU 3-4: Policy model (colocate vLLM + training)
+
+online_rground: true
+embedding_server_port: 8001
+judge_server_port: 8002
+judge_server_tensor_parallel_size: 2
+
+num_generations: 2
+learning_rate: 1.0e-6
+per_device_batch_size: 1
+gradient_accumulation_steps: 16
+num_epochs: 1
+warmup_ratio: 0.1
+max_completion_length: 3072
+gradient_checkpointing: true
+bf16: true
+logging_steps: 10
+save_strategy: steps
+save_steps: 100
+
+# vLLM for policy model (colocate on training GPUs)
+use_vllm: true
+vllm_mode: colocate
+vllm_gpu_memory_utilization: 0.45
+vllm_enable_sleep_mode: true
+
+enable_thinking_grpo: true
+contrastive_ratio: 0.1
+
+# Reward component weights
+reward_weights:
+  - 0.20   # r_uncert  (task clarity / schema validity — gating)
+  - 0.15   # r_complete (structural completeness)
+  - 0.15   # r_consist (internal consistency)
+  - 0.15   # r_context (context identification)
+  - 0.15   # r_cohere (reasoning-to-extraction coherence)
+  - 0.20   # r_ground (normative grounding — ONLINE judge)
+
+context_embedding_model: all-MiniLM-L6-v2

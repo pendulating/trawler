@@ -1,7 +1,10 @@
 # @package _global_
 # Full GRPO training pipeline:
-#   norm_universe (embed raw norms) → reward_prep (judge grounding) → grpo_training
+#   norm_universe (embed norms) ───────────────────────────────────→ grpo_training
 #   sft_data_prep → sft_training ──────────────────────────────────→ grpo_training
+#
+# R_ground is evaluated online during GRPO (via embedding + judge servers).
+# reward_prep runs in parallel as an inspection tool but is NOT a dependency.
 
 defaults:
   - override /hydra/launcher: slurm_monitor
@@ -10,8 +13,8 @@ pipeline:
   output_root: ${hydra:run.dir}/grpo_training
 
   sources:
-    structured_norms:
-      path: ${oc.env:STRUCTURED_NORMS_PATH}
+    abstracted_norms:
+      path: ${oc.env:ABSTRACTED_NORMS_PATH}
       type: parquet
     ci_reasoning:
       path: ${oc.env:CI_REASONING_PATH}
@@ -26,7 +29,7 @@ pipeline:
         stage: norm_universe
         depends_on: []
         inputs:
-          dataset: structured_norms
+          dataset: abstracted_norms
         outputs:
           dataset:
             path: outputs/norm_universe/norm_universes.json
@@ -83,17 +86,16 @@ pipeline:
         stage: grpo_training
         depends_on:
           - sft_training
-          - reward_prep
           - norm_universe
           - sft_data_prep
         inputs:
           sft_checkpoint: sft_training.checkpoint
           dataset: sft_data_prep.dataset
-          reward_cache: reward_prep.dataset
           norm_universes: norm_universe.dataset
+          embeddings: norm_universe.embeddings
         outputs:
           checkpoint:
             path: outputs/grpo/checkpoint
             type: dir
-        launcher: slurm_train_4x
+        launcher: slurm_gpu_5x
         wandb_suffix: grpo_training

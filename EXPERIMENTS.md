@@ -19,7 +19,7 @@ Extract Raz normative tuples from 10 fiction novels.
 ### Fetch novels (run once)
 
 ```bash
-python -m dagspaces.historical_norms.cli pipeline=COLM_fetch_fiction
+python -m dagspaces.historical_norms.cli -m pipeline=COLM_fetch_fiction
 ```
 
 Downloads and chunks all 10 novels from Project Gutenberg (6000-char chunks, 1000-char overlap), enriches with Wikipedia plot summaries. Output: `chunks.parquet`. Set `FICTION_CHUNKS_PATH` in `.env` to the output path.
@@ -27,7 +27,7 @@ Downloads and chunks all 10 novels from Project Gutenberg (6000-char chunks, 100
 ### Extract norms (from prefetched chunks)
 
 ```bash
-python -m dagspaces.historical_norms.cli pipeline=COLM_norms_fiction_prefetched
+python -m dagspaces.historical_norms.cli -m pipeline=COLM_norms_fiction_prefetched
 ```
 
 **DAG**: reasoning (LLM norm analysis) &rarr; extraction (Raz tuples) &rarr; role_abstraction (character &rarr; social roles)
@@ -39,53 +39,90 @@ python -m dagspaces.historical_norms.cli pipeline=COLM_norms_fiction_prefetched
 ### Full pipeline (fetch + extract in one run)
 
 ```bash
-python -m dagspaces.historical_norms.cli pipeline=COLM_norms_fiction
+python -m dagspaces.historical_norms.cli -m pipeline=COLM_norms_fiction
 ```
 
-## Phase 2: Training
+## Phase 2: SFT Fine-Tuning
 
-All training uses the `grpo_training` dagspace. Set env vars or pass Hydra overrides for input paths.
+All SFT runs use `CI_REASONING_PATH` and `CI_EXTRACTION_PATH` from `server.env`.
+Data prep runs once per pipeline invocation, then SFT trains on the prepared pairs.
 
-### Full pipeline (SFT + GRPO)
+### 2a. SFT — Small/medium models (≤14B) — 2×A6000, default config
 
 ```bash
-python -m dagspaces.grpo_training.cli pipeline=full_training model=qwen3.5-9b
+# Qwen3.5-9B (primary)
+python -m dagspaces.grpo_training.cli -m pipeline=sft_only model=qwen3.5-9b
+
+# Llama-3.1-8B-Instruct
+python -m dagspaces.grpo_training.cli -m pipeline=sft_only model=llama3.1-8b-instruct
+
+# Phi-4 (14B dense)
+python -m dagspaces.grpo_training.cli -m pipeline=sft_only model=phi-4
+
+# Phi-4-Multimodal-Instruct (14B, text-only SFT)
+python -m dagspaces.grpo_training.cli -m pipeline=sft_only model=phi-4-multimodal-instruct
+
+# Gemma-3-12B-IT
+python -m dagspaces.grpo_training.cli -m pipeline=sft_only model=gemma-3-12b-it
+```
+
+### 2b. SFT — Larger models (≥20B) — 4×A6000, QLoRA config
+
+```bash
+# GPT-OSS-20B
+python -m dagspaces.grpo_training.cli -m pipeline=sft_only_27b model=gpt-oss-20b training/sft=sft_27b
+
+# Qwen3.5-27B (large model ablation)
+python -m dagspaces.grpo_training.cli -m pipeline=sft_only_27b model=qwen3.5-27b training/sft=sft_27b
+```
+
+### 2c. SFT — Small model ablation
+
+```bash
+# Qwen3.5-4B
+python -m dagspaces.grpo_training.cli -m pipeline=sft_only model=qwen3.5-4b
+```
+
+## Phase 3: Norm Universe + Reward Prep
+
+Runs once on the role-abstracted norms. Uses `ABSTRACTED_NORMS_PATH` and `SFT_PAIRS_PATH` from `server.env`.
+
+```bash
+python -m dagspaces.grpo_training.cli -m pipeline=norm_universe_and_reward_prep
+```
+
+Outputs:
+- `outputs/norm_universe/norm_universes.json` + `embeddings/*.npy`
+- `outputs/reward_prep/reward_cache.parquet`
+
+## Phase 4: GRPO Training
+
+After SFT checkpoints (Phase 2) and reward cache (Phase 3) are ready.
+
+### Full pipeline (SFT + GRPO end-to-end)
+
+```bash
+python -m dagspaces.grpo_training.cli -m pipeline=full_training model=qwen3.5-9b
 ```
 
 **DAG**: norm_universe &rarr; sft_data_prep &rarr; sft_training &rarr; reward_prep &rarr; grpo_training
 
-### SFT-only baseline
-
-```bash
-python -m dagspaces.grpo_training.cli pipeline=sft_only model=qwen3.5-9b
-```
-
 ### GRPO-only (reuse existing SFT checkpoint)
 
-Requires `SFT_CHECKPOINT_PATH`, `REWARD_CACHE_PATH`, `NORM_UNIVERSES_PATH`, `SFT_PAIRS_PATH` in `.env`.
+Requires `SFT_CHECKPOINT_PATH`, `REWARD_CACHE_PATH`, `NORM_UNIVERSES_PATH`, `SFT_PAIRS_PATH` in `server.env`.
 
 ```bash
 # Qwen3.5-9B (vLLM disabled — Qwen3.5 + vLLM + TRL has unresolved compat issues)
-python -m dagspaces.grpo_training.cli pipeline=grpo_only model=qwen3.5-9b training.grpo.use_vllm=false
+python -m dagspaces.grpo_training.cli -m pipeline=grpo_only model=qwen3.5-9b training.grpo.use_vllm=false
 ```
 
 ### Ablation: programmatic-only GRPO (no judge reward)
 
 ```bash
-python -m dagspaces.grpo_training.cli pipeline=grpo_programmatic_only model=qwen3.5-9b training.grpo.use_vllm=false
+python -m dagspaces.grpo_training.cli -m pipeline=grpo_programmatic_only model=qwen3.5-9b training.grpo.use_vllm=false
 ```
 
 R_ground is zeroed out; reward weights redistributed to the 5 programmatic components.
-
-### Model size variants
-
-```bash
-# Qwen3.5-4B (small, fast iteration)
-python -m dagspaces.grpo_training.cli pipeline=sft_only model=qwen3.5-4b
-
-# Qwen3.5-27B (large model ablation, 4-GPU QLoRA)
-python -m dagspaces.grpo_training.cli pipeline=sft_only_27b model=qwen3.5-27b
-```
 
 ## Phase 3: Benchmark Evaluations
 
@@ -94,7 +131,7 @@ Run each benchmark with the trained checkpoint. Override `model=` to swap betwee
 ### GoldCoin-HIPAA (CI applicability + compliance)
 
 ```bash
-python -m dagspaces.goldcoin_hipaa.cli pipeline=full_eval model=qwen3.5-9b-sft-ci
+python -m dagspaces.goldcoin_hipaa.cli -m pipeline=full_eval model=qwen3.5-9b-sft-ci
 ```
 
 Two parallel branches: applicability (214 cases) and compliance (107 cases). Metrics: accuracy, macro F1, per-class precision/recall, confusion matrix.
@@ -104,7 +141,7 @@ Two parallel branches: applicability (214 cases) and compliance (107 cases). Met
 ### PrivacyLens (QA probing + leakage judgment)
 
 ```bash
-python -m dagspaces.privacylens.cli pipeline=privacylens_clean model=qwen3.5-9b-sft-ci
+python -m dagspaces.privacylens.cli -m pipeline=privacylens_clean model=qwen3.5-9b-sft-ci
 ```
 
 QA probing across 3 axes (Subject/Vector/Target, 493 prompts each). Agent action generation + leakage judgment. Metrics: QA accuracy per axis, leakage rate.
@@ -114,7 +151,7 @@ QA probing across 3 axes (Subject/Vector/Target, 493 prompts each). Agent action
 ### VLM-GeoPrivacy (visual privacy, requires VLM)
 
 ```bash
-python -m dagspaces.vlm_geoprivacy_bench.cli pipeline=mcq_eval model=qwen3-vl-8b-instruct
+python -m dagspaces.vlm_geoprivacy_bench.cli -m pipeline=mcq_eval model=qwen3-vl-8b-instruct
 ```
 
 MCQ evaluation on geoprivacy image scenarios. Requires a vision-language model.
@@ -195,18 +232,43 @@ api.runs("goldcoin-hipaa", filters={"config.checkpoint_name": {"$regex": "grpo"}
 
 ## Paper Ablation Matrix
 
-| Row | Model | Training | Pipeline |
-|-----|-------|----------|----------|
-| Zero-shot baseline | Qwen3.5-9B | None | `model=qwen3.5-9b` |
-| SFT baseline | Qwen3.5-9B + SFT | `sft_only` | `model=qwen3.5-9b-sft-ci` |
-| SFT + GRPO (full) | Qwen3.5-9B + GRPO | `full_training` | `model=qwen3.5-9b-grpo-ci` |
-| GRPO w/o judge | Qwen3.5-9B + Prog-GRPO | `grpo_programmatic_only` | Custom model config |
-| Small model | Qwen3.5-4B + SFT | `sft_only` | `model=qwen3.5-4b` |
-| Large model | Qwen3.5-27B + SFT | `sft_only_27b` | `model=qwen3.5-27b` |
-| GPT-OSS-20B | GPT-OSS-20B | None | `model=gpt-oss-20b` |
-| Phi-4 | Phi-4 14B | None | `model=phi-4` |
-| Gemma 3 | Gemma 3 12B-IT | None | `model=gemma-3-12b-it` |
-| Llama 3.1 | Llama 3.1-8B | None | `model=llama3.1-8b-instruct` |
-| Llama 3.3 | Llama 3.3-70B | None | `model=llama3.3-70b-instruct` |
+### Training method ablation (Qwen3.5-9B)
+
+| Row | Training | Pipeline | Eval config |
+|-----|----------|----------|-------------|
+| Zero-shot | None | — | `model=qwen3.5-9b` |
+| SFT only | SFT | `sft_only` | `model=qwen3.5-9b-sft-ci` |
+| SFT + GRPO (full) | SFT → GRPO | `full_training` | `model=qwen3.5-9b-grpo-ci` |
+| SFT + GRPO (no judge) | SFT → Prog-GRPO | `grpo_programmatic_only` | Custom model config |
+
+### Model scale ablation (SFT)
+
+| Row | Model | Params | Pipeline |
+|-----|-------|--------|----------|
+| Qwen3.5-4B | Qwen3.5-4B | 4B | `pipeline=sft_only model=qwen3.5-4b` |
+| Qwen3.5-9B | Qwen3.5-9B | 9B | `pipeline=sft_only model=qwen3.5-9b` |
+| Qwen3.5-27B | Qwen3.5-27B | 27B | `pipeline=sft_only_27b model=qwen3.5-27b training/sft=sft_27b` |
+
+### Cross-family SFT comparison
+
+| Row | Model | Params | Pipeline |
+|-----|-------|--------|----------|
+| Qwen3.5-9B + SFT | Qwen3.5-9B | 9B | `pipeline=sft_only model=qwen3.5-9b` |
+| Llama-3.1-8B + SFT | Llama-3.1-8B-Instruct | 8B | `pipeline=sft_only model=llama3.1-8b-instruct` |
+| Phi-4 + SFT | Phi-4 | 14B | `pipeline=sft_only model=phi-4` |
+| Phi-4-MM + SFT | Phi-4-Multimodal | 14B | `pipeline=sft_only model=phi-4-multimodal-instruct` |
+| Gemma-3-12B + SFT | Gemma-3-12B-IT | 12B | `pipeline=sft_only model=gemma-3-12b-it` |
+| GPT-OSS-20B + SFT | GPT-OSS-20B | 20B | `pipeline=sft_only_27b model=gpt-oss-20b training/sft=sft_27b` |
+
+### Zero-shot baselines (no fine-tuning)
+
+| Row | Model | Params | Eval config |
+|-----|-------|--------|-------------|
+| Qwen3.5-9B | Qwen3.5-9B | 9B | `model=qwen3.5-9b` |
+| Llama-3.1-8B | Llama-3.1-8B-Instruct | 8B | `model=llama3.1-8b-instruct` |
+| Phi-4 | Phi-4 | 14B | `model=phi-4` |
+| Gemma-3-12B | Gemma-3-12B-IT | 12B | `model=gemma-3-12b-it` |
+| GPT-OSS-20B | GPT-OSS-20B | 20B | `model=gpt-oss-20b` |
+| Llama-3.3-70B | Llama-3.3-70B-Instruct | 70B | `model=llama3.3-70b-instruct` |
 
 Each row is evaluated on all 3 benchmarks (GoldCoin, PrivacyLens, VLM-GeoPrivacy where applicable).

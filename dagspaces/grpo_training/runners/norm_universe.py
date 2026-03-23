@@ -19,7 +19,7 @@ class NormUniverseRunner(StageRunner):
     """Runner for the norm_universe stage.
 
     Inputs:
-        dataset: structured_norms.parquet (raw extracted norms)
+        dataset: abstracted_norms.parquet (role-abstracted norms)
 
     Outputs:
         dataset: norm_universes.json (per-book norm dicts)

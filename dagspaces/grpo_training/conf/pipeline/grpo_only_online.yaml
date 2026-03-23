@@ -1,12 +1,13 @@
 # @package _global_
-# GRPO-only pipeline with online R_ground.
+# GRPO-only pipeline with online R_ground evaluation.
 # Assumes SFT checkpoint, norm universes, and norm embeddings exist.
+# Does NOT require reward_cache (R_ground is evaluated live).
 #
 # Usage:
 #   SFT_CHECKPOINT_PATH=... NORM_UNIVERSES_PATH=... NORM_EMBEDDINGS_PATH=... \
 #   SFT_PAIRS_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
-#     pipeline=grpo_only \
+#     pipeline=grpo_only_online \
 #     training/grpo=online_rground_5gpu \
 #     model=qwen3-8b
 
@@ -14,7 +15,7 @@ defaults:
   - override /hydra/launcher: slurm_monitor
 
 pipeline:
-  output_root: ${hydra:run.dir}/grpo_only
+  output_root: ${hydra:run.dir}/grpo_only_online
 
   sources:
     sft_checkpoint:

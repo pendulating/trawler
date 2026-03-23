@@ -42,3 +42,11 @@ reward_weights:
 
 # Sentence-transformer model for r_context semantic similarity
 context_embedding_model: all-MiniLM-L6-v2
+
+# Online R_ground: evaluate model completions live via embedding + judge servers.
+# Requires >= 5 GPUs (1 embed + 2 judge + 2 training). When false, falls back
+# to cached lookup from reward_prep.
+online_rground: false
+embedding_server_port: 8001
+judge_server_port: 8002
+judge_server_tensor_parallel_size: 2

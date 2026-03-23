@@ -338,15 +338,16 @@ def r_cohere(completion: str) -> float:
     return sum(coherence_scores) / max(len(coherence_scores), 1)
 
 
-def r_ground(
+def r_ground_cached(
     completion: str,
     prompt_id: str,
     reward_cache: pd.DataFrame,
     is_contrastive: bool = False,
 ) -> float:
-    """R_ground: Normative grounding (cached lookup).
+    """R_ground: Normative grounding (cached lookup, legacy).
 
     Looks up pre-computed judge score from the reward cache.
+    Used when online_rground is not configured.
     """
     if reward_cache is None or len(reward_cache) == 0:
         return 0.0
@@ -384,6 +385,7 @@ class CompositeRewardFunction:
         prompt_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
         trace_log_path: Optional[str] = None,
         trace_every_n_calls: int = 50,
+        online_rground: Optional[Any] = None,
     ):
         if len(weights) != 6:
             raise ValueError(f"Expected 6 reward weights, got {len(weights)}")
@@ -395,6 +397,8 @@ class CompositeRewardFunction:
         # Maps prompt text -> {"source_id", "prompt_id", "is_contrastive"}
         # Used because TRL doesn't forward extra dataset columns to reward fns.
         self.prompt_metadata = prompt_metadata or {}
+        # Online R_ground evaluator (replaces cached lookup when set)
+        self.online_rground = online_rground
         # Periodic detailed trace logging
         self._call_count = 0
         self._trace_every = trace_every_n_calls
@@ -457,48 +461,89 @@ class CompositeRewardFunction:
         completions,
         **kwargs,
     ) -> List[float]:
-        """Score completions with the composite reward."""
+        """Score completions with the composite reward.
+
+        When ``online_rground`` is set, R_ground is evaluated by batching
+        all completions through the embedding + judge servers.  Otherwise
+        falls back to cached lookup.
+        """
         do_trace = self._should_trace()
         self._call_count += 1
 
-        # TRL doesn't forward extra dataset columns to reward fns,
-        # so we look up metadata from the prompt text.
-        scores = []
-        trace_entries = []
+        # ----- Phase 1: Extract text and metadata for all completions -----
+        extracted_texts = []
+        prompt_texts = []
+        meta_list = []
         for i, completion in enumerate(completions):
-            completion = self._extract_text(completion)
+            text = self._extract_text(completion)
+            extracted_texts.append(text)
+
             prompt = prompts[i] if prompts else ""
             if isinstance(prompt, list):
                 prompt = " ".join(
                     m.get("content", "") for m in prompt
                     if isinstance(m, dict) and m.get("role") == "user"
                 )
-            meta = self.prompt_metadata.get(prompt, {})
+            prompt_texts.append(prompt)
+            meta_list.append(self.prompt_metadata.get(prompt, {}))
+
+        # ----- Phase 2: Compute R_uncert through R_cohere per completion -----
+        partial_components = []  # list of [r0, r1, r2, r3, r4] per completion
+        for i, completion in enumerate(extracted_texts):
+            meta = meta_list[i]
             source_id = meta.get("source_id", "")
-            prompt_id = meta.get("prompt_id", "")
-            contrastive = meta.get("is_contrastive", False)
             source_context = self.source_contexts.get(source_id, "")
 
-            # Compute each component separately for tracing
-            components = [
+            partial_components.append([
                 r_uncert(completion),
                 r_complete(completion),
                 r_consist(completion),
                 r_context(completion, source_context, self.context_embedding_model),
                 r_cohere(completion),
-                r_ground(completion, prompt_id, self.reward_cache, contrastive),
-            ]
+            ])
+
+        # ----- Phase 3: Compute R_ground (online or cached) -----
+        use_rground = self.weights[5] > 0.0
+        if use_rground and self.online_rground is not None:
+            # Batch all completions through embedding + judge servers
+            rground_scores = self.online_rground(
+                completions=extracted_texts,
+                prompts=prompt_texts,
+                metadata_list=meta_list,
+            )
+        elif use_rground:
+            # Cached fallback
+            rground_scores = []
+            for i in range(len(extracted_texts)):
+                meta = meta_list[i]
+                rground_scores.append(
+                    r_ground_cached(
+                        extracted_texts[i],
+                        meta.get("prompt_id", ""),
+                        self.reward_cache,
+                        meta.get("is_contrastive", False),
+                    )
+                )
+        else:
+            rground_scores = [0.0] * len(extracted_texts)
+
+        # ----- Phase 4: Combine and score -----
+        scores = []
+        trace_entries = []
+        for i in range(len(extracted_texts)):
+            components = partial_components[i] + [rground_scores[i]]
             r = sum(w * c for w, c in zip(self.weights, components))
             scores.append(r)
 
-            if do_trace and i < 2:  # log first 2 completions per traced call
+            if do_trace and i < 2:
+                meta = meta_list[i]
                 trace_entries.append({
                     "call": self._call_count - 1,
                     "idx": i,
-                    "source_id": source_id,
-                    "prompt_id": prompt_id,
-                    "completion_len": len(completion),
-                    "completion": completion,
+                    "source_id": meta.get("source_id", ""),
+                    "prompt_id": meta.get("prompt_id", ""),
+                    "completion_len": len(extracted_texts[i]),
+                    "completion": extracted_texts[i],
                     "components": {
                         name: round(val, 4)
                         for name, val in zip(self._component_names, components)
@@ -509,6 +554,7 @@ class CompositeRewardFunction:
                     },
                     "composite": round(r, 4),
                     "enable_thinking_grpo": self.enable_thinking_grpo,
+                    "rground_mode": "online" if self.online_rground is not None else "cached",
                 })
 
         if trace_entries:

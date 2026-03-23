@@ -1,0 +1,43 @@
+# Uses Hydra Submitit Slurm launcher
+_target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
+submitit_folder: ${hydra.sweep.dir}/.submitit/%j
+timeout_min: 480
+nodes: 1
+tasks_per_node: 1
+cpus_per_task: 4
+mem_gb: ${runtime.job_memory_gb}
+gpus_per_node: 5
+partition: ${oc.env:SLURM_PARTITION,pierson}
+array_parallelism: 1
+name: ${experiment.name}
+additional_parameters:
+  gres: gpu:5
+setup:
+  - export HYDRA_FULL_ERROR=1
+  - source ~/.bashrc
+  - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
+  # Explicitly set CUDA_VISIBLE_DEVICES to local indices (0,1,...,N-1)
+  # This is REQUIRED for vLLM V1 multiprocessing - unset causes race conditions
+  # where spawned workers see different GPU counts than the parent process
+  - if [ -n "$SLURM_GPUS_ON_NODE" ] && [ "$SLURM_GPUS_ON_NODE" -gt 0 ]; then export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((SLURM_GPUS_ON_NODE - 1))); else unset CUDA_VISIBLE_DEVICES; fi
+  - unset WANDB_DISABLED
+  - export WANDB_SILENT=true
+  # Disable wandb service for distributed environments (uses in-process mode)
+  - export WANDB_DISABLE_SERVICE=true
+  - export VLLM_WORKER_MULTIPROC_METHOD=spawn
+  # NCCL configuration to prevent P2P and IB hangs during tensor parallelism
+  # CRITICAL for PCIe-only machines (no NVLink) like RTX A6000:
+  - export NCCL_DEBUG=WARN
+  - export NCCL_P2P_DISABLE=1
+  - export NCCL_IB_DISABLE=1
+  # Disable NCCL CUMEM for PCIe (fixes 'peer access not supported' errors)
+  - export NCCL_CUMEM_HOST_ENABLE=0
+  # SHM transport can hang on PCIe, disable it
+  - export NCCL_SHM_DISABLE=1
+  - export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512,expandable_segments:True
+  - export CUDA_LAUNCH_BLOCKING=0
+  - export TOKENIZERS_PARALLELISM=false
+  # Set local TMPDIR to avoid issues with network drives
+  - if [ -d /scratch ]; then export TMPDIR=/scratch/$USER; else export TMPDIR=/tmp/$USER; fi
+  - mkdir -p $TMPDIR
+  - export SLURM_CPU_BIND=none
