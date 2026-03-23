@@ -249,14 +249,9 @@ def run_grpo_training_stage(
             json_schema=FlowGovernanceJudgment.model_json_schema(),
         )
 
-        if not embeddings_dir:
-            raise ValueError(
-                "[grpo_training] online_rground=true requires embeddings_dir "
-                "(pass embeddings input from norm_universe stage)"
-            )
         norm_retriever = NormRetriever(
             norm_universes=norm_universes,
-            embeddings_dir=embeddings_dir,
+            embeddings_dir=embeddings_dir or "",
             embedding_client=embedding_client,
         )
 

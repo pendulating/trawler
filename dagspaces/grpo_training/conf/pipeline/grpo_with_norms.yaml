@@ -57,5 +57,5 @@ pipeline:
           checkpoint:
             path: outputs/grpo/checkpoint
             type: dir
-        launcher: slurm_gpu_5x
+        launcher: slurm_gpu_4x
         wandb_suffix: grpo_training

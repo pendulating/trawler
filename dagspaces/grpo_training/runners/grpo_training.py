@@ -247,9 +247,11 @@ class GRPOTrainingRunner(StageRunner):
                     import torch
                     gpu_list = [str(i) for i in range(torch.cuda.device_count())]
 
-                if len(gpu_list) < 5:
+                min_gpus = 1 + judge_tp + 1  # embed + judge + train
+                if len(gpu_list) < min_gpus:
                     raise ValueError(
-                        f"online_rground requires >= 5 GPUs, "
+                        f"online_rground requires >= {min_gpus} GPUs "
+                        f"(1 embed + {judge_tp} judge + 1 train), "
                         f"got {len(gpu_list)}: {gpu_list}"
                     )
 
@@ -278,10 +280,9 @@ class GRPOTrainingRunner(StageRunner):
                     )
 
                 if not embeddings_dir:
-                    raise ValueError(
-                        "online_rground requires 'embeddings' input "
-                        "(from norm_universe stage)"
-                    )
+                    print("[grpo_training] No embeddings dir provided; "
+                          "NormRetriever will re-embed norms via the "
+                          "embedding server at init.")
 
                 print(f"[grpo_training] Online R_ground GPU allocation: "
                       f"embed={emb_gpus}, judge={judge_gpus}, "
