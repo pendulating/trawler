@@ -20,6 +20,34 @@ from dagspaces.common.stage_utils import extract_last_json
 from .norm_universe import EMBED_INSTRUCTION
 
 
+def _build_norm_embed_text(norm: Dict[str, Any]) -> str:
+    """Build embedding-friendly text from a norm dict.
+
+    Mirrors norm_universe._build_norm_text but operates on the cleaned
+    field names (without raz_ prefix) used in norm_universes.json.
+    """
+    art = norm.get("norm_articulation") or norm.get("canonical_norm_articulation") or ""
+    subj = norm.get("norm_subject") or ""
+    pe = norm.get("prescriptive_element") or ""
+    act = norm.get("norm_act") or ""
+    cond = norm.get("condition_of_application") or ""
+    ctx = norm.get("context") or ""
+    force = norm.get("normative_force") or ""
+
+    parts = []
+    if art:
+        parts.append(str(art))
+    tuple_str = f"{subj} {pe} {act}".strip()
+    if cond:
+        tuple_str += f" when {cond}"
+    parts.append(tuple_str)
+    if ctx:
+        parts.append(f"[context: {ctx}]")
+    if force:
+        parts.append(f"[force: {force}]")
+    return " | ".join(parts)
+
+
 class EmbeddingClient:
     """HTTP client for a vLLM embedding server (Qwen3-Embedding-8B).
 
@@ -74,9 +102,11 @@ class EmbeddingClient:
                 return embs / norms
             except Exception as e:
                 if attempt == self.max_retries - 1:
-                    raise RuntimeError(
-                        f"Embedding server failed after {self.max_retries} attempts: {e}"
-                    ) from e
+                    print(f"[EmbeddingClient] Failed after {self.max_retries} "
+                          f"attempts: {e}. Returning zero embeddings.")
+                    # Return zero embeddings so retrieval falls back to
+                    # truncated norm lists rather than crashing training.
+                    return np.zeros((len(texts), 1), dtype=np.float32)
                 wait = 2 ** attempt
                 print(f"[EmbeddingClient] Attempt {attempt + 1} failed ({e}), "
                       f"retrying in {wait}s...")
@@ -135,7 +165,7 @@ class JudgeClient:
             "model": self.model_name,
             "messages": messages,
             "temperature": 0.0,
-            "max_tokens": 512,
+            "max_tokens": 256,
         }
         if self.json_schema:
             request_body["guided_json"] = self.json_schema
@@ -200,16 +230,18 @@ class JudgeClient:
 
 
 class NormRetriever:
-    """In-memory top-k norm retrieval from pre-computed embeddings.
+    """In-memory top-k norm retrieval with aligned embeddings.
 
-    Loads per-book .npy embedding matrices at init and supports
-    cosine-similarity retrieval for flow queries.
+    To guarantee query and norm embeddings are in the same space, norms
+    are re-embedded via the same vLLM embedding server used for queries
+    at init time.  Pre-computed .npy files are used as a fallback only.
     """
 
     def __init__(
         self,
         norm_universes: Dict[str, list],
         embeddings_dir: str,
+        embedding_client: Optional["EmbeddingClient"] = None,
         top_k: int = 3,
     ):
         import os
@@ -218,14 +250,31 @@ class NormRetriever:
         self.top_k = top_k
         self._embeddings: Dict[str, np.ndarray] = {}
 
-        for source_id in norm_universes:
-            npy_path = os.path.join(embeddings_dir, f"{source_id}.npy")
-            if os.path.exists(npy_path):
-                self._embeddings[source_id] = np.load(npy_path)
-
-        loaded = sum(len(v) for v in self._embeddings.values())
-        print(f"[NormRetriever] Loaded embeddings for "
-              f"{len(self._embeddings)} books ({loaded} vectors)")
+        if embedding_client is not None:
+            # Re-embed norms via the same server used for query encoding,
+            # guaranteeing embedding space alignment.
+            print("[NormRetriever] Re-embedding norms via embedding server "
+                  "for space alignment...")
+            for source_id, norms in norm_universes.items():
+                if not norms:
+                    continue
+                texts = [
+                    _build_norm_embed_text(n) for n in norms
+                ]
+                self._embeddings[source_id] = embedding_client.encode_batch(texts)
+            total = sum(len(v) for v in self._embeddings.values())
+            print(f"[NormRetriever] Re-embedded {total} norms across "
+                  f"{len(self._embeddings)} books")
+        else:
+            # Fallback: load pre-computed .npy embeddings (may have space mismatch
+            # if produced by a different model/pipeline than the embedding server).
+            for source_id in norm_universes:
+                npy_path = os.path.join(embeddings_dir, f"{source_id}.npy")
+                if os.path.exists(npy_path):
+                    self._embeddings[source_id] = np.load(npy_path)
+            loaded = sum(len(v) for v in self._embeddings.values())
+            print(f"[NormRetriever] Loaded pre-computed embeddings for "
+                  f"{len(self._embeddings)} books ({loaded} vectors)")
 
     def retrieve(
         self,

@@ -33,7 +33,12 @@ vllm_gpu_memory_utilization: 0.45
 vllm_enable_sleep_mode: true
 
 enable_thinking_grpo: true
-contrastive_ratio: 0.1
+
+# Contrastive pairing is disabled for online R_ground: TRL generates
+# identical completions for standard and contrastive prompts (same text),
+# and the reward function cannot distinguish them in the prompt_metadata
+# lookup. The contrastive signal only works with cached R_ground.
+contrastive_ratio: 0.0
 
 # Reward component weights
 reward_weights:

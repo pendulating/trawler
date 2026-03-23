@@ -46,6 +46,11 @@ def _build_grpo_dataset(
     from datasets import Dataset
 
     rows: List[Dict[str, Any]] = []
+    # Also collect raw user prompts (pre-template) for the reward function.
+    # Keyed by formatted_prompt → raw user_prompt, so OnlineRGround can pass
+    # clean chunk text to the judge instead of chat-templated text.
+    raw_prompts: Dict[str, str] = {}
+
     if norm_universes:
         all_source_ids = list(norm_universes.keys())
     else:
@@ -82,6 +87,7 @@ def _build_grpo_dataset(
         )
 
         prompt_id = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest()[:16]
+        raw_prompts[formatted_prompt] = user_prompt
 
         rows.append({
             "prompt": formatted_prompt,
@@ -106,7 +112,7 @@ def _build_grpo_dataset(
     n_contrastive = sum(1 for r in rows if r["is_contrastive"])
     thinking_label = "enabled" if enable_thinking else "disabled"
     print(f"[grpo_training] Dataset: {len(dataset)} prompts ({n_standard} standard, {n_contrastive} contrastive, thinking={thinking_label})")
-    return dataset
+    return dataset, raw_prompts
 
 
 def run_grpo_training_stage(
@@ -195,6 +201,14 @@ def run_grpo_training_stage(
         emb_port = grpo_cfg.get("embedding_server_port", 8001)
         judge_port = grpo_cfg.get("judge_server_port", 8002)
 
+        # Model names for vLLM API (must match the path used to launch servers)
+        emb_model_name = str(
+            OmegaConf.select(cfg, "model.embedding_model_source") or ""
+        )
+        judge_model_name = str(
+            OmegaConf.select(cfg, "judge_model.model_source") or ""
+        )
+
         # Load judge prompt template
         prompt_cfg = (
             OmegaConf.select(cfg, "prompt_reward_judge")
@@ -205,9 +219,11 @@ def run_grpo_training_stage(
 
         embedding_client = EmbeddingClient(
             base_url=f"http://localhost:{emb_port}",
+            model_name=emb_model_name,
         )
         judge_client = JudgeClient(
             base_url=f"http://localhost:{judge_port}",
+            model_name=judge_model_name,
             system_prompt=system_prompt,
             prompt_template=prompt_template,
             json_schema=FlowGovernanceJudgment.model_json_schema(),
@@ -221,6 +237,7 @@ def run_grpo_training_stage(
         norm_retriever = NormRetriever(
             norm_universes=norm_universes,
             embeddings_dir=embeddings_dir,
+            embedding_client=embedding_client,
         )
 
         online_rground = OnlineRGround(
@@ -322,7 +339,7 @@ def run_grpo_training_stage(
     # Build dataset (needs tokenizer for chat template pre-formatting)
     enable_thinking_grpo = grpo_cfg.get("enable_thinking_grpo", True)
     contrastive_ratio = grpo_cfg.get("contrastive_ratio", 0.1)
-    dataset = _build_grpo_dataset(
+    dataset, raw_prompts = _build_grpo_dataset(
         sft_df, tokenizer, norm_universes, contrastive_ratio, enable_thinking_grpo,
     )
 
@@ -331,6 +348,8 @@ def run_grpo_training_stage(
     # Standard rows are stored; contrastive rows (same prompt text) are skipped
     # since during GRPO generation TRL doesn't know about is_contrastive —
     # all generations use the same prompt and get the standard metadata.
+    # chunk_text stores the raw user prompt (pre-template) so OnlineRGround
+    # can pass clean text to the judge instead of chat-templated text.
     reward_fn.prompt_metadata = {}
     for row in dataset:
         key = row["prompt"]
@@ -339,6 +358,7 @@ def run_grpo_training_stage(
                 "source_id": row.get("source_id", ""),
                 "prompt_id": row.get("prompt_id", ""),
                 "is_contrastive": False,
+                "chunk_text": raw_prompts.get(key, ""),
             }
     print(f"[grpo_training] Reward prompt metadata: {len(reward_fn.prompt_metadata)} entries")
 

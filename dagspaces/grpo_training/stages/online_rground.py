@@ -60,6 +60,8 @@ class OnlineRGround:
         self.embedding_client = embedding_client
         self.judge_client = judge_client
         self.norm_retriever = norm_retriever
+        self._consecutive_zero_batches = 0
+        self._total_calls = 0
 
     def __call__(
         self,
@@ -95,9 +97,11 @@ class OnlineRGround:
             is_contrastive = meta.get("is_contrastive", False)
             contrastive_source = meta.get("contrastive_source") if is_contrastive else None
 
-            # Extract the chunk text from the prompt
-            prompt = prompts[i] if i < len(prompts) else ""
-            chunk_text = prompt  # full prompt includes instruction + chunk
+            # Use raw chunk text (pre-template) from metadata so the judge
+            # sees clean source text, not chat-templated text with special tokens.
+            chunk_text = meta.get("chunk_text", "")
+            if not chunk_text:
+                chunk_text = prompts[i] if i < len(prompts) else ""
 
             parsed = _parse_completion(completion)
             extractions = []
@@ -169,5 +173,19 @@ class OnlineRGround:
                 gov = result.get("governance_score", 0.0)
                 total += 0.5 * nm + 0.5 * gov
             scores.append(total / flow_count)
+
+        # Track consecutive all-zero batches to detect server failures
+        self._total_calls += 1
+        if all(s == 0.0 for s in scores):
+            self._consecutive_zero_batches += 1
+            if self._consecutive_zero_batches >= 5:
+                print(
+                    f"[OnlineRGround] WARNING: {self._consecutive_zero_batches} "
+                    f"consecutive all-zero batches. Embedding or judge server "
+                    f"may be down. R_ground is providing a biased negative "
+                    f"signal. Check server health."
+                )
+        else:
+            self._consecutive_zero_batches = 0
 
         return scores
