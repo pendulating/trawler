@@ -1,0 +1,21 @@
+# Prescriptive religious and ethical texts from Project Gutenberg
+# Focus: texts that PROVIDE norms, commandments, and rules for conduct
+# (not primarily narrative texts that depict norms through stories)
+#
+# All English translations in the public domain
+gutenberg_ids:
+  - 30    # The Bible, King James Version (Complete) -- contains Leviticus, Deuteronomy, Proverbs, etc.
+  - 3434  # The Koran (Al-Qur'an), trans. J.M. Rodwell -- prescriptive throughout
+  - 8547  # Pirke Avot (Ethics of the Fathers) -- Jewish ethical maxims and teachings on conduct
+  - 2017  # Dhammapada (Buddhist canonical text), trans. F. Max Müller -- ethical verses/precepts
+  - 2388  # Bhagavad-Gita (The Song Celestial), trans. Sir Edwin Arnold -- dharmic duties and conduct
+  - 216   # Tao Te Ching (The Tao Teh King), trans. James Legge -- prescriptive philosophy
+  - 3330  # The Analects of Confucius, trans. James Legge -- ethical teachings and social norms
+  - 17    # The Book of Mormon -- contains prescriptive moral/theological content
+  - 17150 # The Code of Hammurabi, trans. C.H.W. Johns -- foundational Babylonian legal and social code
+  - 50040 # St. Benedict's Rule for Monasteries -- strict prescriptive norms for community life, hierarchy, and information flow
+  - 45109 # The Enchiridion by Epictetus, trans. T.W. Higginson -- Stoic manual of ethical precepts and social conduct
+  - 12894 # Sacred Books of the East (Selections) -- contains the Zend-Avesta (Zoroastrian purity laws and rules)
+  - 27827 # The Kama Sutra of Vatsyayana -- highly prescriptive ancient Indian rules for domestic life and social classes
+chunk_size: 2000
+overlap: 200

@@ -1,0 +1,6 @@
+# Pride and Prejudice by Jane Austen (Gutenberg ID 1342)
+# Full book for institutional grammar extraction
+gutenberg_ids:
+  - 1342
+chunk_size: 2000
+overlap: 200

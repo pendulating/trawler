@@ -1,0 +1,8 @@
+# Nineteen Eighty-Four by George Orwell
+# Not on main gutenberg.org (US copyright until 2044), available via Gutenberg Australia
+gutenberg_ids: []
+text_urls:
+  - id: "1984"
+    url: "https://gutenberg.net.au/ebooks01/0100021.txt"
+chunk_size: 2000
+overlap: 200

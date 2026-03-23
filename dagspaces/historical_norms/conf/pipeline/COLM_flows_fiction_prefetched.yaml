@@ -1,17 +1,12 @@
 # @package _global_
-# Contextual Integrity Information Flow Extraction Pipeline -- Fiction Texts
+# CI Information Flow Extraction from prefetched fiction chunks.
 #
-# Extracts Nissenbaum CI information flow tuples from a sample of fiction:
-#   Pride and Prejudice, Alice in Wonderland, Frankenstein,
-#   The Age of Innocence, 1984
-#
-# Pipeline: Fetch (Gutenberg IDs + text URLs) -> CI Reasoning -> CI Extraction
-#
-# Uses tensor parallelism across 2 GPUs.
+# Skips the fetch stage. Uses pre-chunked text from FICTION_CHUNKS_PATH.
+# Pipeline: CI Reasoning -> CI Extraction
 #
 # Usage:
 #   python -m dagspaces.historical_norms.cli -m \
-#     pipeline=ci_extraction_fiction
+#     pipeline=COLM_flows_fiction_prefetched
 
 defaults:
   - override /hydra/launcher: slurm_monitor
@@ -25,43 +20,26 @@ runtime:
   sample_n: null
 
 pipeline:
-  output_root: ${hydra:run.dir}/ci_extraction_fiction
+  output_root: ${hydra:run.dir}/COLM_flows_fiction
   allow_partial: false
 
   sources:
-    gutenberg_config:
-      path: ${oc.env:GUTENBERG_CONFIG,dagspaces/historical_norms/conf/data/fiction_sample_for_colm.yaml}
-      type: yaml
+    prefetched_chunks:
+      path: ${oc.env:FICTION_CHUNKS_PATH}
+      type: parquet
 
   graph:
     nodes:
       # ============================================================
-      # Stage 1: Fetch and Chunk
-      # Fetches texts by Gutenberg ID and by direct URL, then chunks.
-      # Supports both gutenberg_ids and text_urls in the data config.
-      # ============================================================
-      fetch:
-        stage: fetch_gutenberg
-        depends_on: []
-        inputs:
-          config: gutenberg_config
-        outputs:
-          dataset: outputs/fetch/chunks.parquet
-        overrides:
-          runtime.debug: ${runtime.debug}
-        launcher: slurm_cpu
-        wandb_suffix: fetch
-
-      # ============================================================
-      # Stage 2: CI Reasoning
+      # Stage 1: CI Reasoning
       # Identifies information flows in fiction and reasons about
       # context, actors, direction, and appropriateness.
       # ============================================================
       ci_reasoning:
         stage: ci_reasoning
-        depends_on: [fetch]
+        depends_on: []
         inputs:
-          dataset: fetch.dataset
+          dataset: prefetched_chunks
         outputs:
           dataset: outputs/ci_reasoning/reasoning.parquet
         overrides:
@@ -75,7 +53,7 @@ pipeline:
         wandb_suffix: ci_reasoning
 
       # ============================================================
-      # Stage 3: CI Extraction
+      # Stage 2: CI Extraction
       # Converts reasoning traces to structured 5-component
       # CI information flow tuples.
       # ============================================================

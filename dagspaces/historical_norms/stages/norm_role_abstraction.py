@@ -23,14 +23,14 @@ except ImportError:
 
 # Columns that carry over from extraction unchanged (not rewritten by LLM)
 _PASSTHROUGH_COLUMNS = [
-    "raz_normative_force", "raz_norm_source", "raz_governs_info_flow",
-    "raz_info_flow_note", "raz_confidence_qual", "raz_confidence_quant",
-    "raz_context",
+    "raz_prescriptive_element", "raz_normative_force", "raz_norm_source",
+    "raz_governs_info_flow", "raz_info_flow_note", "raz_confidence_qual",
+    "raz_confidence_quant", "raz_context",
 ]
 
 # Columns that the LLM rewrites
 _REWRITTEN_COLUMNS = [
-    "raz_prescriptive_element", "raz_norm_subject", "raz_norm_act",
+    "raz_norm_subject", "raz_norm_act",
     "raz_condition_of_application", "raz_norm_articulation",
 ]
 
@@ -133,6 +133,8 @@ def run_norm_role_abstraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
     def _format_prompt(row: Dict[str, Any]) -> str:
         return (
             prompt_template
+            .replace("{{book_summary}}", str(row.get("book_summary") or ""))
+            .replace("{{article_text}}", str(row.get("article_text") or ""))
             .replace("{{prescriptive_element}}", str(row.get("raz_prescriptive_element") or ""))
             .replace("{{norm_subject}}", str(row.get("raz_norm_subject") or ""))
             .replace("{{norm_act}}", str(row.get("raz_norm_act") or ""))
@@ -140,6 +142,7 @@ def run_norm_role_abstraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
             .replace("{{normative_force}}", str(row.get("raz_normative_force") or ""))
             .replace("{{norm_articulation}}", str(row.get("raz_norm_articulation") or ""))
             .replace("{{context}}", str(row.get("raz_context") or ""))
+            .replace("{{quality_flags}}", str(row.get("norm_quality_flags") or "null"))
         )
 
     def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -169,10 +172,6 @@ def run_norm_role_abstraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
                 result_row[f"orig_{col}"] = result_row.get(col)
 
             # Overwrite with rewritten values
-            result_row["raz_prescriptive_element"] = (
-                norm.get("prescriptive_element")
-                or result_row.get("orig_raz_prescriptive_element")
-            )
             result_row["raz_norm_subject"] = (
                 norm.get("norm_subject")
                 or result_row.get("orig_raz_norm_subject")
@@ -189,15 +188,6 @@ def run_norm_role_abstraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
                 norm.get("norm_articulation")
                 or result_row.get("orig_raz_norm_articulation")
             )
-
-            # Metadata fields: prefer original values (LLM should pass through,
-            # but we trust the extraction stage's values over the rewrite)
-            for col in _PASSTHROUGH_COLUMNS:
-                field_name = col.replace("raz_", "")
-                llm_val = norm.get(field_name)
-                # Only use LLM value if original is missing
-                if result_row.get(col) is None and llm_val is not None:
-                    result_row[col] = llm_val
 
             result_row["role_rationale"] = norm.get("role_rationale", "")
             result_row["role_abstraction_failed"] = False

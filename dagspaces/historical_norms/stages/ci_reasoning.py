@@ -142,9 +142,11 @@ def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
             flows = obj.get("flows", [])
             result_row["has_information_exchange"] = bool(obj.get("has_information_exchange", len(flows) > 0))
             result_row["ci_flow_count"] = len(flows)
+            result_row["ci_reasoning_text"] = obj.get("reasoning", "")
         else:
             result_row["has_information_exchange"] = False
             result_row["ci_flow_count"] = 0
+            result_row["ci_reasoning_text"] = ""
         return result_row
 
     result_df = run_vllm_inference(

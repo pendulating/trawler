@@ -45,41 +45,59 @@ def _get_character_blocklist(cfg: Any) -> set[str]:
     if custom:
         return {n.lower() for n in custom}
 
-    # Default blocklist — common named characters across the fiction corpus.
-    # Kept intentionally broad; false positives are cheap (just a flag).
+    # Default blocklist — named characters and places across the 10-novel
+    # fiction corpus.  Kept intentionally broad; false positives are cheap
+    # (just a flag, no rows dropped).
     return {
         # Pride and Prejudice
         "elizabeth", "darcy", "bennet", "bingley", "wickham", "collins",
-        "lydia", "jane bennet", "kitty", "mary bennet", "charlotte",
-        "lucas", "gardiner", "fitzwilliam", "georgiana", "lady catherine",
-        "de bourgh", "longbourn", "netherfield", "pemberley",
-        # Jane Eyre
-        "jane eyre", "eyre", "rochester", "st. john", "adele", "bertha",
-        "mason", "reed", "brocklehurst", "thornfield", "lowood",
-        # Wuthering Heights
-        "heathcliff", "catherine earnshaw", "earnshaw", "linton",
-        "nelly dean", "lockwood", "hareton", "isabella",
-        "thrushcross", "wuthering heights",
-        # Great Expectations
-        "pip", "estella", "havisham", "magwitch", "joe gargery",
-        "jaggers", "herbert pocket", "compeyson", "biddy", "satis house",
+        "lydia", "jane", "jane bennet", "kitty", "mary", "mary bennet",
+        "charlotte", "lucas", "gardiner", "fitzwilliam", "georgiana",
+        "lady catherine", "de bourgh", "longbourn", "netherfield",
+        "pemberley",
         # Middlemarch
         "dorothea", "casaubon", "lydgate", "rosamond", "bulstrode",
         "ladislaw", "brooke", "celia", "garth", "vincy", "farebrother",
-        # Tess of the d'Urbervilles
-        "tess", "durbeyfield", "d'urberville", "angel clare", "clare",
-        "alec", "marlott", "talbothays",
-        # The Scarlet Letter
-        "hester", "prynne", "dimmesdale", "chillingworth", "pearl",
+        "caleb", "fred", "will", "sir james",
         # The Age of Innocence
         "newland", "archer", "ellen olenska", "olenska", "may welland",
-        "welland", "mingott", "beaufort",
-        # Frankenstein
-        "frankenstein", "victor", "creature", "clerval", "justine",
-        "walton", "safie",
-        # Dracula
-        "dracula", "harker", "mina", "lucy", "van helsing", "seward",
-        "renfield", "quincey",
+        "welland", "mingott", "beaufort", "may",
+        # Les Misérables
+        "valjean", "jean valjean", "marius", "cosette", "javert",
+        "fantine", "fauchelevent", "father fauvent", "gavroche",
+        "thénardier", "thenardier", "enjolras", "madeleine",
+        "gillenormand", "jondrette", "mabeuf", "montparnasse",
+        "grantaire", "joly", "théodule", "éponine", "eponine",
+        "leblanc",
+        # Anna Karenina
+        "levin", "anna", "vronsky", "karenin", "alexey alexandrovitch",
+        "kitty", "dolly", "oblonsky", "stepan arkadyevitch",
+        "seryozha", "sergey ivanovitch", "varenka", "kostya",
+        "darya alexandrovna", "lidia ivanovna", "veslovsky",
+        # Nineteen Eighty-Four
+        "winston", "julia", "o'brien", "syme", "parsons",
+        "ampleforth", "charrington", "goldstein", "big brother",
+        # Alice's Adventures in Wonderland
+        "alice", "mary ann", "pat", "dinah",
+        # The Count of Monte Cristo
+        "dantès", "dantes", "edmond", "edward", "monte cristo",
+        "valentine", "caderousse", "villefort", "morrel",
+        "maximilian", "albert", "franz", "mercédès", "mercedes",
+        "danglars", "bertuccio", "andrea", "haydée", "haydee",
+        "beauchamp", "fernand", "baptistin", "eugénie", "eugenie",
+        "noirtier", "julie", "la carconte", "luigi vampa", "vampa",
+        "barrois", "ali", "morcerf",
+        # Bleak House
+        "esther", "summerson", "richard", "george", "guppy",
+        "snagsby", "vholes", "bucket", "woodcourt", "charley",
+        "dedlock", "caddy", "skimpole", "jarndyce", "tulkinghorn",
+        "bagnet", "rouncewell", "smallweed", "hortense", "ada",
+        "jo", "nemo", "gridley", "flite", "rosa", "volumnia",
+        "jellyby", "tom",
+        # The Picture of Dorian Gray
+        "dorian", "dorian gray", "basil", "hallward",
+        "lord henry", "sibyl", "sibyl vane", "alan campbell",
+        "alan", "harry",
     }
 
 

@@ -52,7 +52,21 @@ class CIReasoningList(BaseModel):
 
     Analogous to NormReasoningList in schema.py but focused on
     information exchanges rather than institutional statements.
+
+    The ``reasoning`` field is placed first so that guided decoding
+    produces the overall assessment *before* the model commits to the
+    flows list (chain-of-thought ordering).
     """
+    reasoning: str = Field(
+        ...,
+        description=(
+            "Overall reasoning about the passage. Explain what the text "
+            "describes and whether it contains information exchanges between "
+            "agents. If no information flows are found, explain why — e.g., "
+            "the passage is purely descriptive, scene-setting, internal "
+            "monologue, or action without information transfer."
+        ),
+    )
     flows: List[CIReasoningEntry] = Field(
         ...,
         description=(
@@ -406,13 +420,10 @@ class RazNormReasoningList(BaseModel):
 class RoleAbstractedNorm(BaseModel):
     """A norm rewritten with functional social roles instead of character names.
 
-    Preserves all metadata fields from the extraction stage; only rewrites
-    the Raz tuple components and articulation to use social roles.
+    Only includes fields the LLM actually rewrites.  Metadata fields
+    (normative_force, context, confidence, etc.) are preserved from the
+    extraction stage by the orchestration code — the LLM does not output them.
     """
-    prescriptive_element: str = Field(
-        ...,
-        description="The deontic 'ought' — preserved exactly from input, never changed",
-    )
     norm_subject: str = Field(
         ...,
         description=(
@@ -439,46 +450,12 @@ class RoleAbstractedNorm(BaseModel):
             "situation. Null if unconditional."
         ),
     )
-    normative_force: Literal[
-        "obligatory", "prohibited", "permitted", "recommended", "discouraged"
-    ] = Field(
-        ...,
-        description="Preserved exactly from input — never changed",
-    )
     norm_articulation: str = Field(
         ...,
         description=(
             "The norm restated as a complete sentence using the abstracted "
             "role, act, and condition. Must be name-free."
         ),
-    )
-    context: str = Field(
-        ...,
-        description="Preserved from input — the societal domain",
-    )
-    norm_source: Literal["explicit", "implicit", "both"] = Field(
-        ...,
-        description="Preserved from input",
-    )
-    governs_information_flow: bool = Field(
-        ...,
-        description="Preserved from input",
-    )
-    information_flow_note: Optional[str] = Field(
-        None,
-        description="Preserved from input",
-    )
-    confidence_qual: Literal[
-        "very_uncertain", "uncertain", "somewhat_certain", "certain", "very_certain"
-    ] = Field(
-        ...,
-        description="Preserved from input",
-    )
-    confidence_quant: int = Field(
-        ...,
-        ge=0,
-        le=10,
-        description="Preserved from input",
     )
     role_rationale: str = Field(
         ...,

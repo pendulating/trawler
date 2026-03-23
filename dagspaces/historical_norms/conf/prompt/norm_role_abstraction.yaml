@@ -40,9 +40,8 @@ system_prompt: |
   - **norm_act**: Rewrite ONLY if it contains character names or plot-specific references. Otherwise preserve exactly. The act should be a generalizable verb phrase.
   - **condition_of_application**: Rewrite ONLY if it contains character names, place names, or scene-specific references. Generalize to a recurring social situation.
   - **norm_articulation**: ALWAYS rewrite as a complete sentence using the abstracted role, act, and condition. This is the canonical statement of the norm as the depicted society would express it.
-  - **prescriptive_element**: NEVER change. The deontic force is definitional.
-  - **normative_force**: NEVER change.
-  - **context**, **norm_source**, **governs_information_flow**, **information_flow_note**, **confidence_qual**, **confidence_quant**: NEVER change.
+
+  You do NOT output prescriptive_element, normative_force, context, norm_source, governs_information_flow, information_flow_note, confidence_qual, or confidence_quant. Those are preserved automatically from the extraction stage. Your JSON output contains ONLY: norm_subject, norm_act, condition_of_application, norm_articulation, and role_rationale.
 
   ### Contrastive Examples
 
@@ -88,7 +87,49 @@ system_prompt: |
     articulation: "An unmarried young woman of genteel standing must not travel unaccompanied to a gentleman's estate without a chaperone, particularly when no engagement or formal understanding exists."
     role_rationale: "The input already used a partial role ('a young woman') but lacked the relational context (unmarried, under family protection) and the condition that makes the norm operative (no formal understanding). The functional capacity — that her reputation depends on visible propriety — is what makes the chaperonage norm binding."
 
-  **Example 4 (norm that is already well-abstracted — minimal change):**
+  **Example 4 (totalitarian surveillance — first-name-only character):**
+  Input:
+    norm_subject: "Winston"
+    norm_act: "show resentment"
+    condition: "during the exercise session and in the presence of the telescreen"
+    articulation: "Winston must not show resentment during the exercise session and in the presence of the telescreen."
+
+  Output:
+    norm_subject: "a citizen living under continuous state surveillance whose every expression is monitored for ideological deviance"
+    norm_act: "show resentment"
+    condition: "during mandatory collective activities conducted under surveillance"
+    articulation: "A citizen living under continuous state surveillance must not show resentment during mandatory collective activities conducted under surveillance."
+    role_rationale: "Winston is not merely 'a man' — he is a subject of a totalitarian regime where emotional self-regulation is a survival requirement enforced by omnipresent monitoring. The norm applies to him qua surveilled citizen: anyone in his position (monitored, suspected of thoughtcrime) would be bound by the same obligation to suppress visible dissent. 'The telescreen' is a plot-specific device generalized to 'surveillance.'"
+
+  **Example 5 (moral dilemma under legal threat — ex-convict identity):**
+  Input:
+    norm_subject: "Jean Valjean"
+    norm_act: "make his choice between living with a hidden crime or facing the consequences of his past"
+    condition: "when facing a moral dilemma between internal and external integrity"
+    articulation: "Jean Valjean must make his choice between living with a hidden crime or facing the consequences of his past when he faces a moral dilemma between internal and external integrity."
+
+  Output:
+    norm_subject: "a person who has rebuilt a respectable life under a concealed identity after serving a criminal sentence"
+    norm_act: "choose between preserving a concealed but socially productive life or surrendering to legal accountability for past offenses"
+    condition: "when the concealment threatens an innocent party's freedom or when continued deception conflicts with one's moral convictions"
+    articulation: "A person who has rebuilt a respectable life under a concealed identity after serving a criminal sentence must choose between preserving that life or surrendering to legal accountability when the concealment threatens an innocent party or conflicts with one's moral convictions."
+    role_rationale: "Valjean's dilemma is not personal but structural: it applies to any reformed ex-convict who has assumed a new identity and built social standing. The role is 'a reformed person living under concealment' — the functional capacity (social leadership, moral conscience) and the relational context (legal system that would re-imprison him, innocent person at risk) are what make the norm binding."
+
+  **Example 6 (marriage and autonomy — first-name-only female character):**
+  Input:
+    norm_subject: "Dorothea"
+    norm_act: "consider the financial and social implications of her marriage"
+    condition: "before she makes her final decision"
+    articulation: "Dorothea ought to consider the financial and social implications of her marriage before she makes her final decision."
+
+  Output:
+    norm_subject: "a young woman of independent means whose marriage will substantially alter her legal and financial standing"
+    norm_act: "consider the financial and social implications of her marriage"
+    condition: "before making a final decision, particularly when the match involves a significant disparity in age, temperament, or social expectation"
+    articulation: "A young woman of independent means whose marriage will substantially alter her legal and financial standing ought to consider the financial and social implications before making her final decision, particularly when the match involves a significant disparity."
+    role_rationale: "Dorothea's position is that of a propertied young woman in a society where marriage is a legal and economic transformation — she will lose control of her estate and daily autonomy. The norm applies to her qua woman-with-property-facing-coverture, not as a specific individual. The relational context (an older scholarly husband, concerned family) is generalized to 'significant disparity.'"
+
+  **Example 7 (norm that is already well-abstracted — minimal change):**
   Input:
     norm_subject: "a host"
     norm_act: "provide for the comfort and entertainment of guests"
@@ -114,6 +155,16 @@ system_prompt: |
 prompt_template: |
   Rewrite the following norm using functional social roles instead of character names. Preserve the prescriptive content exactly — only change the character-specific elements.
 
+  ### Source context
+
+  Book summary:
+  {{book_summary}}
+
+  Text chunk the norm was extracted from:
+  {{article_text}}
+
+  ### Norm to rewrite
+
   Input norm:
     prescriptive_element: {{prescriptive_element}}
     norm_subject: {{norm_subject}}
@@ -122,6 +173,9 @@ prompt_template: |
     normative_force: {{normative_force}}
     norm_articulation: {{norm_articulation}}
     context: {{context}}
+    quality_flags: {{quality_flags}}
+
+  The quality_flags field lists which norm components contain character names or plot-specific references (null means no issues detected). Use this to focus your rewrite: fix the flagged fields, and leave unflagged fields unchanged. If quality_flags is null, the norm is likely already abstract — output it unchanged unless you spot an issue the automated check missed.
 
   Rewrite using functional social roles. If already fully abstracted, output unchanged.
 
