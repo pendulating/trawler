@@ -8,7 +8,7 @@ per_device_batch_size: 1
 gradient_accumulation_steps: 16
 num_epochs: 1
 warmup_steps: 5
-max_completion_length: 2048
+max_completion_length: 3072
 gradient_checkpointing: true
 bf16: true
 logging_steps: 10
@@ -19,6 +19,9 @@ use_vllm: true
 vllm_mode: colocate
 vllm_gpu_memory_utilization: 0.45
 vllm_enable_sleep_mode: true
+
+# Enable model thinking during GRPO generation (strip before reward scoring)
+enable_thinking_grpo: true
 
 contrastive_ratio: 0.0
 

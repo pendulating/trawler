@@ -36,6 +36,13 @@ _CI_INSTRUCTION = (
     "transmission_principle) and contextual metadata."
 )
 
+_NO_EXCHANGE_REASONING = (
+    "This passage does not contain any identifiable information flows. "
+    "While the text may describe characters, settings, or events, there is "
+    "no explicit or implicit transfer of information between a sender and "
+    "a recipient. No CI tuple can be constructed."
+)
+
 
 def _build_reasoning_trace(group_df: pd.DataFrame) -> str:
     """Build a single narrative reasoning trace from per-flow reasoning entries."""
@@ -140,6 +147,7 @@ def run_sft_data_prep_stage(
             "article_text": row.get(text_col),
             "has_information_exchange": bool(row.get("has_information_exchange", False)),
             "source_id": str(row.get("gutenberg_id") or row.get("source_id") or "unknown"),
+            "reasoning_text": row.get("ci_reasoning_text", ""),
         }
 
     # Group extraction rows back to chunk level
@@ -187,9 +195,77 @@ def run_sft_data_prep_stage(
             "task_type": "ci_extraction",
         })
 
+    n_positive = len(pairs)
+
+    # Include chunks with has_information_exchange=False as negative examples.
+    # These teach the model to produce empty flows when no exchange is present,
+    # exercising the r_consist invariant (False => empty flows).
+    # Gated by training.sft.include_negative_examples (default True).
+    include_negatives = True
+    try:
+        include_negatives = bool(OmegaConf.select(cfg, "training.sft.include_negative_examples", default=True))
+    except Exception:
+        pass
+
+    if not include_negatives:
+        n_negative = 0
+        out_df = pd.DataFrame(pairs)
+        print(
+            f"[sft_data_prep] Created {len(out_df)} chunk-level SFT pairs "
+            f"({n_positive} positive, {n_negative} negative — negatives disabled) "
+            f"from {len(ci_extraction_df)} extraction rows"
+        )
+        if len(out_df) > 0:
+            source_counts = out_df["source_id"].value_counts()
+            print(f"  Sources: {dict(source_counts.head(10))}")
+        return out_df
+
+    consumed_keys = {
+        group_key[:len(reasoning_group_cols)]
+        for group_key in ci_extraction_df.groupby(group_cols).groups
+    }
+    negative_candidates = []
+    for key, info in reasoning_lookup.items():
+        if key in consumed_keys:
+            continue
+        if info["has_information_exchange"]:
+            continue
+        article_text = info["article_text"]
+        if not article_text or (isinstance(article_text, float) and pd.isna(article_text)):
+            continue
+        negative_candidates.append((key, info))
+
+    # Cap negatives so they don't overwhelm positives (at most 1:1 ratio).
+    import random as _rng
+
+    max_negatives = n_positive
+    if len(negative_candidates) > max_negatives:
+        _rng.shuffle(negative_candidates)
+        negative_candidates = negative_candidates[:max_negatives]
+
+    for _key, info in negative_candidates:
+        reasoning = (info.get("reasoning_text") or "").strip() or _NO_EXCHANGE_REASONING
+        completion = {
+            "reasoning": reasoning,
+            "has_information_exchange": False,
+            "flows": [],
+        }
+        messages = [
+            {"role": "user", "content": f"{_CI_INSTRUCTION}\n\n{info['article_text']}"},
+            {"role": "assistant", "content": json.dumps(completion, ensure_ascii=False)},
+        ]
+        pairs.append({
+            "messages": json.dumps(messages, ensure_ascii=False),
+            "source_id": info["source_id"],
+            "task_type": "ci_extraction",
+        })
+
+    n_negative = len(pairs) - n_positive
+
     out_df = pd.DataFrame(pairs)
     print(
         f"[sft_data_prep] Created {len(out_df)} chunk-level SFT pairs "
+        f"({n_positive} positive, {n_negative} negative) "
         f"from {len(ci_extraction_df)} extraction rows"
     )
     if len(out_df) > 0:

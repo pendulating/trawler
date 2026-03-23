@@ -18,6 +18,151 @@ import pandas as pd
 from omegaconf import OmegaConf
 
 
+
+# TRL-compatible chat templates with {% generation %} blocks for loss masking.
+# Each template marks assistant content so SFTTrainer only computes loss on
+# completion tokens. The model family is detected from the tokenizer's native
+# template or config architecture.
+
+_SFT_TEMPLATES = {
+    # Qwen family: <|im_start|>role\ncontent<|im_end|>
+    "qwen": (
+        "{%- for message in messages %}"
+        "{%- if message.role == 'system' %}"
+        "<|im_start|>system\n{{ message.content | trim }}<|im_end|>\n"
+        "{%- elif message.role == 'user' %}"
+        "<|im_start|>user\n{{ message.content | trim }}<|im_end|>\n"
+        "{%- elif message.role == 'assistant' %}"
+        "<|im_start|>assistant\n"
+        "{% generation %}<think>\n\n</think>\n{{ message.content | trim }}{% endgeneration %}"
+        "<|im_end|>\n"
+        "{%- endif %}"
+        "{%- endfor %}"
+        "{%- if add_generation_prompt %}"
+        "<|im_start|>assistant\n"
+        "{%- endif %}"
+    ),
+    # Phi-4: <|im_start|>role<|im_sep|>content<|im_end|>
+    "phi-4": (
+        "{%- for message in messages %}"
+        "{%- if message.role == 'system' %}"
+        "<|im_start|>system<|im_sep|>{{ message.content | trim }}<|im_end|>"
+        "{%- elif message.role == 'user' %}"
+        "<|im_start|>user<|im_sep|>{{ message.content | trim }}<|im_end|>"
+        "{%- elif message.role == 'assistant' %}"
+        "<|im_start|>assistant<|im_sep|>"
+        "{% generation %}{{ message.content | trim }}{% endgeneration %}"
+        "<|im_end|>"
+        "{%- endif %}"
+        "{%- endfor %}"
+        "{%- if add_generation_prompt %}"
+        "<|im_start|>assistant<|im_sep|>"
+        "{%- endif %}"
+    ),
+    # Phi-4-multimodal: <|role|>content<|end|>
+    "phi-4-mm": (
+        "{%- for message in messages %}"
+        "{%- if message.role == 'system' %}"
+        "<|system|>{{ message.content | trim }}<|end|>"
+        "{%- elif message.role == 'user' %}"
+        "<|user|>{{ message.content | trim }}<|end|>"
+        "{%- elif message.role == 'assistant' %}"
+        "<|assistant|>"
+        "{% generation %}{{ message.content | trim }}{% endgeneration %}"
+        "<|end|>"
+        "{%- endif %}"
+        "{%- endfor %}"
+        "{%- if add_generation_prompt %}"
+        "<|assistant|>"
+        "{%- endif %}"
+    ),
+    # Gemma-3: <start_of_turn>role\ncontent<end_of_turn>
+    # System message is prepended to first user message.
+    "gemma": (
+        "{{ bos_token }}"
+        "{%- set system_message = '' %}"
+        "{%- for message in messages %}"
+        "{%- if message.role == 'system' %}"
+        "{%- set system_message = message.content | trim + '\n\n' %}"
+        "{%- elif message.role == 'user' %}"
+        "<start_of_turn>user\n"
+        "{%- if loop.first and system_message %}{{ system_message }}{%- endif %}"
+        "{{ message.content | trim }}<end_of_turn>\n"
+        "{%- elif message.role == 'assistant' %}"
+        "<start_of_turn>model\n"
+        "{% generation %}{{ message.content | trim }}{% endgeneration %}"
+        "<end_of_turn>\n"
+        "{%- endif %}"
+        "{%- endfor %}"
+        "{%- if add_generation_prompt %}"
+        "<start_of_turn>model\n"
+        "{%- endif %}"
+    ),
+    # Llama-3: <|start_header_id|>role<|end_header_id|>\n\ncontent<|eot_id|>
+    "llama": (
+        "{{ bos_token }}"
+        "{%- for message in messages %}"
+        "{%- if message.role == 'system' %}"
+        "<|start_header_id|>system<|end_header_id|>\n\n"
+        "{{ message.content | trim }}<|eot_id|>"
+        "{%- elif message.role == 'user' %}"
+        "<|start_header_id|>user<|end_header_id|>\n\n"
+        "{{ message.content | trim }}<|eot_id|>"
+        "{%- elif message.role == 'assistant' %}"
+        "<|start_header_id|>assistant<|end_header_id|>\n\n"
+        "{% generation %}{{ message.content | trim }}{% endgeneration %}"
+        "<|eot_id|>"
+        "{%- endif %}"
+        "{%- endfor %}"
+        "{%- if add_generation_prompt %}"
+        "<|start_header_id|>assistant<|end_header_id|>\n\n"
+        "{%- endif %}"
+    ),
+    # GPT-OSS-20B: <|start|>role<|message|>content<|end|> / <|return|>
+    "gpt-oss": (
+        "{%- for message in messages %}"
+        "{%- if message.role == 'system' %}"
+        "<|start|>system<|message|>{{ message.content | trim }}<|end|>"
+        "{%- elif message.role == 'user' %}"
+        "<|start|>user<|message|>{{ message.content | trim }}<|end|>"
+        "{%- elif message.role == 'assistant' %}"
+        "<|start|>assistant<|channel|>final<|message|>"
+        "{% generation %}{{ message.content | trim }}{% endgeneration %}"
+        "<|end|>"
+        "{%- endif %}"
+        "{%- endfor %}"
+        "{%- if add_generation_prompt %}"
+        "<|start|>assistant<|channel|>final<|message|>"
+        "{%- endif %}"
+    ),
+}
+
+
+def _detect_template_family(tokenizer, model_path: str) -> str:
+    """Detect which SFT chat template to use based on model family."""
+    path_lower = model_path.lower()
+    if "gpt-oss" in path_lower:
+        return "gpt-oss"
+    if "phi-4-multimodal" in path_lower:
+        return "phi-4-mm"
+    if "phi-4" in path_lower or "phi-3" in path_lower:
+        return "phi-4"
+    if "gemma" in path_lower:
+        return "gemma"
+    if "llama" in path_lower:
+        return "llama"
+    # Check tokenizer for Qwen-style markers
+    native = tokenizer.chat_template or ""
+    if "<|im_start|>" in native:
+        return "qwen"
+    if "<start_of_turn>" in native:
+        return "gemma"
+    if "<|start_header_id|>" in native:
+        return "llama"
+    # Default to Qwen (ChatML) as fallback
+    return "qwen"
+
+
 def run_sft_training_stage(
     dataset_path: str,
     base_model: str,
@@ -155,23 +300,10 @@ def run_sft_training_stage(
     # {% generation %} blocks so SFTTrainer knows which tokens are assistant
     # completions (and should contribute to loss). Without this, all labels
     # become -100 and training produces zero loss / NaN gradients.
-    _SFT_CHAT_TEMPLATE = (
-        "{%- for message in messages %}"
-        "{%- if message.role == 'system' %}"
-        "<|im_start|>system\n{{ message.content | trim }}<|im_end|>\n"
-        "{%- elif message.role == 'user' %}"
-        "<|im_start|>user\n{{ message.content | trim }}<|im_end|>\n"
-        "{%- elif message.role == 'assistant' %}"
-        "<|im_start|>assistant\n"
-        "{% generation %}{{ message.content | trim }}{% endgeneration %}"
-        "<|im_end|>\n"
-        "{%- endif %}"
-        "{%- endfor %}"
-        "{%- if add_generation_prompt %}"
-        "<|im_start|>assistant\n"
-        "{%- endif %}"
-    )
-    tokenizer.chat_template = _SFT_CHAT_TEMPLATE
+    family = _detect_template_family(tokenizer, base_model)
+    sft_template = _SFT_TEMPLATES[family]
+    tokenizer.chat_template = sft_template
+    print(f"[sft_training] Chat template family: {family}")
 
     print(f"[sft_training] Starting SFT with LoRA (r={peft_config.r}, alpha={peft_config.lora_alpha})")
 

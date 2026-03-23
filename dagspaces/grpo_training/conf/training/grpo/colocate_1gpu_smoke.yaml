@@ -18,6 +18,9 @@ vllm_mode: colocate
 vllm_gpu_memory_utilization: 0.4
 vllm_enable_sleep_mode: true
 
+# Enable model thinking during GRPO generation (strip before reward scoring)
+enable_thinking_grpo: true
+
 contrastive_ratio: 0.0
 
 reward_weights:

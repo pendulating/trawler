@@ -22,6 +22,9 @@ vllm_server_timeout: 300.0
 vllm_gpu_memory_utilization: 0.85
 vllm_server_tensor_parallel_size: 1
 
+# Enable model thinking during GRPO generation (strip before reward scoring)
+enable_thinking_grpo: true
+
 contrastive_ratio: 0.0
 
 reward_weights:

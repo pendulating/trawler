@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import pandas as pd
 from pydantic import ValidationError
 
+from dagspaces.common.vllm_inference import _strip_think_blocks
 from ..schemas import CICompletionResult
 
 
@@ -402,22 +403,33 @@ class CompositeRewardFunction:
             "r_uncert", "r_complete", "r_consist",
             "r_context", "r_cohere", "r_ground",
         ]
+        # Set by grpo_training.py for trace logging
+        self.enable_thinking_grpo = None
 
     @staticmethod
     def _extract_text(completion) -> str:
-        """Extract plain text from a completion (handles both str and conversational format)."""
+        """Extract plain text from a completion, stripping any ``<think>`` blocks.
+
+        Think blocks are stripped so reward components (especially
+        ``_parse_completion``'s greedy JSON regex) don't choke on braces
+        inside reasoning traces produced when thinking is enabled during GRPO.
+        """
         if isinstance(completion, str):
-            return completion
-        if isinstance(completion, list):
+            text = completion
+        elif isinstance(completion, list):
             # Conversational: [{"role": "assistant", "content": "..."}]
+            text = ""
             for msg in completion:
                 if isinstance(msg, dict) and msg.get("role") == "assistant":
-                    return msg.get("content", "")
-            # Fallback: join all content
-            return " ".join(
-                msg.get("content", "") for msg in completion if isinstance(msg, dict)
-            )
-        return str(completion)
+                    text = msg.get("content", "")
+                    break
+            if not text:
+                text = " ".join(
+                    msg.get("content", "") for msg in completion if isinstance(msg, dict)
+                )
+        else:
+            text = str(completion)
+        return _strip_think_blocks(text)
 
     def _should_trace(self) -> bool:
         """Whether to log detailed traces on this call."""
@@ -496,6 +508,7 @@ class CompositeRewardFunction:
                         for name, w, val in zip(self._component_names, self.weights, components)
                     },
                     "composite": round(r, 4),
+                    "enable_thinking_grpo": self.enable_thinking_grpo,
                 })
 
         if trace_entries:

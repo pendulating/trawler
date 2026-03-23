@@ -30,14 +30,17 @@ def _build_grpo_dataset(
     tokenizer,
     norm_universes: Optional[Dict[str, list]] = None,
     contrastive_ratio: float = 0.1,
+    enable_thinking: bool = True,
 ) -> "Dataset":
     """Build GRPO training dataset with contrastive normative pairing.
 
-    Pre-applies the chat template to produce raw-text prompts that exactly
-    match the SFT training format (no thinking tags).  Using raw text strings
-    (not conversational dicts) causes TRL to route through vLLM's
-    ``llm.generate()`` instead of ``llm.chat()``, which avoids Qwen3's
-    chat-template injecting ``<think>`` tokens.
+    When *enable_thinking* is True (default), the chat template is applied
+    with ``enable_thinking=True``, allowing the model to produce ``<think>``
+    blocks during GRPO generation.  When False, an empty ``<think></think>``
+    block is inserted to suppress reasoning (legacy behaviour).
+
+    Pre-applies the chat template to produce raw-text prompts so TRL routes
+    through vLLM's ``llm.generate()`` instead of ``llm.chat()``.
     """
     import hashlib
     from datasets import Dataset
@@ -67,15 +70,15 @@ def _build_grpo_dataset(
         if not user_prompt:
             continue
 
-        # Pre-apply chat template to match SFT format exactly:
-        #   <|im_start|>user\n{content}<|im_end|>\n<|im_start|>assistant\n
-        # enable_thinking=False inserts an empty <think></think> block that
-        # suppresses Qwen3's chain-of-thought reasoning during generation.
+        # Pre-apply chat template so TRL routes through vLLM's llm.generate().
+        # When enable_thinking=True the model can produce <think> blocks during
+        # GRPO generation (stripped before reward scoring).  When False, an empty
+        # <think></think> block suppresses reasoning.
         formatted_prompt = tokenizer.apply_chat_template(
             [{"role": "user", "content": user_prompt}],
             tokenize=False,
             add_generation_prompt=True,
-            enable_thinking=False,
+            enable_thinking=enable_thinking,
         )
 
         prompt_id = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest()[:16]
@@ -101,7 +104,8 @@ def _build_grpo_dataset(
     dataset = Dataset.from_list(rows)
     n_standard = sum(1 for r in rows if not r["is_contrastive"])
     n_contrastive = sum(1 for r in rows if r["is_contrastive"])
-    print(f"[grpo_training] Dataset: {len(dataset)} prompts ({n_standard} standard, {n_contrastive} contrastive)")
+    thinking_label = "enabled" if enable_thinking else "disabled"
+    print(f"[grpo_training] Dataset: {len(dataset)} prompts ({n_standard} standard, {n_contrastive} contrastive, thinking={thinking_label})")
     return dataset
 
 
@@ -187,6 +191,7 @@ def run_grpo_training_stage(
         trace_log_path=trace_log_path,
         trace_every_n_calls=trace_every,
     )
+    reward_fn.enable_thinking_grpo = enable_thinking_grpo
     print(f"[grpo_training] Reward traces → {trace_log_path} (every {trace_every} calls)")
 
     # Pre-merge LoRA into the base model and save to a temp directory.
@@ -262,8 +267,11 @@ def run_grpo_training_stage(
         tokenizer.save_pretrained(merged_dir_nfs)
 
     # Build dataset (needs tokenizer for chat template pre-formatting)
+    enable_thinking_grpo = grpo_cfg.get("enable_thinking_grpo", True)
     contrastive_ratio = grpo_cfg.get("contrastive_ratio", 0.1)
-    dataset = _build_grpo_dataset(sft_df, tokenizer, norm_universes, contrastive_ratio)
+    dataset = _build_grpo_dataset(
+        sft_df, tokenizer, norm_universes, contrastive_ratio, enable_thinking_grpo,
+    )
 
     # Build prompt→metadata lookup so the reward function can access
     # source_id/prompt_id without relying on TRL forwarding dataset columns.

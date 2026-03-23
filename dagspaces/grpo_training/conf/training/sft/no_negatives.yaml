@@ -1,4 +1,8 @@
 # @package training.sft
+# Ablation: SFT without negative examples (no has_information_exchange=False).
+# Tests whether teaching the model to recognize "no information exchange" chunks
+# improves downstream CI reasoning quality.
+# Use: training/sft=no_negatives
 num_epochs: 3
 learning_rate: 2.0e-5
 per_device_batch_size: 2
@@ -29,8 +33,7 @@ lora:
     - down_proj
   task_type: CAUSAL_LM
 
-# Fraction of training examples to use (0.0–1.0, null = use all)
 sample_fraction: null
 
-# Include has_information_exchange=False chunks as negative SFT examples
-include_negative_examples: true
+# Ablation: no negative examples
+include_negative_examples: false
