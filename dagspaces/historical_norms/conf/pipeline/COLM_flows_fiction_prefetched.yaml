@@ -68,6 +68,6 @@ pipeline:
           runtime.debug: ${runtime.debug}
           runtime.sample_n: ${runtime.sample_n}
           runtime.job_memory_gb: 256
-          sampling_params.max_tokens: 8192
+          sampling_params.max_tokens: 2048
         launcher: slurm_gpu_2x
         wandb_suffix: ci_extraction

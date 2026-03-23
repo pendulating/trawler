@@ -152,10 +152,15 @@ class ContextualIntegrityFlow(BaseModel):
 
 
 class CIExtractionResult(BaseModel):
-    """Top-level extraction output for CI information flows."""
-    information_flows: List[ContextualIntegrityFlow] = Field(
+    """Top-level extraction output for a single CI information flow.
+
+    Each extraction call targets exactly one flow identified during the
+    reasoning stage (rows are expanded 1:1 per flow before extraction),
+    so the schema constrains output to a single flow.
+    """
+    flow: ContextualIntegrityFlow = Field(
         ...,
-        description="All extracted contextual integrity information flows",
+        description="The extracted contextual integrity information flow",
     )
 
 

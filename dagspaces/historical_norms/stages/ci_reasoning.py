@@ -11,34 +11,7 @@ from typing import Any, Dict
 
 from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import CIReasoningList
-
-
-def _clean_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean DataFrame to avoid PyArrow serialization issues."""
-    problematic_cols = ["metadata", "ci_reasoning_data", "__inference_error__", "embeddings"]
-
-    for col in problematic_cols:
-        if col in df.columns:
-            try:
-                sample = df[col].dropna().head(1)
-                if len(sample) > 0 and sample.iloc[0] in ({}, []):
-                    df = df.drop(columns=[col])
-                    continue
-            except Exception:
-                pass
-            try:
-                df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
-            except Exception:
-                df = df.drop(columns=[col])
-
-    return df
-
-
-try:
-    from json_repair import repair_json
-    _JSON_REPAIR_OK = True
-except ImportError:
-    _JSON_REPAIR_OK = False
+from ._utils import extract_json, clean_for_parquet
 
 
 def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
@@ -94,29 +67,6 @@ def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
     # than appending the schema as text and hoping for valid JSON.
     sampling_params["guided_decoding"] = {"json": json_schema}
 
-    def _extract_json(gen_text: str) -> tuple[dict | None, str | None]:
-        obj = None
-        parse_error = None
-        json_text = gen_text
-        if "{" in gen_text:
-            start = gen_text.find("{")
-            end = gen_text.rfind("}") + 1
-            if start < end:
-                json_text = gen_text[start:end]
-
-        try:
-            obj = json.loads(json_text)
-        except json.JSONDecodeError as e:
-            if _JSON_REPAIR_OK:
-                try:
-                    repaired = repair_json(json_text)
-                    obj = json.loads(repaired)
-                except Exception as e2:
-                    parse_error = f"JSON repair failed: {e2}"
-            else:
-                parse_error = str(e)
-        return obj, parse_error
-
     def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
         result_row = dict(row)
         article_text = result_row.get("article_text", "")
@@ -134,7 +84,7 @@ def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
         result_row.pop("sampling_params", None)
         result_row.pop("usage", None)
         gen_text = result_row.get("generated_text", "{}")
-        obj, parse_error = _extract_json(gen_text)
+        obj, parse_error = extract_json(gen_text)
         result_row["ci_reasoning_json"] = json.dumps(obj) if obj else None
         result_row["ci_reasoning_parse_error"] = parse_error
 
@@ -165,5 +115,5 @@ def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
           f"{n_with_flows} with flows, {n_without_flows} without flows, "
           f"{n_parse_errors} parse errors")
 
-    result_df = _clean_for_parquet(result_df)
+    result_df = clean_for_parquet(result_df, extra_cols=["ci_reasoning_data"], stage_name="ci_reasoning")
     return result_df

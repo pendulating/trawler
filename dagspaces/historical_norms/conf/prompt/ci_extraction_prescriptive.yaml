@@ -69,8 +69,8 @@ system_prompt: |
   - The **subject** may be omitted (null) only if the information is truly impersonal.
   - The **transmission_principle** should reflect the specific normative constraint the tradition prescribes — e.g., "sacred duty" for commands to teach scripture, "prohibition" for bans on gossip. Avoid generic labels.
   - For **norms_invoked**, capture the specific teaching as the tradition would articulate it. Be concrete: "One who gossips destroys three persons: the speaker, the listener, and the subject" rather than just "gossip is bad."
-  - A single passage may prescribe multiple information flow norms — extract each as a separate entry.
+  - You are extracting exactly ONE information flow per call. The reasoning trace describes a single flow — extract it as a single structured tuple. Do not split it into multiple flows.
 
   Ensure the JSON output captures the full normative structure described in the reasoning trace.
 
-prompt_template: "Source Text:\n{{article_text}}\n\nReasoning Trace:\n{{reasoning_trace}}\n\nExtract the contextual integrity information flow tuple(s) in JSON format:"
+prompt_template: "Source Text:\n{{article_text}}\n\nReasoning Trace:\n{{reasoning_trace}}\n\nExtract the contextual integrity information flow tuple in JSON format:"

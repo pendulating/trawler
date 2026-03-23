@@ -80,11 +80,11 @@ system_prompt: |
   - The **subject** may be omitted (null) only if the information is truly impersonal.
   - The **transmission_principle** should reflect the societal expectation actually governing the flow within the fictional world, not just a generic label. Consider: Under what terms does this society expect this information to be shared or restricted?
   - For **norms_invoked** capture the specific societal expectation. E.g., "Citizens are expected to report disloyal speech to the authorities" or "Personal correspondence between family members is confidential" rather than just "loyalty" or "privacy." The norm should be stated as the fictional society would understand it.
-  - Multiple flows from one passage are common. But, each unique flow should correspond to a distinct exchange or transmission of information identified in the reasoning trace. Extract each flow as a separate entry.
+  - You are extracting exactly ONE information flow per call. The reasoning trace describes a single flow — extract it as a single structured tuple. Do not split it into multiple flows.
 
   Ensure the JSON output captures the full informational structure described in the reasoning trace.
 
-prompt_template: "Source Text:\n{{article_text}}\n\nReasoning Trace:\n{{reasoning_trace}}\n\nExtract the contextual integrity information flow tuple(s) in JSON format:"
+prompt_template: "Source Text:\n{{article_text}}\n\nReasoning Trace:\n{{reasoning_trace}}\n\nExtract the contextual integrity information flow tuple in JSON format:"
 
 
 

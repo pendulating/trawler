@@ -7,48 +7,7 @@ from typing import Any, Dict
 
 from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import RazNormReasoningList
-
-
-def _clean_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean DataFrame to avoid PyArrow serialization issues.
-    
-    Removes or converts columns that cause parquet write errors:
-    - Empty struct columns (e.g., 'metadata' with {})
-    - Complex nested types that Arrow can't handle
-    """
-    # Columns that commonly cause issues
-    problematic_cols = [
-        "metadata", "reasoning_data", "__inference_error__", "embeddings"
-    ]
-    
-    for col in problematic_cols:
-        if col in df.columns:
-            # Check if column contains empty dicts/structs
-            try:
-                sample = df[col].dropna().head(1)
-                if len(sample) > 0:
-                    val = sample.iloc[0]
-                    if val == {} or val == []:
-                        df = df.drop(columns=[col])
-                        print(f"[norm_reasoning] Dropped empty struct column: {col}")
-                        continue
-            except Exception:
-                pass
-            
-            # Convert complex objects to JSON strings for safe parquet storage
-            try:
-                df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
-            except Exception:
-                df = df.drop(columns=[col])
-                print(f"[norm_reasoning] Dropped problematic column: {col}")
-    
-    return df
-
-try:
-    from json_repair import repair_json
-    _JSON_REPAIR_OK = True
-except ImportError:
-    _JSON_REPAIR_OK = False
+from ._utils import extract_json, clean_for_parquet
 
 
 def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
@@ -119,30 +78,6 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
     json_schema = RazNormReasoningList.model_json_schema()
     sampling_params["guided_decoding"] = {"json": json_schema}
 
-    def _extract_json(gen_text: str) -> tuple[dict | None, str | None]:
-        obj = None
-        parse_error = None
-        json_text = gen_text
-
-        if "{" in gen_text:
-            start = gen_text.find("{")
-            end = gen_text.rfind("}") + 1
-            if start < end:
-                json_text = gen_text[start:end]
-
-        try:
-            obj = json.loads(json_text)
-        except json.JSONDecodeError as e:
-            parse_error = e
-            if _JSON_REPAIR_OK:
-                try:
-                    repaired = repair_json(json_text, return_objects=True)
-                    if isinstance(repaired, dict):
-                        obj = repaired
-                except Exception as repair_err:
-                    parse_error = f"JSON repair failed: {repair_err}"
-        return obj, parse_error
-
     def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
         result_row = dict(row)
         user_prompt = _format_prompt(result_row)
@@ -159,7 +94,7 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
         result_row.pop("sampling_params", None)
         result_row.pop("usage", None)
         gen_text = result_row.get("generated_text", "{}")
-        obj, parse_error = _extract_json(gen_text)
+        obj, parse_error = extract_json(gen_text)
         if obj is not None:
             result_row["reasoning_data"] = obj
             result_row["has_prescriptive_content"] = obj.get("has_prescriptive_content", False)
@@ -201,7 +136,7 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
     print(f"[norm_reasoning] Completed inference, {len(result_df)} results")
 
     # Explode rows so each identified norm gets its own row.
-    # Must happen before _clean_for_parquet which drops reasoning_data.
+    # Must happen before clean_for_parquet which drops reasoning_data.
     if "reasoning_data" in result_df.columns:
         rows = []
         for _, row in result_df.iterrows():
@@ -235,5 +170,5 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
         result_df = pd.DataFrame(rows)
         print(f"[norm_reasoning] Exploded {pre_count} rows -> {len(result_df)} rows (one per norm)")
 
-    result_df = _clean_for_parquet(result_df)
+    result_df = clean_for_parquet(result_df, extra_cols=["reasoning_data"], stage_name="norm_reasoning")
     return result_df

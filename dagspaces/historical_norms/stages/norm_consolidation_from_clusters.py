@@ -15,10 +15,10 @@ from typing import Any, Dict, List
 from omegaconf import OmegaConf
 from dagspaces.common.vllm_inference import run_vllm_inference
 
+from ._utils import extract_json
 from .norm_consolidation import (
     _CONSOLIDATED_COLUMNS,
     _build_cluster_df,
-    _extract_json,
     _singleton_result,
     _merged_result,
     _fallback_result,
@@ -165,7 +165,7 @@ def run_norm_consolidation_from_clusters_stage(
             result_row.pop("sampling_params", None)
             result_row.pop("usage", None)
             gen_text = result_row.get("generated_text", "{}")
-            obj, parse_error = _extract_json(gen_text)
+            obj, parse_error = extract_json(gen_text)
             if obj is not None:
                 result_row["merged_norm"] = obj
                 result_row["merge_failed"] = False

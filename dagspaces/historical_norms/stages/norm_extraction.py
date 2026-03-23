@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 
 from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import PrescriptiveNormExtractionResult
+from ._utils import extract_json, clean_for_parquet
 
 
 # All raz_* columns that the extraction stage produces.  Used to guarantee
@@ -154,48 +155,6 @@ def _validate_norm_quality(flat: Dict[str, Any],
     return flat
 
 
-def _clean_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean DataFrame to avoid PyArrow serialization issues.
-
-    Removes or converts columns that cause parquet write errors:
-    - Empty struct columns (e.g., 'metadata' with {})
-    - Complex nested types that Arrow can't handle
-    """
-    # Columns that commonly cause issues - drop them
-    problematic_cols = [
-        "metadata", "reasoning_data", "raz_norms_raw",
-        "__inference_error__", "embeddings"
-    ]
-
-    for col in problematic_cols:
-        if col in df.columns:
-            # Check if column contains empty dicts/structs
-            try:
-                sample = df[col].dropna().head(1)
-                if len(sample) > 0:
-                    val = sample.iloc[0]
-                    # Drop if it's an empty dict or list of empty dicts
-                    if val == {} or val == [] or (isinstance(val, list) and all(v == {} for v in val)):
-                        df = df.drop(columns=[col])
-                        print(f"[norm_extraction] Dropped empty struct column: {col}")
-                        continue
-            except Exception:
-                pass
-
-            # Convert complex objects to JSON strings for safe parquet storage
-            try:
-                df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
-            except Exception:
-                df = df.drop(columns=[col])
-                print(f"[norm_extraction] Dropped problematic column: {col}")
-
-    return df
-
-try:
-    from json_repair import repair_json
-    _JSON_REPAIR_OK = True
-except ImportError:
-    _JSON_REPAIR_OK = False
 
 
 def _to_str(v):
@@ -314,30 +273,6 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     json_schema = PrescriptiveNormExtractionResult.model_json_schema()
     sampling_params["guided_decoding"] = {"json": json_schema}
 
-    def _extract_json(gen_text: str) -> tuple[dict | None, str | None]:
-        obj = None
-        parse_error = None
-        json_text = gen_text
-
-        if "{" in gen_text:
-            start = gen_text.find("{")
-            end = gen_text.rfind("}") + 1
-            if start < end:
-                json_text = gen_text[start:end]
-
-        try:
-            obj = json.loads(json_text)
-        except json.JSONDecodeError as e:
-            parse_error = e
-            if _JSON_REPAIR_OK:
-                try:
-                    repaired = repair_json(json_text, return_objects=True)
-                    if isinstance(repaired, dict):
-                        obj = repaired
-                except Exception as repair_err:
-                    parse_error = f"JSON repair failed: {repair_err}"
-        return obj, parse_error
-
     def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
         result_row = dict(row)
         user_prompt = _format_prompt(result_row)
@@ -354,7 +289,7 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
         result_row.pop("sampling_params", None)
         result_row.pop("usage", None)
         gen_text = result_row.get("generated_text", "{}")
-        obj, parse_error = _extract_json(gen_text)
+        obj, parse_error = extract_json(gen_text)
         if obj is not None:
             norms = obj.get("norms", [])
             result_row["raz_norms_raw"] = norms
@@ -387,7 +322,7 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     print(f"[norm_extraction] Completed inference, {len(result_df)} results")
 
     # Explode rows so each extracted norm gets its own row.
-    # Must happen before _clean_for_parquet which drops raz_norms_raw.
+    # Must happen before clean_for_parquet which drops raz_norms_raw.
     char_blocklist = _get_character_blocklist(cfg)
 
     if "raz_norms_raw" in result_df.columns:
@@ -436,5 +371,5 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
         print(f"[norm_extraction] Quality validation: {passed}/{total} norms "
               f"passed ({flagged} flagged with named characters or plot-specificity)")
 
-    result_df = _clean_for_parquet(result_df)
+    result_df = clean_for_parquet(result_df, extra_cols=["reasoning_data", "raz_norms_raw"], stage_name="norm_extraction")
     return result_df

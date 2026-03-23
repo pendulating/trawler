@@ -13,12 +13,7 @@ from typing import Any, Dict, List
 
 from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import RoleAbstractionResult
-
-try:
-    from json_repair import repair_json
-    _JSON_REPAIR_OK = True
-except ImportError:
-    _JSON_REPAIR_OK = False
+from ._utils import extract_json
 
 
 # Columns that carry over from extraction unchanged (not rewritten by LLM)
@@ -33,32 +28,6 @@ _REWRITTEN_COLUMNS = [
     "raz_norm_subject", "raz_norm_act",
     "raz_condition_of_application", "raz_norm_articulation",
 ]
-
-
-def _extract_json(gen_text: str):
-    """Parse JSON from LLM output, with optional repair."""
-    obj = None
-    parse_error = None
-    json_text = gen_text
-
-    if "{" in gen_text:
-        start = gen_text.find("{")
-        end = gen_text.rfind("}") + 1
-        if start < end:
-            json_text = gen_text[start:end]
-
-    try:
-        obj = json.loads(json_text)
-    except json.JSONDecodeError as e:
-        parse_error = e
-        if _JSON_REPAIR_OK:
-            try:
-                repaired = repair_json(json_text, return_objects=True)
-                if isinstance(repaired, dict):
-                    obj = repaired
-            except Exception as repair_err:
-                parse_error = f"JSON repair failed: {repair_err}"
-    return obj, parse_error
 
 
 def run_norm_role_abstraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
@@ -162,7 +131,7 @@ def run_norm_role_abstraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
         result_row.pop("usage", None)
 
         gen_text = result_row.get("generated_text", "{}")
-        obj, parse_error = _extract_json(gen_text)
+        obj, parse_error = extract_json(gen_text)
 
         if obj is not None:
             norm = obj.get("norm", obj)

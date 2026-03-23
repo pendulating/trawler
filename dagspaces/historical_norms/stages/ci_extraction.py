@@ -10,47 +10,7 @@ from typing import Any, Dict
 
 from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import CIExtractionResult
-
-
-def _clean_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean DataFrame to avoid PyArrow serialization issues.
-
-    Removes or converts columns that cause parquet write errors:
-    - Empty struct columns (e.g., 'metadata' with {})
-    - Complex nested types that Arrow can't handle
-    """
-    problematic_cols = [
-        "metadata", "ci_reasoning_data", "ci_flows_raw", "ci_norms_invoked",
-        "__inference_error__", "embeddings"
-    ]
-
-    for col in problematic_cols:
-        if col in df.columns:
-            try:
-                sample = df[col].dropna().head(1)
-                if len(sample) > 0:
-                    val = sample.iloc[0]
-                    if val == {} or val == [] or (isinstance(val, list) and all(v == {} for v in val)):
-                        df = df.drop(columns=[col])
-                        print(f"[ci_extraction] Dropped empty struct column: {col}")
-                        continue
-            except Exception:
-                pass
-
-            try:
-                df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
-            except Exception:
-                df = df.drop(columns=[col])
-                print(f"[ci_extraction] Dropped problematic column: {col}")
-
-    return df
-
-
-try:
-    from json_repair import repair_json
-    _JSON_REPAIR_OK = True
-except ImportError:
-    _JSON_REPAIR_OK = False
+from ._utils import extract_json, clean_for_parquet
 
 
 def _parse_reasoning_json(raw: str) -> Dict[str, Any]:
@@ -163,30 +123,6 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     # generation to valid JSON matching the schema.
     sampling_params["guided_decoding"] = {"json": json_schema}
 
-    def _extract_json(gen_text: str) -> tuple[dict | None, str | None]:
-        obj = None
-        parse_error = None
-        json_text = gen_text
-
-        if "{" in gen_text:
-            start = gen_text.find("{")
-            end = gen_text.rfind("}") + 1
-            if start < end:
-                json_text = gen_text[start:end]
-
-        try:
-            obj = json.loads(json_text)
-        except json.JSONDecodeError as e:
-            parse_error = e
-            if _JSON_REPAIR_OK:
-                try:
-                    repaired = repair_json(json_text, return_objects=True)
-                    if isinstance(repaired, dict):
-                        obj = repaired
-                except Exception as repair_err:
-                    parse_error = f"JSON repair failed: {repair_err}"
-        return obj, parse_error
-
     def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
         result_row = dict(row)
         user_prompt = _format_prompt(result_row)
@@ -203,39 +139,32 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
         result_row.pop("sampling_params", None)
         result_row.pop("usage", None)
         gen_text = result_row.get("generated_text", "{}")
-        obj, parse_error = _extract_json(gen_text)
+        obj, parse_error = extract_json(gen_text)
         if obj is not None:
-            ci_flows = obj.get("information_flows", [])
-            result_row["ci_flows_raw"] = ci_flows
-            result_row["ci_flow_count"] = len(ci_flows)
-
-            if ci_flows:
-                first = ci_flows[0]
-                flow_tuple = first.get("flow", {})
-                # Coerce all tuple fields to str — the LLM occasionally
-                # returns a list (e.g. multiple subjects) instead of a
-                # single string, which causes Arrow mixed-type failures.
-                def _to_str(v):
-                    if v is None:
-                        return None
-                    if isinstance(v, list):
-                        return "; ".join(str(x) for x in v)
-                    return str(v)
-                result_row["ci_subject"] = _to_str(flow_tuple.get("subject"))
-                result_row["ci_sender"] = _to_str(flow_tuple.get("sender"))
-                result_row["ci_recipient"] = _to_str(flow_tuple.get("recipient"))
-                result_row["ci_information_type"] = _to_str(flow_tuple.get("information_type"))
-                result_row["ci_transmission_principle"] = _to_str(flow_tuple.get("transmission_principle"))
-                result_row["ci_context"] = _to_str(first.get("context"))
-                result_row["ci_appropriateness"] = _to_str(first.get("appropriateness"))
-                result_row["ci_norms_invoked"] = first.get("norms_invoked", [])
-                result_row["ci_norm_source"] = _to_str(first.get("norm_source"))
-                result_row["ci_is_new_flow"] = bool(first.get("is_new_flow", False))
-                result_row["ci_confidence_qual"] = _to_str(first.get("confidence_qual"))
-                result_row["ci_confidence_quant"] = first.get("confidence_quant")
-                # source_snippet and reasoning_trace are already present
-                # as input columns (ci_flow_snippet, ci_reasoning_trace)
-                # from the reasoning stage — no need to re-extract them.
+            # Schema constrains output to a single flow per call.
+            ci_flow = obj.get("flow", {})
+            flow_tuple = ci_flow.get("flow", {})
+            # Coerce all tuple fields to str — the LLM occasionally
+            # returns a list (e.g. multiple subjects) instead of a
+            # single string, which causes Arrow mixed-type failures.
+            def _to_str(v):
+                if v is None:
+                    return None
+                if isinstance(v, list):
+                    return "; ".join(str(x) for x in v)
+                return str(v)
+            result_row["ci_subject"] = _to_str(flow_tuple.get("subject"))
+            result_row["ci_sender"] = _to_str(flow_tuple.get("sender"))
+            result_row["ci_recipient"] = _to_str(flow_tuple.get("recipient"))
+            result_row["ci_information_type"] = _to_str(flow_tuple.get("information_type"))
+            result_row["ci_transmission_principle"] = _to_str(flow_tuple.get("transmission_principle"))
+            result_row["ci_context"] = _to_str(ci_flow.get("context"))
+            result_row["ci_appropriateness"] = _to_str(ci_flow.get("appropriateness"))
+            result_row["ci_norms_invoked"] = ci_flow.get("norms_invoked", [])
+            result_row["ci_norm_source"] = _to_str(ci_flow.get("norm_source"))
+            result_row["ci_is_new_flow"] = bool(ci_flow.get("is_new_flow", False))
+            result_row["ci_confidence_qual"] = _to_str(ci_flow.get("confidence_qual"))
+            result_row["ci_confidence_quant"] = ci_flow.get("confidence_quant")
         else:
             print(f"Error parsing generated JSON: {parse_error}")
             result_row["extraction_error"] = str(parse_error)
@@ -250,5 +179,5 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     )
 
     print(f"[ci_extraction] Completed inference, {len(result_df)} results")
-    result_df = _clean_for_parquet(result_df)
+    result_df = clean_for_parquet(result_df, extra_cols=["ci_reasoning_data", "ci_norms_invoked"], stage_name="ci_extraction")
     return result_df

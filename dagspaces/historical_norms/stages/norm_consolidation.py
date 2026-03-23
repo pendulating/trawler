@@ -245,37 +245,7 @@ def _build_cluster_df(df: pd.DataFrame, labels: np.ndarray) -> pd.DataFrame:
     return pd.DataFrame(cluster_rows)
 
 
-try:
-    from json_repair import repair_json
-    _JSON_REPAIR_OK = True
-except ImportError:
-    _JSON_REPAIR_OK = False
-
-
-def _extract_json(gen_text: str):
-    """Parse JSON from LLM output, with optional repair."""
-    obj = None
-    parse_error = None
-    json_text = gen_text
-
-    if "{" in gen_text:
-        start = gen_text.find("{")
-        end = gen_text.rfind("}") + 1
-        if start < end:
-            json_text = gen_text[start:end]
-
-    try:
-        obj = json.loads(json_text)
-    except json.JSONDecodeError as e:
-        parse_error = e
-        if _JSON_REPAIR_OK:
-            try:
-                repaired = repair_json(json_text, return_objects=True)
-                if isinstance(repaired, dict):
-                    obj = repaired
-            except Exception as repair_err:
-                parse_error = f"JSON repair failed: {repair_err}"
-    return obj, parse_error
+from ._utils import extract_json
 
 
 def _singleton_result(
@@ -594,7 +564,7 @@ def run_norm_consolidation_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
             result_row.pop("sampling_params", None)
             result_row.pop("usage", None)
             gen_text = result_row.get("generated_text", "{}")
-            obj, parse_error = _extract_json(gen_text)
+            obj, parse_error = extract_json(gen_text)
             if obj is not None:
                 result_row["merged_norm"] = obj
                 result_row["merge_failed"] = False
