@@ -1,3 +1,6 @@
 [submodule "papers/uair_brief"]
 	path = papers/uair_brief
 	url = git@github.com:pendulating/uair_brief.git
+[submodule "papers/colm26_normative-simulacra"]
+	path = papers/colm26_normative-simulacra
+	url = git@github.com:pendulating/colm26_normative-simulacra.git
