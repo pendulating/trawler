@@ -1,4 +1,5 @@
 # @package _global_
+# Same as privacylens_clean.yaml but with slurm_gpu_2x launchers for multi-GPU models.
 defaults:
   - /model: qwen2.5-72b/awq
   - override /hydra/launcher: slurm_monitor
@@ -24,7 +25,7 @@ pipeline:
           dataset: load_dataset.dataset
         outputs:
           dataset: outputs/qa_probe_inference/results.parquet
-        launcher: slurm_gpu_1x
+        launcher: slurm_gpu_2x
 
       # Agent action generation: model generates final action from trajectory
       agent_action_inference:
@@ -34,7 +35,7 @@ pipeline:
           dataset: load_dataset.dataset
         outputs:
           dataset: outputs/agent_action_inference/results.parquet
-        launcher: slurm_gpu_1x
+        launcher: slurm_gpu_2x
 
       # Leakage judgment: via external judge server (no GPU needed)
       leakage_judge_inference:

@@ -28,6 +28,7 @@ def run_freeform_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     model_source = str(cfg.model.model_source)
     builder = get_prompt_builder(model_family)
     prompt_text = builder(model_source, sys_msg, usr_prompts)
+    usr_text = "".join(usr_prompts)
 
     print(f"[vlm_freeform_inference] Prompt ({len(prompt_text)} chars):\n{prompt_text[:500]}...")
 
@@ -37,6 +38,8 @@ def run_freeform_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         prompt_text=prompt_text,
         image_col="image_path",
         stage_name="vlm_freeform_inference",
+        sys_msg=sys_msg,
+        usr_text=usr_text,
     )
 
     return result_df

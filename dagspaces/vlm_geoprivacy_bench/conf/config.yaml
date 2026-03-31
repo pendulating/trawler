@@ -3,7 +3,7 @@
 defaults:
   - _self_
   - pipeline: mcq_eval
-  - model: qwen2.5-vl-7b
+  - model: qwen2.5-vl-7b/base
   - prompt: mcq_zs_heuristics
   - data: geoprivacy_bench
 
@@ -18,7 +18,7 @@ runtime:
 
 sampling_params:
   seed: 1
-  temperature: 0.7
+  temperature: 0.2
   top_p: 0.95
   max_tokens: 512
 

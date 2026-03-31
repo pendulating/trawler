@@ -69,6 +69,15 @@ def build_deepseek_vl2_prompt(model_source: str, sys_msg: str, usr_msgs: List[st
     )
 
 
+def build_phi4mm_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -> str:
+    """Phi-4-multimodal-instruct — uses <|image_1|> token."""
+    return (
+        f"<|system|>{sys_msg}<|end|>"
+        f"<|user|><|image_1|>\n{''.join(usr_msgs)}<|end|>"
+        "<|assistant|>"
+    )
+
+
 # Registry: model_family -> prompt builder
 PROMPT_BUILDERS: Dict[str, Callable[[str, str, List[str]], str]] = {
     "qwen2.5-vl": build_qwen2_5_vl_prompt,
@@ -78,6 +87,7 @@ PROMPT_BUILDERS: Dict[str, Callable[[str, str, List[str]], str]] = {
     "gemma-3": build_gemma3_prompt,
     "internvl2.5": build_internvl2_5_prompt,
     "deepseek-vl2": build_deepseek_vl2_prompt,
+    "phi-4": build_phi4mm_prompt,
 }
 
 

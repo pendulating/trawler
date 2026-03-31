@@ -14,9 +14,14 @@ runtime:
   sample_n: null
   job_memory_gb: 64
 
+# External judge server for leakage + helpfulness evaluation.
+# Launch with: sbatch scripts/judge_server.sub
+# Then export JUDGE_SERVER_URL=http://klara:8002
+judge_server_url: ${oc.env:JUDGE_SERVER_URL,""}
+
 sampling_params:
   seed: 777
-  temperature: 0.0
+  temperature: 0.2
   top_p: 1.0
   top_k: -1
   max_tokens: 2048

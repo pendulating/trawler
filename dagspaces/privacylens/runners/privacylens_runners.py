@@ -114,6 +114,29 @@ class LeakageJudgeInferenceRunner(StageRunner):
         )
 
 
+class HelpfulnessJudgeInferenceRunner(StageRunner):
+    stage_name = "helpfulness_judge_inference"
+
+    def run(self, context: Any) -> StageResult:
+        from ..stages.llm_inference import run_helpfulness_judge_inference
+        from ..stages.parse_responses import parse_helpfulness_responses
+
+        input_path = context.inputs["dataset"]
+        df = pd.read_parquet(input_path)
+
+        result_df = run_helpfulness_judge_inference(df, context.cfg)
+        result_df = parse_helpfulness_responses(result_df)
+
+        out_path = context.output_paths["dataset"]
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        result_df.to_parquet(out_path, index=False)
+
+        return StageResult(
+            outputs={"dataset": out_path},
+            metadata={"rows": len(result_df)},
+        )
+
+
 class ComputeMetricsRunner(StageRunner):
     stage_name = "compute_metrics"
 
@@ -126,7 +149,13 @@ class ComputeMetricsRunner(StageRunner):
         qa_df = pd.read_parquet(qa_path)
         leakage_df = pd.read_parquet(leakage_path)
 
-        metrics = compute_metrics(qa_df, leakage_df)
+        # Helpfulness is optional for backward compatibility
+        helpfulness_df = None
+        helpfulness_path = context.inputs.get("helpfulness_dataset")
+        if helpfulness_path:
+            helpfulness_df = pd.read_parquet(helpfulness_path)
+
+        metrics = compute_metrics(qa_df, leakage_df, helpfulness_df)
 
         # Save metrics as JSON
         output_dir = os.path.dirname(context.output_paths["dataset"])
@@ -143,6 +172,8 @@ class ComputeMetricsRunner(StageRunner):
         # Print summary
         qa = metrics.get("qa_probing", {})
         leak = metrics.get("leakage", {})
+        help_m = metrics.get("helpfulness", {})
+        adj = metrics.get("adjusted_leakage", {})
         print(flush=True)
         print("=" * 60, flush=True)
         print("  PRIVACYLENS EVALUATION RESULTS", flush=True)
@@ -155,6 +186,13 @@ class ComputeMetricsRunner(StageRunner):
         print(f"  Leakage:", flush=True)
         print(f"    Leakage rate:      {leak.get('leakage_rate', 0):.4f} ({leak.get('leaking_count', 0)}/{leak.get('total', 0)})", flush=True)
         print(f"    Mean leak prob:    {leak.get('mean_leak_probability', 0):.4f}", flush=True)
+        if help_m:
+            print(f"  Helpfulness:", flush=True)
+            print(f"    Mean score:        {help_m.get('mean_score', 0):.4f}", flush=True)
+            print(f"    Helpful rate:      {help_m.get('helpful_rate', 0):.4f} ({help_m.get('helpful_count', 0)}/{help_m.get('total', 0)})", flush=True)
+        if adj:
+            print(f"  Adjusted Leakage (helpful only):", flush=True)
+            print(f"    Adjusted rate:     {adj.get('adjusted_leakage_rate', 0):.4f} ({adj.get('leaking_among_helpful', 0)}/{adj.get('total_helpful', 0)})", flush=True)
         print("=" * 60, flush=True)
 
         return StageResult(

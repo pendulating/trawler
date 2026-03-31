@@ -30,8 +30,13 @@ def run_mcq_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     model_source = str(cfg.model.model_source)
     builder = get_prompt_builder(model_family)
     prompt_text = builder(model_source, sys_msg, usr_prompts)
+    usr_text = "".join(usr_prompts)
 
     print(f"[vlm_mcq_inference] Prompt ({len(prompt_text)} chars):\n{prompt_text[:500]}...")
+
+    # Structured decoding for deterministic MCQ answer parsing
+    from dagspaces.common.eval_schemas import MCQResult
+    _mcq_schema = MCQResult.model_json_schema()
 
     result_df = run_vlm_inference(
         df=df,
@@ -39,6 +44,9 @@ def run_mcq_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         prompt_text=prompt_text,
         image_col="image_path",
         stage_name="vlm_mcq_inference",
+        sys_msg=sys_msg,
+        usr_text=usr_text,
+        extra_sampling_params={"guided_decoding": {"json": _mcq_schema}},
     )
 
     return result_df

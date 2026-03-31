@@ -106,9 +106,11 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     def _format_prompt(row: Dict[str, Any]) -> str:
         text = str(row.get("ci_flow_snippet") or row.get("article_text") or "")
         reasoning = str(row.get("ci_reasoning_trace", ""))
+        book_summary = str(row.get("book_summary") or "")
         return (prompt_template
                 .replace("{{article_text}}", text)
-                .replace("{{reasoning_trace}}", reasoning))
+                .replace("{{reasoning_trace}}", reasoning)
+                .replace("{{book_summary}}", book_summary))
 
     sampling_params = dict(
         OmegaConf.to_container(

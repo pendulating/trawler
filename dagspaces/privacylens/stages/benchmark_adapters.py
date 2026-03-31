@@ -23,6 +23,12 @@ SCHEMAS: dict[str, BenchmarkSchema] = {
     "VLM-GeoPrivacy": BenchmarkSchema("VLM-GeoPrivacy", "record_id", "S", "V", "T"),
     "CIMemories": BenchmarkSchema("CIMemories", "record_id", "S", "V", "T"),
     "facebook/CIMemories": BenchmarkSchema("CIMemories", "record_id", "S", "V", "T"),
+    "huseyinatahaninan/ContextualIntegritySyntheticDataset": BenchmarkSchema(
+        "CIRL-Vignettes", "vignette_id", "S", "V", "T",
+    ),
+    "CIRL-Vignettes": BenchmarkSchema(
+        "CIRL-Vignettes", "vignette_id", "S", "V", "T",
+    ),
 }
 
 

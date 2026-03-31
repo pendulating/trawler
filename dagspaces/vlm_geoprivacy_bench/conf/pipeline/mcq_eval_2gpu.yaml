@@ -1,10 +1,10 @@
 # @package _global_
+# Same as mcq_eval.yaml but with slurm_gpu_2x launcher for multi-GPU models.
 defaults:
-  - /model: qwen2.5-72b/instruct-awq
   - override /hydra/launcher: slurm_monitor
 
 pipeline:
-  output_root: ${hydra:run.dir}/goldcoin_hipaa
+  output_root: ${hydra:run.dir}/vlm_geoprivacy_bench
   allow_partial: false
   sources: {}
   graph:
@@ -15,28 +15,28 @@ pipeline:
         inputs: {}
         outputs:
           dataset: outputs/load_dataset/dataset.parquet
-      llm_inference:
-        stage: llm_inference
+      vlm_mcq_inference:
+        stage: vlm_mcq_inference
         depends_on:
           - load_dataset
         inputs:
           dataset: load_dataset.dataset
         outputs:
-          dataset: outputs/llm_inference/dataset.parquet
+          dataset: outputs/vlm_mcq_inference/dataset.parquet
         launcher: slurm_gpu_2x
-      parse_responses:
-        stage: parse_responses
+      parse_mcq:
+        stage: parse_mcq
         depends_on:
-          - llm_inference
+          - vlm_mcq_inference
         inputs:
-          dataset: llm_inference.dataset
+          dataset: vlm_mcq_inference.dataset
         outputs:
-          dataset: outputs/parse_responses/dataset.parquet
+          dataset: outputs/parse_mcq/dataset.parquet
       compute_metrics:
         stage: compute_metrics
         depends_on:
-          - parse_responses
+          - parse_mcq
         inputs:
-          dataset: parse_responses.dataset
+          dataset: parse_mcq.dataset
         outputs:
           dataset: outputs/compute_metrics/metrics.parquet

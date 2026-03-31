@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - /model: qwen2.5-72b-instruct-awq
+  - /model: qwen2.5-72b/instruct-awq
   - override /hydra/launcher: slurm_monitor
 
 

@@ -23,6 +23,7 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             QAProbeInferenceRunner,
             AgentActionInferenceRunner,
             LeakageJudgeInferenceRunner,
+            HelpfulnessJudgeInferenceRunner,
             ComputeMetricsRunner,
         )
 
@@ -32,6 +33,7 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             "qa_probe_inference": QAProbeInferenceRunner(),
             "agent_action_inference": AgentActionInferenceRunner(),
             "leakage_judge_inference": LeakageJudgeInferenceRunner(),
+            "helpfulness_judge_inference": HelpfulnessJudgeInferenceRunner(),
             "compute_metrics": ComputeMetricsRunner(),
         }
     return _STAGE_REGISTRY.copy()

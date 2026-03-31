@@ -8,7 +8,7 @@
 defaults:
   - _self_
   - pipeline: norm_extraction
-  - model: qwen2.5-72b-awq
+  - model: qwen2.5-72b/awq
   - data: pride_and_prejudice
   # Active prompt keys — stages look these up at runtime.
   # Default to the prescriptive-text variants.

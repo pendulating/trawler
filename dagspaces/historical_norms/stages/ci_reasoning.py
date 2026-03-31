@@ -50,8 +50,16 @@ def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
           f"(system_prompt: {len(system_prompt)} chars, prompt_template: {len(prompt_template)} chars)",
           flush=True)
 
-    def _format_prompt(article_text: str) -> str:
-        return prompt_template.replace("{{article_text}}", str(article_text or ""))
+    def _format_prompt(row_or_text) -> str:
+        if isinstance(row_or_text, dict):
+            article_text = str(row_or_text.get("article_text") or "")
+            book_summary = str(row_or_text.get("book_summary") or "")
+        else:
+            article_text = str(row_or_text or "")
+            book_summary = ""
+        return (prompt_template
+                .replace("{{article_text}}", article_text)
+                .replace("{{book_summary}}", book_summary))
 
     sampling_params = dict(
         OmegaConf.to_container(
@@ -69,8 +77,7 @@ def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
 
     def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
         result_row = dict(row)
-        article_text = result_row.get("article_text", "")
-        user_prompt = _format_prompt(article_text)
+        user_prompt = _format_prompt(result_row)
         result_row["messages"] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},

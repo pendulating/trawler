@@ -86,6 +86,21 @@ def _log_eval_metrics(logger, metrics: Dict[str, Any], stage: str) -> None:
         wb_metrics[f"{prefix}/leakage_total"] = leak.get("total", 0)
         wb_metrics[f"{prefix}/mean_leak_probability"] = leak.get("mean_leak_probability", 0.0)
 
+    # Helpfulness metrics
+    helpfulness = metrics.get("helpfulness", {})
+    if helpfulness:
+        wb_metrics[f"{prefix}/helpful_rate"] = helpfulness.get("helpful_rate", 0.0)
+        wb_metrics[f"{prefix}/helpfulness_mean_score"] = helpfulness.get("mean_score", 0.0)
+        wb_metrics[f"{prefix}/helpful_count"] = helpfulness.get("helpful_count", 0)
+        wb_metrics[f"{prefix}/helpfulness_total"] = helpfulness.get("total", 0)
+
+    # Adjusted leakage (leakage among helpful responses only)
+    adj = metrics.get("adjusted_leakage", {})
+    if adj:
+        wb_metrics[f"{prefix}/adjusted_leakage_rate"] = adj.get("adjusted_leakage_rate", 0.0)
+        wb_metrics[f"{prefix}/adjusted_leakage_total_helpful"] = adj.get("total_helpful", 0)
+        wb_metrics[f"{prefix}/adjusted_leakage_leaking_among_helpful"] = adj.get("leaking_among_helpful", 0)
+
     if wb_metrics:
         logger.log_metrics(wb_metrics)
 
