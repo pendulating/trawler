@@ -1,9 +1,9 @@
 # @package _global_
-# Qwen3.5-9B + SFT LoRA adapter via vLLM native LoRA
+# OpenThinker3-7B + SFT LoRA adapter via vLLM native LoRA
 model:
-  model_source: /share/pierson/matt/zoo/models/Qwen3.5-9B
-  model_family: qwen3.5
-  lora_path: /share/pierson/matt/UAIR/outputs/2026-03-14/14-18-47/sft_only/outputs/sft/checkpoint_vlm_patched
+  model_source: /share/pierson/matt/zoo/models/OpenThinker3-7B
+  model_family: qwen3
+  lora_path: /share/pierson/matt/UAIR/multirun/2026-03-24_grpo_training/22-45-08/sft_only/outputs/sft/checkpoint
   chat_template_kwargs:
     enable_thinking: false
   engine_kwargs:

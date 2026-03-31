@@ -1,0 +1,15 @@
+# @package _global_
+model:
+  model_source: /share/pierson/matt/zoo/models/Qwen3.5-27B
+  model_family: qwen3.5
+  engine_kwargs:
+    max_model_len: 4096
+    max_num_seqs: 5
+    tensor_parallel_size: 2
+    enforce_eager: true
+  vlm_kwargs:
+    mm_processor_kwargs:
+      min_pixels: 784
+      max_pixels: 1003520
+    limit_mm_per_prompt:
+      image: 1

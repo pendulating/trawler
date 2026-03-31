@@ -1,0 +1,21 @@
+# @package _global_
+# GPT-OSS-20B with SFT LoRA merged into base weights
+model:
+  model_source: /share/pierson/matt/zoo/models/GPT-OSS-20B-SFT-merged
+  model_family: gpt-oss
+  is_finetuned: true
+  chat_template_kwargs: {}
+  engine_kwargs:
+    max_model_len: 8192
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    max_num_batched_tokens: 8192
+    enforce_eager: true
+  batch_size: 0
+  concurrency: 1
+
+# OpenAI recommends temperature=1.0 for GPT-OSS; low temps cause
+# degenerate repetition loops that exhaust max_tokens before answering.
+sampling_params:
+  temperature: 1.0

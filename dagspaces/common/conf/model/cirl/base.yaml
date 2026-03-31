@@ -1,0 +1,9 @@
+# @package _global_
+model:
+  model_source: /share/pierson/matt/zoo/models/CIRL
+  model_family: qwen2.5
+  chat_template_kwargs:
+    enable_thinking: false
+  engine_kwargs:
+    max_model_len: 4096
+    max_num_seqs: 16

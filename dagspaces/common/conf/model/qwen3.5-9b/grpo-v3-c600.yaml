@@ -1,0 +1,18 @@
+# @package _global_
+# Qwen3.5-9B GRPO v3: checkpoint 600
+model:
+  model_source: /share/pierson/matt/UAIR/multirun/2026-03-29_grpo_training/23-13-02/grpo_only_online_external/outputs/grpo/checkpoint/_merged_sft
+  model_family: qwen3.5
+  lora_path: /share/pierson/matt/UAIR/multirun/2026-03-29_grpo_training/23-13-02/grpo_only_online_external/outputs/grpo/checkpoint/checkpoint-600
+  chat_template_kwargs:
+    enable_thinking: false
+  engine_kwargs:
+    max_model_len: 8192
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    enforce_eager: true
+    enable_lora: true
+    max_lora_rank: 64
+  batch_size: 0
+  concurrency: 1
