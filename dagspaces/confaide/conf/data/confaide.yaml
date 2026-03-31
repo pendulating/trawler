@@ -1,0 +1,4 @@
+# @package _global_
+data:
+  name: confaide
+  cache_dir: ${oc.env:CONFAIDE_DATA,}

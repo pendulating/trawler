@@ -1,0 +1,289 @@
+# @package _global_
+# Full CONFAIDE evaluation: Tier 2a + 2b + Tier 3 (control, free, info, sharing) — 6 parallel branches.
+defaults:
+  - /model: qwen2.5-7b/instruct
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/confaide
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      # ── Tier 2a: template vignettes (Likert rating → Pearson correlation) ──
+      load_dataset_tier2a:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset_tier2a/dataset.parquet
+        overrides:
+          prompt:
+            tier: "2a"
+
+      llm_inference_tier2a:
+        stage: llm_inference
+        depends_on: [load_dataset_tier2a]
+        inputs:
+          dataset: load_dataset_tier2a.dataset
+        outputs:
+          dataset: outputs/llm_inference_tier2a/dataset.parquet
+        launcher: slurm_gpu_1x
+        overrides:
+          prompt:
+            tier: "2a"
+
+      parse_responses_tier2a:
+        stage: parse_responses
+        depends_on: [llm_inference_tier2a]
+        inputs:
+          dataset: llm_inference_tier2a.dataset
+        outputs:
+          dataset: outputs/parse_responses_tier2a/dataset.parquet
+        overrides:
+          prompt:
+            tier: "2a"
+
+      compute_metrics_tier2a:
+        stage: compute_metrics
+        depends_on: [parse_responses_tier2a]
+        inputs:
+          dataset: parse_responses_tier2a.dataset
+        outputs:
+          dataset: outputs/compute_metrics_tier2a/metrics.parquet
+        overrides:
+          prompt:
+            tier: "2a"
+
+      # ── Tier 2b: narrative vignettes (Likert rating → Pearson correlation) ──
+      load_dataset_tier2b:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset_tier2b/dataset.parquet
+        overrides:
+          prompt:
+            tier: "2b"
+
+      llm_inference_tier2b:
+        stage: llm_inference
+        depends_on: [load_dataset_tier2b]
+        inputs:
+          dataset: load_dataset_tier2b.dataset
+        outputs:
+          dataset: outputs/llm_inference_tier2b/dataset.parquet
+        launcher: slurm_gpu_1x
+        overrides:
+          prompt:
+            tier: "2b"
+
+      parse_responses_tier2b:
+        stage: parse_responses
+        depends_on: [llm_inference_tier2b]
+        inputs:
+          dataset: llm_inference_tier2b.dataset
+        outputs:
+          dataset: outputs/parse_responses_tier2b/dataset.parquet
+        overrides:
+          prompt:
+            tier: "2b"
+
+      compute_metrics_tier2b:
+        stage: compute_metrics
+        depends_on: [parse_responses_tier2b]
+        inputs:
+          dataset: parse_responses_tier2b.dataset
+        outputs:
+          dataset: outputs/compute_metrics_tier2b/metrics.parquet
+        overrides:
+          prompt:
+            tier: "2b"
+
+      # ── Tier 3 control: binary privacy questions (rejection accuracy) ──
+      load_dataset_tier3_control:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset_tier3_control/dataset.parquet
+        overrides:
+          prompt:
+            tier: "3_control"
+
+      llm_inference_tier3_control:
+        stage: llm_inference
+        depends_on: [load_dataset_tier3_control]
+        inputs:
+          dataset: load_dataset_tier3_control.dataset
+        outputs:
+          dataset: outputs/llm_inference_tier3_control/dataset.parquet
+        launcher: slurm_gpu_1x
+        overrides:
+          prompt:
+            tier: "3_control"
+          sampling_params:
+            max_tokens: 16
+
+      parse_responses_tier3_control:
+        stage: parse_responses
+        depends_on: [llm_inference_tier3_control]
+        inputs:
+          dataset: llm_inference_tier3_control.dataset
+        outputs:
+          dataset: outputs/parse_responses_tier3_control/dataset.parquet
+        overrides:
+          prompt:
+            tier: "3_control"
+
+      compute_metrics_tier3_control:
+        stage: compute_metrics
+        depends_on: [parse_responses_tier3_control]
+        inputs:
+          dataset: parse_responses_tier3_control.dataset
+        outputs:
+          dataset: outputs/compute_metrics_tier3_control/metrics.parquet
+        overrides:
+          prompt:
+            tier: "3_control"
+
+      # ── Tier 3 free-response: generation + string-match leak detection ──
+      load_dataset_tier3_free:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset_tier3_free/dataset.parquet
+        overrides:
+          prompt:
+            tier: "3_free"
+
+      llm_inference_tier3_free:
+        stage: llm_inference
+        depends_on: [load_dataset_tier3_free]
+        inputs:
+          dataset: load_dataset_tier3_free.dataset
+        outputs:
+          dataset: outputs/llm_inference_tier3_free/dataset.parquet
+        launcher: slurm_gpu_1x
+        overrides:
+          prompt:
+            tier: "3_free"
+          sampling_params:
+            max_tokens: 256
+
+      parse_responses_tier3_free:
+        stage: parse_responses
+        depends_on: [llm_inference_tier3_free]
+        inputs:
+          dataset: llm_inference_tier3_free.dataset
+        outputs:
+          dataset: outputs/parse_responses_tier3_free/dataset.parquet
+        overrides:
+          prompt:
+            tier: "3_free"
+
+      compute_metrics_tier3_free:
+        stage: compute_metrics
+        depends_on: [parse_responses_tier3_free]
+        inputs:
+          dataset: parse_responses_tier3_free.dataset
+        outputs:
+          dataset: outputs/compute_metrics_tier3_free/metrics.parquet
+        overrides:
+          prompt:
+            tier: "3_free"
+
+      # ── Tier 3 info-accessibility: list who knows + error detection ──
+      load_dataset_tier3_info:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset_tier3_info/dataset.parquet
+        overrides:
+          prompt:
+            tier: "3_info"
+
+      llm_inference_tier3_info:
+        stage: llm_inference
+        depends_on: [load_dataset_tier3_info]
+        inputs:
+          dataset: load_dataset_tier3_info.dataset
+        outputs:
+          dataset: outputs/llm_inference_tier3_info/dataset.parquet
+        launcher: slurm_gpu_1x
+        overrides:
+          prompt:
+            tier: "3_info"
+          sampling_params:
+            max_tokens: 128
+
+      parse_responses_tier3_info:
+        stage: parse_responses
+        depends_on: [llm_inference_tier3_info]
+        inputs:
+          dataset: llm_inference_tier3_info.dataset
+        outputs:
+          dataset: outputs/parse_responses_tier3_info/dataset.parquet
+        overrides:
+          prompt:
+            tier: "3_info"
+
+      compute_metrics_tier3_info:
+        stage: compute_metrics
+        depends_on: [parse_responses_tier3_info]
+        inputs:
+          dataset: parse_responses_tier3_info.dataset
+        outputs:
+          dataset: outputs/compute_metrics_tier3_info/metrics.parquet
+        overrides:
+          prompt:
+            tier: "3_info"
+
+      # ── Tier 3 privacy-sharing: list who knows private info + error detection ──
+      load_dataset_tier3_sharing:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset_tier3_sharing/dataset.parquet
+        overrides:
+          prompt:
+            tier: "3_sharing"
+
+      llm_inference_tier3_sharing:
+        stage: llm_inference
+        depends_on: [load_dataset_tier3_sharing]
+        inputs:
+          dataset: load_dataset_tier3_sharing.dataset
+        outputs:
+          dataset: outputs/llm_inference_tier3_sharing/dataset.parquet
+        launcher: slurm_gpu_1x
+        overrides:
+          prompt:
+            tier: "3_sharing"
+          sampling_params:
+            max_tokens: 128
+
+      parse_responses_tier3_sharing:
+        stage: parse_responses
+        depends_on: [llm_inference_tier3_sharing]
+        inputs:
+          dataset: llm_inference_tier3_sharing.dataset
+        outputs:
+          dataset: outputs/parse_responses_tier3_sharing/dataset.parquet
+        overrides:
+          prompt:
+            tier: "3_sharing"
+
+      compute_metrics_tier3_sharing:
+        stage: compute_metrics
+        depends_on: [parse_responses_tier3_sharing]
+        inputs:
+          dataset: parse_responses_tier3_sharing.dataset
+        outputs:
+          dataset: outputs/compute_metrics_tier3_sharing/metrics.parquet
+        overrides:
+          prompt:
+            tier: "3_sharing"

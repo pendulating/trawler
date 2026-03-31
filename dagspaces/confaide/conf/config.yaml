@@ -1,0 +1,40 @@
+defaults:
+  - _self_
+  - pipeline: confaide_eval
+  - data: confaide
+
+experiment:
+  name: confaide
+
+runtime:
+  output_root: null
+  debug: false
+  sample_n: null
+  job_memory_gb: 64
+
+prompt:
+  tier: "2a"
+
+sampling_params:
+  seed: 42
+  temperature: 0.0
+  max_tokens: 32
+
+wandb:
+  enabled: true
+  project: confaide
+  entity: ""
+  group: ""
+  table_sample_rows: 1000
+  single_run: true
+
+hydra:
+  searchpath:
+    - pkg://dagspaces.common.conf
+  job:
+    name: ${experiment.name}
+  run:
+    dir: ${oc.env:HYDRA_RUN_DIR,outputs}/${now:%Y-%m-%d}_${experiment.name}/${now:%H-%M-%S}
+  sweep:
+    dir: ${oc.env:HYDRA_SWEEP_DIR,multirun}/${now:%Y-%m-%d}_${experiment.name}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
