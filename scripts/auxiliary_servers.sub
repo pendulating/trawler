@@ -1,0 +1,63 @@
+#!/bin/bash
+# Launch embedding + judge servers as separate SLURM jobs.
+#
+# Splitting into separate jobs allows SLURM to enforce GPU topology
+# constraints independently: the judge job uses --gres-flags=enforce-binding
+# to guarantee both GPUs are on the same PCIe switch (PIX connectivity),
+# which is critical for tensor-parallel decode throughput.
+#
+# Usage:
+#   bash scripts/auxiliary_servers.sub
+#   bash scripts/auxiliary_servers.sub --emb-port 9001 --judge-port 9002
+#
+# After both jobs start, check logs for export lines:
+#   grep "export" .slurm_jobs/embed-server/*.out .slurm_jobs/judge-server/*.out
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+
+# ----------------------------- CLI ARGUMENTS ----------------------------- #
+EMB_PORT="${EMB_PORT:-}"
+JUDGE_PORT="${JUDGE_PORT:-}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --emb-port) EMB_PORT="$2"; shift 2 ;;
+        --emb-port=*) EMB_PORT="${1#*=}"; shift ;;
+        --judge-port) JUDGE_PORT="$2"; shift 2 ;;
+        --judge-port=*) JUDGE_PORT="${1#*=}"; shift ;;
+        *) echo "Unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
+
+# SLURM needs the output dirs to exist at submission time
+mkdir -p "$REPO_DIR/.slurm_jobs/embed-server"
+mkdir -p "$REPO_DIR/.slurm_jobs/judge-server"
+
+echo "=== Submitting Auxiliary Servers ==="
+echo ""
+
+# Submit embedding server
+EMB_ARGS=()
+[[ -n "$EMB_PORT" ]] && EMB_ARGS+=(--port "$EMB_PORT")
+EMB_JOB=$(sbatch "$SCRIPT_DIR/embedding_server.sub" "${EMB_ARGS[@]}" \
+    | grep -oP '\d+')
+echo "Embedding server: job $EMB_JOB"
+echo "  Log: .slurm_jobs/embed-server/${EMB_JOB}.out"
+
+# Submit judge server
+JUDGE_ARGS=()
+[[ -n "$JUDGE_PORT" ]] && JUDGE_ARGS+=(--port "$JUDGE_PORT")
+JUDGE_JOB=$(sbatch "$SCRIPT_DIR/judge_server.sub" "${JUDGE_ARGS[@]}" \
+    | grep -oP '\d+')
+echo "Judge server:     job $JUDGE_JOB"
+echo "  Log: .slurm_jobs/judge-server/${JUDGE_JOB}.out"
+
+echo ""
+echo "Waiting for jobs to start..."
+echo "Once running, check logs for export lines:"
+echo "  grep 'export' .slurm_jobs/embed-server/${EMB_JOB}.out .slurm_jobs/judge-server/${JUDGE_JOB}.out"
+echo ""
+echo "Cancel both: scancel ${EMB_JOB} ${JUDGE_JOB}"

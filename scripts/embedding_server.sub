@@ -1,0 +1,119 @@
+#!/bin/bash
+#SBATCH --job-name=embed-server
+#SBATCH --partition=pierson
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --time=48:00:00
+#SBATCH --output=.slurm_jobs/embed-server/%j.out
+#SBATCH --error=.slurm_jobs/embed-server/%j.err
+
+# Standalone vLLM embedding server (Qwen3-Embedding-8B) for online R_ground.
+#
+# Usage:
+#   sbatch scripts/embedding_server.sub [--port PORT]
+#   sbatch scripts/embedding_server.sub --port 9001
+#
+# Once running, check the log for the export line:
+#   grep "export" .slurm_jobs/embed-server/<jobid>.out
+
+set -euo pipefail
+
+# ----------------------------- CLI ARGUMENTS ----------------------------- #
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --port) EMB_PORT="$2"; shift 2 ;;
+        --port=*) EMB_PORT="${1#*=}"; shift ;;
+        *) echo "Unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
+
+echo "=== Embedding Server ==="
+echo "HOST=$(hostname) DATE=$(date)"
+echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
+echo ""
+
+# ----------------------------- CONFIGURATION ----------------------------- #
+REPO_DIR="/share/pierson/matt/UAIR"
+EMB_MODEL="${EMBEDDING_MODEL:-/share/pierson/matt/zoo/models/Qwen3-Embedding-8B}"
+EMB_PORT="${EMB_PORT:-8001}"
+HF_HOME="${HF_HOME:-/share/pierson/matt/.cache/huggingface}"
+
+# ------------------------------ ENVIRONMENT ------------------------------ #
+cd "$REPO_DIR"
+
+if [ ! -d ".venv" ]; then
+    echo "ERROR: .venv not found." >&2
+    exit 1
+fi
+
+source .venv/bin/activate
+echo "Python: $(which python) ($(python --version))"
+
+export HF_HOME
+export WANDB_MODE=disabled
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_USE_V1=1
+export VLLM_ENABLE_V1_MULTIPROCESSING=0
+export TOKENIZERS_PARALLELISM=false
+
+# ------------------------------ GPU SANITY ------------------------------- #
+nvidia-smi --query-gpu=index,name,uuid,pci.bus_id --format=csv,noheader
+echo ""
+
+if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    if [ -n "${SLURM_STEP_GPUS:-}" ]; then
+        export CUDA_VISIBLE_DEVICES="${SLURM_STEP_GPUS}"
+    elif [ -n "${SLURM_JOB_GPUS:-}" ]; then
+        if [[ "${SLURM_JOB_GPUS}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+            export CUDA_VISIBLE_DEVICES="${SLURM_JOB_GPUS}"
+        fi
+    fi
+fi
+
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+echo "Model: $EMB_MODEL"
+echo "Port:  $EMB_PORT"
+echo ""
+
+mkdir -p "$REPO_DIR/.slurm_jobs/embed-server"
+
+# ----------------------------- LAUNCH SERVER ----------------------------- #
+echo "[$(date)] Launching embedding server..."
+vllm serve "$EMB_MODEL" \
+    --port "$EMB_PORT" \
+    --host 0.0.0.0 \
+    --tensor-parallel-size 1 \
+    &
+SERVER_PID=$!
+
+# Wait for health check
+for i in $(seq 1 120); do
+    if curl -sf "http://localhost:${EMB_PORT}/health" > /dev/null 2>&1; then
+        echo "[$(date)] Embedding server ready on port ${EMB_PORT}"
+        break
+    fi
+    if [ "$i" -eq 120 ]; then
+        echo "[$(date)] ERROR: server not ready after 600s" >&2
+        kill $SERVER_PID 2>/dev/null || true
+        exit 1
+    fi
+    sleep 5
+done
+
+HOSTNAME=$(hostname)
+cat <<BANNER
+
+============================================================
+  Embedding server ready (SLURM job ${SLURM_JOB_ID})
+
+    export EMBEDDING_SERVER_URL=http://${HOSTNAME}:${EMB_PORT}
+
+  PID: ${SERVER_PID}
+  Cancel with: scancel ${SLURM_JOB_ID}
+============================================================
+
+BANNER
+
+wait $SERVER_PID 2>/dev/null || true
+echo "[$(date)] Server exited."

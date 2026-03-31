@@ -1,0 +1,177 @@
+#!/bin/bash
+#SBATCH --job-name=judge-server
+#SBATCH --partition=pierson
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=64G
+#SBATCH --time=48:00:00
+#SBATCH --output=.slurm_jobs/judge-server/%j.out
+#SBATCH --error=.slurm_jobs/judge-server/%j.err
+#SBATCH --nodelist=klara
+
+# Standalone vLLM judge server for online R_ground.
+#
+# Default model: Qwen3-32B-AWQ (fits on 1 GPU, no TP needed).
+# Override with JUDGE_MODEL= and JUDGE_TP= env vars.
+#
+# For TP=2 (e.g. 72B model), note that on klara GPUs are split across
+# two PLX 9797 PCIe switches:
+#   Switch 1 (root 0x17): GPUs 0,1,2  (bus 0x1a, 0x1c, 0x1e)
+#   Switch 2 (root 0x3a): GPUs 3,4,5,6,7  (bus 0x3d-0x41)
+# GPUs on the SAME switch are PIX-connected; cross-switch is NODE.
+# The script warns if TP>1 GPUs land on different switches.
+#
+# Usage:
+#   sbatch scripts/judge_server.sub [--port PORT]
+#   sbatch scripts/judge_server.sub --port 9002
+
+set -euo pipefail
+
+# ----------------------------- CLI ARGUMENTS ----------------------------- #
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --port) JUDGE_PORT="$2"; shift 2 ;;
+        --port=*) JUDGE_PORT="${1#*=}"; shift ;;
+        *) echo "Unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
+
+echo "=== Judge Server ==="
+echo "HOST=$(hostname) DATE=$(date)"
+echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
+echo ""
+
+# ----------------------------- CONFIGURATION ----------------------------- #
+REPO_DIR="/share/pierson/matt/UAIR"
+JUDGE_MODEL="${JUDGE_MODEL:-/share/pierson/matt/zoo/models/Qwen3-32B-AWQ}"
+JUDGE_PORT="${JUDGE_PORT:-8002}"
+JUDGE_TP="${JUDGE_TP:-1}"
+JUDGE_MAX_MODEL_LEN="${JUDGE_MAX_MODEL_LEN:-16384}"
+HF_HOME="${HF_HOME:-/share/pierson/matt/.cache/huggingface}"
+
+# ------------------------------ ENVIRONMENT ------------------------------ #
+cd "$REPO_DIR"
+
+if [ ! -d ".venv" ]; then
+    echo "ERROR: .venv not found." >&2
+    exit 1
+fi
+
+source .venv/bin/activate
+echo "Python: $(which python) ($(python --version))"
+
+export HF_HOME
+export WANDB_MODE=disabled
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_USE_V1=1
+export VLLM_ENABLE_V1_MULTIPROCESSING=0
+export TOKENIZERS_PARALLELISM=false
+
+# ------------------------------ GPU SANITY ------------------------------- #
+echo "--- All machine GPUs ---"
+nvidia-smi --query-gpu=index,name,pci.bus_id --format=csv,noheader
+echo ""
+echo "--- PCIe topology ---"
+nvidia-smi topo -m
+echo ""
+
+if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    if [ -n "${SLURM_STEP_GPUS:-}" ]; then
+        export CUDA_VISIBLE_DEVICES="${SLURM_STEP_GPUS}"
+    elif [ -n "${SLURM_JOB_GPUS:-}" ]; then
+        if [[ "${SLURM_JOB_GPUS}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+            export CUDA_VISIBLE_DEVICES="${SLURM_JOB_GPUS}"
+        fi
+    fi
+fi
+
+echo "SLURM-allocated CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+
+# ---- Check PCIe topology (only relevant for TP>1) ---- #
+if [ "$JUDGE_TP" -gt 1 ]; then
+    echo "--- Allocated GPU topology ---"
+    nvidia-smi topo -m
+    echo ""
+
+    if nvidia-smi topo -m 2>/dev/null | grep -q "PIX\|PXB"; then
+        echo "OK: GPUs are PIX/PXB-connected (same PCIe switch)"
+        export NCCL_P2P_DISABLE=0
+        export NCCL_SHM_DISABLE=0
+    else
+        echo "============================================================"
+        echo "  WARNING: GPUs are on DIFFERENT PCIe switches (NODE/PHB)."
+        echo "  TP=$JUDGE_TP decode will be significantly slower."
+        echo "  Consider cancelling and resubmitting until SLURM allocates"
+        echo "  a same-switch pair. On klara:"
+        echo "    Switch 1: GPUs 0,1,2  (bus 0x1a,0x1c,0x1e)"
+        echo "    Switch 2: GPUs 3,4,5,6,7  (bus 0x3d-0x41)"
+        echo "============================================================"
+        export NCCL_P2P_DISABLE=1
+        export NCCL_SHM_DISABLE=1
+    fi
+    export NCCL_IB_DISABLE=1
+    export NCCL_DEBUG=INFO
+else
+    echo "TP=1: single-GPU mode, no inter-GPU communication needed"
+fi
+
+echo ""
+echo "Model: $JUDGE_MODEL"
+echo "Port:  $JUDGE_PORT"
+echo "TP:    $JUDGE_TP"
+echo "Max model len: $JUDGE_MAX_MODEL_LEN"
+echo ""
+
+mkdir -p "$REPO_DIR/.slurm_jobs/judge-server"
+
+# ----------------------------- LAUNCH SERVER ----------------------------- #
+echo "[$(date)] Launching judge server..."
+
+SERVE_ARGS=(
+    vllm serve "$JUDGE_MODEL"
+    --port "$JUDGE_PORT"
+    --host 0.0.0.0
+    --tensor-parallel-size "$JUDGE_TP"
+    --quantization awq_marlin
+    --max-model-len "$JUDGE_MAX_MODEL_LEN"
+)
+# Only needed for TP>1 on PCIe (no NVLink)
+if [ "$JUDGE_TP" -gt 1 ]; then
+    SERVE_ARGS+=(--disable-custom-all-reduce)
+fi
+
+echo "Command: ${SERVE_ARGS[*]}"
+"${SERVE_ARGS[@]}" &
+SERVER_PID=$!
+
+# Wait for health check
+for i in $(seq 1 120); do
+    if curl -sf "http://localhost:${JUDGE_PORT}/health" > /dev/null 2>&1; then
+        echo "[$(date)] Judge server ready on port ${JUDGE_PORT}"
+        break
+    fi
+    if [ "$i" -eq 120 ]; then
+        echo "[$(date)] ERROR: server not ready after 600s" >&2
+        kill $SERVER_PID 2>/dev/null || true
+        exit 1
+    fi
+    sleep 5
+done
+
+HOSTNAME=$(hostname)
+cat <<BANNER
+
+============================================================
+  Judge server ready (SLURM job ${SLURM_JOB_ID})
+
+    export JUDGE_SERVER_URL=http://${HOSTNAME}:${JUDGE_PORT}
+
+  GPUs: ${CUDA_VISIBLE_DEVICES}
+  PID: ${SERVER_PID}
+  Cancel with: scancel ${SLURM_JOB_ID}
+============================================================
+
+BANNER
+
+wait $SERVER_PID 2>/dev/null || true
+echo "[$(date)] Server exited."

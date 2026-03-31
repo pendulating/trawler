@@ -1,0 +1,101 @@
+#!/bin/bash
+#SBATCH --job-name=embed-norms-flows
+#SBATCH --partition=pierson
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=48G
+#SBATCH --time=4:00:00
+#SBATCH --output=logs/embed-norms-flows-%j.out
+#SBATCH --error=logs/embed-norms-flows-%j.err
+
+# Embed all norms and flows from fiction10 using a vLLM embedding server
+# (Qwen3-Embedding-8B). Launches the server, runs the embedding client,
+# saves .npy files, and shuts down.
+#
+# Launch: sbatch scripts/embed_norms_and_flows.sub
+
+set -euo pipefail
+
+echo "=== Embed Norms & Flows ==="
+echo "HOST=$(hostname) DATE=$(date) JOB=${SLURM_JOB_ID}"
+
+# ----------------------------- CONFIGURATION ----------------------------- #
+REPO_DIR="/share/pierson/matt/UAIR"
+DATA_DIR="/share/pierson/matt/n2s4cir/data/fiction10"
+EMB_MODEL="${EMBEDDING_MODEL:-/share/pierson/matt/zoo/models/Qwen3-Embedding-8B}"
+EMB_PORT="${EMB_PORT:-8001}"
+HF_HOME="${HF_HOME:-/share/pierson/matt/.cache/huggingface}"
+
+# ------------------------------ ENVIRONMENT ------------------------------ #
+cd "$REPO_DIR"
+
+if [ ! -d ".venv" ]; then
+    echo "ERROR: .venv not found." >&2
+    exit 1
+fi
+
+source .venv/bin/activate
+echo "Python: $(which python) ($(python --version))"
+
+export HF_HOME
+export WANDB_MODE=disabled
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_USE_V1=1
+export VLLM_ENABLE_V1_MULTIPROCESSING=0
+export TOKENIZERS_PARALLELISM=false
+
+# ------------------------------ GPU SANITY ------------------------------- #
+nvidia-smi --query-gpu=index,name,uuid,pci.bus_id --format=csv,noheader
+echo ""
+
+if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    if [ -n "${SLURM_STEP_GPUS:-}" ]; then
+        export CUDA_VISIBLE_DEVICES="${SLURM_STEP_GPUS}"
+    elif [ -n "${SLURM_JOB_GPUS:-}" ]; then
+        if [[ "${SLURM_JOB_GPUS}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+            export CUDA_VISIBLE_DEVICES="${SLURM_JOB_GPUS}"
+        fi
+    fi
+fi
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+echo "Model: $EMB_MODEL"
+echo "Port:  $EMB_PORT"
+echo ""
+
+mkdir -p "$REPO_DIR/logs"
+
+# ----------------------------- LAUNCH SERVER ----------------------------- #
+echo "[$(date)] Launching vLLM embedding server..."
+vllm serve "$EMB_MODEL" \
+    --port "$EMB_PORT" \
+    --host 0.0.0.0 \
+    --tensor-parallel-size 1 \
+    &
+SERVER_PID=$!
+
+# Wait for health check
+for i in $(seq 1 120); do
+    if curl -sf "http://localhost:${EMB_PORT}/health" > /dev/null 2>&1; then
+        echo "[$(date)] Embedding server ready on port ${EMB_PORT}"
+        break
+    fi
+    if [ "$i" -eq 120 ]; then
+        echo "[$(date)] ERROR: server not ready after 600s" >&2
+        kill $SERVER_PID 2>/dev/null || true
+        exit 1
+    fi
+    sleep 5
+done
+
+# ------------------------------ EMBED ------------------------------------ #
+echo "[$(date)] Running embedding client..."
+python scripts/embed_norms_and_flows.py \
+    --data-dir "$DATA_DIR" \
+    --server-url "http://localhost:${EMB_PORT}" \
+    --batch-size 64
+
+# ------------------------------ CLEANUP ---------------------------------- #
+echo "[$(date)] Shutting down server..."
+kill $SERVER_PID 2>/dev/null || true
+wait $SERVER_PID 2>/dev/null || true
+echo "[$(date)] Done."
