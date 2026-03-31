@@ -1,0 +1,19 @@
+\begin{table}[ht]
+\centering
+\caption{Reward component ablation (Qwen3.5-9B, 10\% contrastive). Each row adds one component to the previous. Best per column in bold.}
+\label{tab:reward-ablation}
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{2}{c}{\textbf{GoldCoin}} & \multicolumn{3}{c}{\textbf{PrivacyLens}} & \multicolumn{1}{c}{\textbf{GeoPrv}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-6} \cmidrule(lr){7-7}
+\textbf{Configuration} & App F1 & Comp F1 & QA Acc & Adj Leak $\downarrow$ & Helpful & Q7 Acc \\
+\midrule
+\textit{SFT only (no GRPO)} & 93.4 & 75.1 & 97.6 & 17.0 & 94.5 & 60.5 \\
+\midrule
+Programmatic structural ($R_{\text{uncert}}$, $R_{\text{complete}}$, $R_{\text{consist}}$) & \textbf{93.9} & 77.1 & \textbf{97.6} & 27.4 & 97.2 & \textbf{59.9} \\
++ Context identification ($R_{\text{context}}$) & \textbf{93.9} & 75.3 & 97.5 & \textbf{26.7} & 97.4 & \textbf{59.9} \\
++ Coherence ($R_{\text{cohere}}$) & \textbf{93.9} & \textbf{77.4} & \textbf{97.6} & 28.2 & 97.2 & 59.6 \\
++ Normative grounding ($R_{\text{ground}}$) = Full & \textbf{93.9} & 76.3 & \textbf{97.6} & 28.5 & \textbf{97.6} & \textbf{59.9} \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,25 @@
+\begin{table}[t]
+\centering
+\caption{Zero-shot baseline performance across CI benchmarks (\%). Adj Leak = leakage among helpful responses only. $\downarrow$ = lower is better.}
+\label{tab:zero-shot-ablation}
+\begin{tabular}{lcccccc}
+\toprule
+  & \multicolumn{2}{c}{\textbf{GoldCoin-HIPAA}} & \multicolumn{3}{c}{\textbf{PrivacyLens}} & \multicolumn{1}{c}{\textbf{VLM-GeoPri.}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-6} \cmidrule(lr){7-7}
+\textbf{Model} & App F1 & Comp F1 & QA Acc & Adj Leak $\downarrow$ & Helpful & Q7 Acc \\
+\midrule
+Qwen3.5-2B & 56.9 & 58.6 & 98.3 & 26.9 & 69.4 & 21.2 \\
+Qwen3.5-4B & 90.1 & 72.2 & 90.5 & 27.7 & 89.2 & 51.2 \\
+Qwen3.5-9B & 95.3 & 72.4 & 95.3 & 22.4 & 90.5 & \textbf{63.5} \\
+Llama-3.1-8B & 92.1 & 61.0 & 97.4 & 28.2 & 62.7 & --- \\
+Phi-4-14B & \textbf{96.3} & 67.0 & 97.0 & 20.5 & 93.9 & --- \\
+Gemma-3-12B & 94.4 & \textbf{74.4} & 98.4 & 27.3 & 89.2 & 40.7 \\
+GPT-OSS-20B & 77.3 & 65.3 & 89.6 & \textbf{12.1} & 92.1 & --- \\
+OpenThinker3-7B & 77.0 & 15.8 & 85.8 & 27.1 & 44.2 & --- \\
+OpenThinker-7B & 93.0 & 67.4 & \textbf{99.5} & 28.6 & \textbf{98.6} & --- \\
+ContextReasoner-7B & \textbf{96.3} & 57.0 & 98.5 & 30.6 & 34.5 & --- \\
+CIRL-7B & 95.8 & 53.3 & 99.2 & 23.9 & 83.2 & --- \\
+Qwen3-8B & 92.5 & 59.5 & 90.7 & 24.8 & 80.1 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}

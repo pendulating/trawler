@@ -1,0 +1,22 @@
+\begin{table}[ht]
+\centering
+\caption{Contrastive normative pairing ablation (Qwen3.5-9B, full reward). Adj Leak = leakage among helpful responses. Higher is better except Adj Leak ($\downarrow$). Best per column in bold.}
+\label{tab:contrastive-ablation}
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{2}{c}{\textbf{GoldCoin}} & \multicolumn{3}{c}{\textbf{PrivacyLens}} & \multicolumn{1}{c}{\textbf{GeoPrv}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-6} \cmidrule(lr){7-7}
+\textbf{Configuration} & App F1 & Comp F1 & QA Acc & Adj Leak $\downarrow$ & Helpful & Q7 Acc \\
+\midrule
+\textit{SFT only (no GRPO)} & 93.4 & 75.1 & 97.6 & 17.0 & 94.5 & 60.5 \\
+\midrule
+Full reward, no contrastive & \textbf{94.4} & 75.3 & 97.6 & 27.4 & 97.0 & \textbf{60.2} \\
+Full reward, 5\% contrastive & 93.9 & 75.3 & 97.6 & 28.9 & \textbf{97.6} & 59.9 \\
+Full reward, 10\% contrastive & 93.9 & 76.3 & \textbf{97.6} & 28.5 & \textbf{97.6} & 59.9 \\
+Full reward, 15\% contrastive & \textbf{94.4} & \textbf{77.4} & \textbf{97.6} & 27.4 & 97.2 & \textbf{60.2} \\
+Full reward, 20\% contrastive & \textbf{94.4} & 76.3 & 97.6 & 27.8 & 97.2 & 59.9 \\
+Full reward, 50\% contrastive & 93.9 & 76.3 & 97.5 & \textbf{27.1} & 97.4 & 59.9 \\
+Full reward, 100\% contrastive & \textbf{94.4} & 74.4 & 97.6 & 27.7 & \textbf{97.6} & 59.9 \\
+\bottomrule
+\end{tabular}
+\end{table}

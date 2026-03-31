@@ -1,0 +1,23 @@
+\begin{table}[t]
+\centering
+\caption{VLM-GeoPrivacyBench results for Qwen3.5-9B variants (\%).}
+\label{tab:vlm-geoprivacy-qwen35}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lcccccccc}
+\toprule
+Variant & Context $\uparrow$ & Intent $\uparrow$ & Q7 Acc $\uparrow$ & Q7 F1 $\uparrow$ & Over-disc. $\downarrow$ & Under-disc. $\downarrow$ & MAE $\downarrow$ & Abst.~Viol. $\downarrow$ \\
+\midrule
+Finetuned (unknown: Qwen3.5-2B+sft\_only) & 48.1 & 63.0 & 21.2 & 0.1 & 42.8 & 36.0 & 0.8 & 100.0 \\
+Finetuned (unknown: Qwen3.5-4B+sft\_only) & 71.7 & 71.3 & 51.5 & 0.5 & 24.3 & 24.3 & 0.5 & 51.6 \\
+Finetuned (unknown: Qwen3.5-9B+checkpoint\_vlm\_patched) & 73.4 & 80.1 & 60.5 & 0.6 & \textbf{20.7} & 18.8 & 0.5 & \textbf{38.5} \\
+Finetuned (unknown: Qwen3.5-9B+grpo\_programmatic\_only) & 72.0 & 80.6 & 59.9 & 0.6 & 25.0 & 15.1 & 0.5 & 51.0 \\
+Finetuned (unknown: \_merged\_sft+grpo\_programmatic\_only) & 74.9 & \textbf{81.7} & \textbf{63.7} & \textbf{0.6} & 25.7 & \textbf{10.6} & \textbf{0.4} & 46.0 \\
+GRPO (unknown: \_merged\_sft+grpo\_only\_online\_external) & 74.4 & 79.2 & 60.0 & 0.6 & 21.6 & 18.4 & 0.5 & 41.2 \\
+GRPO v2 & 74.4 & 79.2 & 60.0 & 0.6 & 21.6 & 18.4 & 0.5 & 41.2 \\
+GRPO v3 & \textbf{75.4} & 80.5 & 62.3 & 0.6 & 26.1 & 11.6 & 0.4 & 47.5 \\
+Unknown (Qwen3.5-2B) & 47.6 & 63.8 & 21.2 & 0.1 & 42.8 & 36.0 & 0.8 & 100.0 \\
+Unknown (Qwen3.5-4B) & 71.4 & 71.3 & 51.2 & 0.5 & 24.9 & 23.9 & 0.5 & 51.9 \\
+Unknown (Qwen3.5-9B) & 75.4 & 81.5 & 63.5 & 0.6 & 25.7 & 10.9 & \textbf{0.4} & 46.0 \\
+\bottomrule
+\end{tabular}}
+\end{table}

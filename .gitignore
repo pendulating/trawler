@@ -229,6 +229,26 @@ debug/
 
 # AI assistant files
 .serena/
+.claude/
+
+# Ephemeral scratch notes (Claude Code session artifacts)
+CONFAIDE_*
+CONTEXTREASONER_*
+EVAL_NOTES_*
+TONIGHT_PLAN.md
+READ_ME_FIRST.md
+INDEX.md
+
+# SLURM output
+slurm-*.out
+
+# Local artifacts
+logs/
+old/
+inspection.html
 
 # Large font assets
 assets/fonts/
+
+# Secrets / credentials
+notebooks/use_extraction_package/key/

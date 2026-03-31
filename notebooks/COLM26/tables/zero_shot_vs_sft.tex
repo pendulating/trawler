@@ -1,0 +1,44 @@
+\begin{table}[t]
+\centering
+\caption{Zero-shot vs.\ SFT-only performance across CI benchmarks (\%). Adj Leak = leakage among helpful responses only. $\Delta$ = SFT $-$ zero-shot. $\downarrow$ = lower is better.}
+\label{tab:zero-shot-vs-sft}
+\begin{tabular}{llcccccc}
+\toprule
+ &  & \multicolumn{2}{c}{\textbf{GoldCoin-HIPAA}} & \multicolumn{3}{c}{\textbf{PrivacyLens}} & \multicolumn{1}{c}{\textbf{VLM-GeoPri.}} \\
+\cmidrule(lr){3-4} \cmidrule(lr){5-7} \cmidrule(lr){8-8}
+\textbf{Model} & \textbf{Cond.} & App F1 & Comp F1 & QA Acc & Adj Leak $\downarrow$ & Helpful & Q7 Acc \\
+\midrule
+Qwen3.5-2B & Zero-shot & 56.9 & 58.6 & 98.3 & 26.9 & 69.4 & 21.2 \\
+ & SFT & 80.3 & 44.8 & 99.5 & 17.8 & 55.8 & 21.2 \\
+ & $\Delta$ & \textcolor{teal}{+23.4} & \textcolor{red}{-13.8} & \textcolor{teal}{+1.2} & \textcolor{teal}{-9.1} & \textcolor{red}{-13.6} & 0.0 \\
+\addlinespace
+Qwen3.5-4B & Zero-shot & 90.1 & 72.2 & 90.5 & 27.7 & 89.2 & 51.2 \\
+ & SFT & 69.6 & 72.3 & 95.1 & 19.2 & 94.9 & 51.5 \\
+ & $\Delta$ & \textcolor{red}{-20.5} & \textcolor{teal}{+0.1} & \textcolor{teal}{+4.6} & \textcolor{teal}{-8.5} & \textcolor{teal}{+5.7} & \textcolor{teal}{+0.3} \\
+\addlinespace
+Qwen3.5-9B & Zero-shot & 95.3 & 72.4 & 95.3 & 22.4 & 90.5 & 63.5 \\
+ & SFT & 93.4 & 75.1 & 97.6 & 17.0 & 94.5 & 60.5 \\
+ & $\Delta$ & \textcolor{red}{-1.9} & \textcolor{teal}{+2.7} & \textcolor{teal}{+2.2} & \textcolor{teal}{-5.5} & \textcolor{teal}{+4.1} & \textcolor{red}{-2.9} \\
+\addlinespace
+Gemma-3-12B & Zero-shot & 94.4 & 74.4 & 98.4 & 27.3 & 89.2 & 40.7 \\
+ & SFT & 79.6 & 74.4 & 98.7 & 23.1 & 91.3 & --- \\
+ & $\Delta$ & \textcolor{red}{-14.8} & 0.0 & \textcolor{teal}{+0.3} & \textcolor{teal}{-4.2} & \textcolor{teal}{+2.0} & --- \\
+\addlinespace
+Phi-4 & Zero-shot & 96.3 & 67.0 & 97.0 & 20.5 & 93.9 & --- \\
+ & SFT & 89.1 & 62.0 & 97.2 & 18.5 & 96.4 & --- \\
+ & $\Delta$ & \textcolor{red}{-7.1} & \textcolor{red}{-5.0} & \textcolor{teal}{+0.1} & \textcolor{teal}{-2.0} & \textcolor{teal}{+2.4} & --- \\
+\addlinespace
+Phi-4-MM & Zero-shot & 73.3 & 58.1 & --- & --- & --- & --- \\
+ & SFT & --- & --- & --- & --- & --- & --- \\
+ & $\Delta$ & --- & --- & --- & --- & --- & --- \\
+\addlinespace
+GPT-OSS-20B & Zero-shot & 77.3 & 65.3 & 89.6 & 12.1 & 92.1 & --- \\
+ & SFT & 62.9 & 57.1 & 85.4 & 16.2 & 85.2 & --- \\
+ & $\Delta$ & \textcolor{red}{-14.5} & \textcolor{red}{-8.2} & \textcolor{red}{-4.2} & \textcolor{red}{+4.1} & \textcolor{red}{-6.9} & --- \\
+\addlinespace
+OpenThinker3-7B & Zero-shot & 77.0 & 15.8 & 86.0 & 27.1 & 39.0 & --- \\
+ & SFT & 83.0 & 15.8 & 95.9 & 20.1 & 68.6 & --- \\
+ & $\Delta$ & \textcolor{teal}{+6.0} & 0.0 & \textcolor{teal}{+9.9} & \textcolor{teal}{-7.0} & \textcolor{teal}{+29.6} & --- \\
+\bottomrule
+\end{tabular}
+\end{table}

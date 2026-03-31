@@ -1,0 +1,15 @@
+\begin{table}[t]
+\centering
+\caption{Single-book SFT ablation (Qwen3.5-9B). Each row uses normative simulacra extracted from a single novel. (\%). $\downarrow$ = lower is better.}
+\label{tab:single-book-ablation}
+\begin{tabular}{lccccc}
+\toprule
+  & \multicolumn{2}{c}{\textbf{GoldCoin-HIPAA}} & \multicolumn{2}{c}{\textbf{PrivacyLens}} & \multicolumn{1}{c}{\textbf{VLM-GeoPri.}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-6}
+\textbf{SFT Source} & App F1 & Comp F1 & QA Acc & Leak $\downarrow$ & Q7 Acc \\
+\midrule
+\textit{1984} & \textbf{73.4} & \textbf{77.6} & \textbf{97.9} & \textbf{81.5} & \textbf{59.9} \\
+\textit{Pride \& Prejudice} & \textbf{73.4} & \textbf{77.6} & \textbf{97.9} & \textbf{81.5} & \textbf{59.9} \\
+\bottomrule
+\end{tabular}
+\end{table}
