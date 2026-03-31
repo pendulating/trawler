@@ -1,14 +1,14 @@
 # @package training.sft
-# SFT config for Qwen3.5-27B on 4×A6000 (48GB each).
-# Uses QLoRA (4-bit) so the 27B model fits per-GPU (~14GB), same DDP path as 9B.
-# Batch size reduced to 2; grad accum increased to keep effective batch = 32.
+# SFT config for Qwen3.5-27B on 1×A6000 (48GB).
+# QLoRA (4-bit) brings the 27B model down to ~14GB, fitting on a single GPU.
+# Same approach as smaller Qwen models — no FSDP needed.
 num_epochs: 3
 learning_rate: 1.0e-5
-per_device_batch_size: 2
-gradient_accumulation_steps: 4
+per_device_batch_size: 1
+gradient_accumulation_steps: 16
 warmup_ratio: 0.1
 weight_decay: 0.01
-max_seq_length: 8192
+max_seq_length: 2048
 gradient_checkpointing: true
 gradient_checkpointing_kwargs:
   use_reentrant: false
@@ -18,7 +18,7 @@ dataloader_num_workers: 4
 logging_steps: 10
 save_strategy: epoch
 
-# 4-bit quantization so 27B fits on a single 48GB GPU
+# 4-bit quantization so 27B fits on a single 48GB GPU (~14GB)
 quantization:
   load_in_4bit: true
   bnb_4bit_quant_type: nf4
@@ -29,14 +29,7 @@ lora:
   rank: 64
   alpha: 128
   dropout: 0.05
-  target_modules:
-    - q_proj
-    - k_proj
-    - v_proj
-    - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
+  target_modules: all-linear
   task_type: CAUSAL_LM
 
 sample_fraction: null

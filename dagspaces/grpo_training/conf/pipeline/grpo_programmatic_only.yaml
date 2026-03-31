@@ -3,9 +3,10 @@
 # Weights: [r_uncert, r_complete, r_consist, r_context, r_cohere, r_ground=0]
 #
 # Usage:
-#   SFT_CHECKPOINT_PATH=... NORM_UNIVERSES_PATH=... SFT_PAIRS_PATH=... \
+#   NORM_UNIVERSES_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
 #     pipeline=grpo_programmatic_only \
+#     model=qwen3.5-9b/sft-ci \
 #     wandb.enabled=false
 
 defaults:
@@ -13,30 +14,30 @@ defaults:
 
 training:
   grpo:
-    num_generations: 8
+    num_generations: 2
     learning_rate: 1.0e-6
     per_device_batch_size: 1
-    gradient_accumulation_steps: 4
+    gradient_accumulation_steps: 16
     num_epochs: 1
-    warmup_steps: 10
-    max_completion_length: 2048
+    warmup_ratio: 0.1
+    max_completion_length: 3072
     gradient_checkpointing: true
     bf16: true
-    logging_steps: 5
+    logging_steps: 10
     save_strategy: steps
     save_steps: 100
     use_vllm: true
     vllm_mode: colocate
-    vllm_gpu_memory_utilization: 0.3
-    vllm_enable_sleep_mode: true
+    vllm_gpu_memory_utilization: 0.45
+    vllm_enable_sleep_mode: false
     contrastive_ratio: 0.0
     # Zero out R_ground; redistribute weight to programmatic components
     reward_weights:
-      - 0.25   # r_uncert
-      - 0.20   # r_complete
-      - 0.20   # r_consist
-      - 0.20   # r_context
-      - 0.15   # r_cohere
+      - 0.15   # r_uncert  (gating)
+      - 0.10   # r_complete (saturated post-SFT)
+      - 0.10   # r_consist  (saturated post-SFT)
+      - 0.35   # r_context
+      - 0.30   # r_cohere
       - 0.00   # r_ground (disabled)
     context_embedding_model: all-MiniLM-L6-v2
 
@@ -45,7 +46,7 @@ pipeline:
 
   sources:
     sft_checkpoint:
-      path: ${oc.env:SFT_CHECKPOINT_PATH}
+      path: ${model.lora_path}
       type: dir
     norm_universes:
       path: ${oc.env:NORM_UNIVERSES_PATH}

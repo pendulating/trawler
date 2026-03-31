@@ -91,6 +91,14 @@ def run_norm_universe_stage(
             f"Available: {list(df.columns)}"
         )
 
+    # Book-level filter: restrict to a single book's norms
+    book_id = OmegaConf.select(cfg, "runtime.book_id", default=None)
+    if book_id is not None:
+        book_id_str = str(book_id)
+        pre = len(df)
+        df = df[df[source_col].astype(str) == book_id_str].reset_index(drop=True)
+        print(f"[norm_universe] Filtered to book_id={book_id_str}: {len(df)}/{pre} norms")
+
     # Filter to norms with valid articulations
     mask = df["raz_norm_articulation"].notna() & (df["raz_norm_articulation"] != "")
     df = df[mask].reset_index(drop=True)
@@ -102,8 +110,9 @@ def run_norm_universe_stage(
 
     # Load embedding model
     embedding_model_path = str(
-        OmegaConf.select(cfg, "model.embedding_model_source")
-        or OmegaConf.select(cfg, "norm_universe.embedding_model")
+        OmegaConf.select(cfg, "embedding_model.model_source", default=None)
+        or OmegaConf.select(cfg, "model.embedding_model_source", default=None)
+        or OmegaConf.select(cfg, "norm_universe.embedding_model", default=None)
         or ""
     )
     if not embedding_model_path:

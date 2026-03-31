@@ -1,12 +1,13 @@
 # @package _global_
-# GRPO-only pipeline with online R_ground (alias for grpo_only).
+# GRPO-only pipeline with online R_ground.
 #
-# Usage:
-#   SFT_CHECKPOINT_PATH=... NORM_UNIVERSES_PATH=... CI_REASONING_PATH=... \
+# Pass a -sft-ci model config that includes lora_path (the SFT checkpoint):
+#
+#   NORM_UNIVERSES_PATH=... CI_REASONING_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
 #     pipeline=grpo_only_online \
 #     training/grpo=online_rground_4gpu \
-#     model=qwen3-8b
+#     model=qwen3.5-9b/sft-ci
 
 defaults:
   - override /hydra/launcher: slurm_monitor
@@ -16,7 +17,7 @@ pipeline:
 
   sources:
     sft_checkpoint:
-      path: ${oc.env:SFT_CHECKPOINT_PATH}
+      path: ${model.lora_path}
       type: dir
     norm_universes:
       path: ${oc.env:NORM_UNIVERSES_PATH}
@@ -24,6 +25,9 @@ pipeline:
     ci_reasoning:
       path: ${oc.env:CI_REASONING_PATH}
       type: parquet
+    norm_embeddings:
+      path: ${oc.env:NORM_EMBEDDINGS_PATH,""}
+      type: dir
 
   graph:
     nodes:
@@ -34,9 +38,10 @@ pipeline:
           sft_checkpoint: sft_checkpoint
           chunks: ci_reasoning
           norm_universes: norm_universes
+          embeddings: norm_embeddings
         outputs:
           checkpoint:
             path: outputs/grpo/checkpoint
             type: dir
-        launcher: slurm_gpu_4x
+        launcher: slurm_train_3x
         wandb_suffix: grpo_training

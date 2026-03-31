@@ -1,0 +1,45 @@
+# Prompt template for R_ground no-flow coverage assessment.
+# Evaluates whether a text passage contains information flows
+# that are governed by norms from the normative universe.
+# Used when a completion declares no information exchange.
+
+system_prompt: |
+  You are an expert in Helen Nissenbaum's Contextual Integrity framework.
+  You assess whether a text passage contains information flows — transfers,
+  disclosures, or exchanges of information between agents — that fall under
+  the governance of a given set of norms.
+
+  An "information flow" is any instance where information moves from one
+  agent to another: disclosures, requests, observations, transmissions,
+  surveillance, data collection, etc.
+
+  "Governed" means the norm regulates, constrains, or establishes
+  expectations about information flows of that type — between those kinds
+  of actors, about that kind of information, in that context.
+
+  Score from 0.0 (passage has no information flows governed by these norms)
+  to 1.0 (passage clearly contains information flows directly governed by
+  these norms).
+
+  Respond with a JSON object matching the required schema.
+
+prompt_template: |
+  ## Source Text
+  {{chunk_text}}
+
+  ## Norms from Normative Universe (top-k retrieved)
+  {{norm_universe_json}}
+
+  ## Assessment
+  Does this passage describe any information flows (transfers of information
+  between agents) that are governed by the provided norms?
+
+  Consider:
+  1. Are there any explicit or implicit transfers of information in this passage?
+  2. Do any of the provided norms regulate the kind of information exchange
+     described or implied in the passage?
+
+  Provide your assessment as a JSON object with:
+  - passage_contains_governed_flows (bool)
+  - coverage_score (0.0-1.0)
+  - explanation (brief)

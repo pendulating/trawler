@@ -20,18 +20,18 @@ vllm_mode: colocate
 vllm_gpu_memory_utilization: 0.45
 vllm_enable_sleep_mode: true
 
-# Enable model thinking during GRPO generation (strip before reward scoring)
-enable_thinking_grpo: true
+# Thinking disabled: model fills entire max_completion_length with <think> blocks,
+# leaving no tokens for JSON output → all rewards = 0 → no training signal.
+enable_thinking_grpo: false
 
 contrastive_ratio: 0.0
 
-# Full 6-component reward with R_ground enabled
 reward_weights:
-  - 0.20   # R_uncert
-  - 0.15   # R_complete
-  - 0.15   # R_consist
-  - 0.15   # R_context
-  - 0.15   # R_cohere
-  - 0.20   # R_ground
+  - 0.15   # R_uncert  (gating)
+  - 0.10   # R_complete (saturated post-SFT)
+  - 0.10   # R_consist  (saturated post-SFT)
+  - 0.35   # R_context
+  - 0.30   # R_cohere
+  - 0.00   # R_ground  (disabled — no judge servers)
 
 context_embedding_model: all-MiniLM-L6-v2

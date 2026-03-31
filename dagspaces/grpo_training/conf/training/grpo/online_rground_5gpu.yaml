@@ -34,19 +34,18 @@ vllm_enable_sleep_mode: true
 
 enable_thinking_grpo: true
 
-# Contrastive pairing is disabled for online R_ground: TRL generates
-# identical completions for standard and contrastive prompts (same text),
-# and the reward function cannot distinguish them in the prompt_metadata
-# lookup. The contrastive signal only works with cached R_ground.
+# Contrastive pairing: adds n% new rows with mismatched normative
+# universes.  Compatible with online R_ground.
 contrastive_ratio: 0.0
+contrastive_lambda: 0.5
 
 # Reward component weights
 reward_weights:
-  - 0.20   # r_uncert  (task clarity / schema validity — gating)
-  - 0.15   # r_complete (structural completeness)
-  - 0.15   # r_consist (internal consistency)
-  - 0.15   # r_context (context identification)
-  - 0.15   # r_cohere (reasoning-to-extraction coherence)
-  - 0.20   # r_ground (normative grounding — ONLINE judge)
+  - 0.10   # r_uncert  (task clarity / schema validity — gating)
+  - 0.05   # r_complete (structural completeness — saturated post-SFT)
+  - 0.05   # r_consist (internal consistency — saturated post-SFT)
+  - 0.20   # r_context (context identification)
+  - 0.10   # r_cohere (reasoning-to-extraction coherence)
+  - 0.50   # r_ground (normative grounding — ONLINE judge)
 
 context_embedding_model: all-MiniLM-L6-v2

@@ -118,6 +118,22 @@ def run_sft_data_prep_stage(
     Returns:
         DataFrame with columns: messages (JSON string), source_id, task_type.
     """
+    # Book-level filter: restrict to a single book's data
+    book_id = OmegaConf.select(cfg, "runtime.book_id", default=None)
+    if book_id is not None:
+        book_id = str(book_id)
+        for _df_name, _df in [("ci_reasoning", ci_reasoning_df), ("ci_extraction", ci_extraction_df)]:
+            for col in ("gutenberg_id", "source_id", "book_id"):
+                if col in _df.columns:
+                    mask = _df[col].astype(str) == book_id
+                    if _df_name == "ci_reasoning":
+                        ci_reasoning_df = ci_reasoning_df[mask].reset_index(drop=True)
+                    else:
+                        ci_extraction_df = ci_extraction_df[mask].reset_index(drop=True)
+                    break
+        print(f"[sft_data_prep] Filtered to book_id={book_id}: "
+              f"{len(ci_reasoning_df)} reasoning, {len(ci_extraction_df)} extraction rows")
+
     # Identify the chunk grouping columns present in both DataFrames
     group_cols = []
     for candidate in ("chunk_id", "gutenberg_id"):

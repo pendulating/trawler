@@ -1,17 +1,31 @@
 # @package training.grpo
-# Online R_ground: 4-GPU config (1 embed + 2 judge + 1 policy).
+# Online R_ground: 3-GPU config (1 embed + 1 judge + 1 policy).
 # Evaluates normative grounding on the model's actual GRPO completions
 # rather than using cached scores from gold-standard SFT extractions.
 #
-# GPU allocation:
+# GPU allocation (managed mode — when *_server_url is null):
 #   GPU 0:   Qwen3-Embedding-8B (embed server, port 8001)
-#   GPU 1-2: Qwen2.5-72B-Instruct-AWQ (judge server, TP=2, port 8002)
-#   GPU 3:   Policy model (colocate vLLM + training)
+#   GPU 1:   Qwen3-32B-AWQ (judge server, TP=1, port 8002)
+#   GPU 2:   Policy model (colocate vLLM + training)
+#
+# External server mode: set both *_server_url fields to skip managed
+# server launch and connect to pre-existing vLLM instances instead.
+# All GPUs are then available for training.
 
 online_rground: true
+
+# External server URLs. When both are set, the runner skips launching
+# servers and connects to these URLs directly. Enables cross-machine
+# sharing and multi-pipeline reuse of a single server pair.
+# Leave null to use managed-server mode (runner launches subprocesses).
+embedding_server_url: null    # e.g. "http://gpu-server-1:8001"
+judge_server_url: null        # e.g. "http://gpu-server-2:8002"
+
+# Managed-server settings (ignored when *_server_url is set)
 embedding_server_port: 8001
 judge_server_port: 8002
-judge_server_tensor_parallel_size: 2
+judge_server_tensor_parallel_size: 1
+judge_server_max_model_len: 16384
 
 num_generations: 2
 learning_rate: 1.0e-6
@@ -29,24 +43,27 @@ save_steps: 100
 # vLLM for policy model (colocate on single training GPU)
 use_vllm: true
 vllm_mode: colocate
+vllm_tensor_parallel_size: 1
 vllm_gpu_memory_utilization: 0.45
 vllm_enable_sleep_mode: true
 
-enable_thinking_grpo: true
+# Thinking disabled: model fills entire max_completion_length with <think> blocks,
+# leaving no tokens for JSON output → all rewards = 0 → no training signal.
+enable_thinking_grpo: false
 
-# Contrastive pairing is disabled for online R_ground: TRL generates
-# identical completions for standard and contrastive prompts (same text),
-# and the reward function cannot distinguish them in the prompt_metadata
-# lookup. The contrastive signal only works with cached R_ground.
+# Contrastive pairing: adds n% new rows with mismatched normative
+# universes.  Compatible with online R_ground — contrastive rows have
+# a distinct formatted prompt key so metadata lookup is unambiguous.
 contrastive_ratio: 0.0
+contrastive_lambda: 0.5
 
 # Reward component weights
 reward_weights:
-  - 0.20   # r_uncert  (task clarity / schema validity — gating)
-  - 0.15   # r_complete (structural completeness)
-  - 0.15   # r_consist (internal consistency)
-  - 0.15   # r_context (context identification)
-  - 0.15   # r_cohere (reasoning-to-extraction coherence)
-  - 0.20   # r_ground (normative grounding — ONLINE judge)
+  - 0.10   # r_uncert  (task clarity / schema validity — gating)
+  - 0.05   # r_complete (structural completeness — saturated post-SFT)
+  - 0.05   # r_consist (internal consistency — saturated post-SFT)
+  - 0.20   # r_context (context identification)
+  - 0.10   # r_cohere (reasoning-to-extraction coherence)
+  - 0.50   # r_ground (normative grounding — ONLINE judge)
 
 context_embedding_model: all-MiniLM-L6-v2

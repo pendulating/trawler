@@ -26,11 +26,11 @@ enable_thinking_grpo: true
 contrastive_ratio: 0.0
 
 reward_weights:
-  - 0.25
-  - 0.20
-  - 0.20
-  - 0.20
-  - 0.15
-  - 0.00
+  - 0.15   # R_uncert  (gating)
+  - 0.10   # R_complete (saturated post-SFT)
+  - 0.10   # R_consist  (saturated post-SFT)
+  - 0.35   # R_context
+  - 0.30   # R_cohere
+  - 0.00   # R_ground  (disabled)
 
 context_embedding_model: all-MiniLM-L6-v2

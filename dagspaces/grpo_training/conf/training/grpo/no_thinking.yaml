@@ -23,16 +23,17 @@ vllm_enable_sleep_mode: true     # Offload vLLM weights during optimizer step
 # Thinking disabled — model generates structured JSON directly (no <think> blocks)
 enable_thinking_grpo: false
 
-contrastive_ratio: 0.1
+contrastive_ratio: 0.0
+contrastive_lambda: 0.5
 
 # Reward component weights: [r_uncert, r_complete, r_consist, r_context, r_cohere, r_ground]
 reward_weights:
-  - 0.20   # r_uncert  (task clarity / schema validity — gating)
-  - 0.15   # r_complete (structural completeness)
-  - 0.15   # r_consist (internal consistency)
-  - 0.15   # r_context (context identification)
-  - 0.15   # r_cohere (reasoning-to-extraction coherence)
-  - 0.20   # r_ground (normative grounding — LLM-judged)
+  - 0.10   # r_uncert  (task clarity / schema validity — gating)
+  - 0.05   # r_complete (structural completeness — saturated post-SFT)
+  - 0.05   # r_consist (internal consistency — saturated post-SFT)
+  - 0.20   # r_context (context identification)
+  - 0.10   # r_cohere (reasoning-to-extraction coherence)
+  - 0.50   # r_ground (normative grounding — LLM-judged)
 
 # Sentence-transformer model for r_context semantic similarity
 context_embedding_model: all-MiniLM-L6-v2

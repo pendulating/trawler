@@ -1,21 +1,23 @@
 # @package _global_
-# GRPO-only pipeline with online R_ground.
-# Assumes SFT checkpoint and norm universes exist.
-# Pre-computed embeddings are optional — NormRetriever re-embeds via the
-# embedding server at init when they are not provided.
+# GRPO-only pipeline with EXTERNAL R_ground servers.
+#
+# Embedding + judge vLLM servers are launched separately (see
+# scripts/launch_auxiliary_servers.sh) and shared across pipelines.
+# This node only needs GPUs for the policy model.
 #
 # Usage:
+#   EMBEDDING_SERVER_URL=http://gpu1:8001 JUDGE_SERVER_URL=http://gpu2:8002 \
 #   NORM_UNIVERSES_PATH=... CI_REASONING_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
-#     pipeline=grpo_only \
-#     training/grpo=online_rground_4gpu \
+#     pipeline=grpo_only_online_external \
+#     training/grpo=online_rground_external \
 #     model=qwen3.5-9b/sft-ci
 
 defaults:
   - override /hydra/launcher: slurm_monitor
 
 pipeline:
-  output_root: ${hydra:run.dir}/grpo_only
+  output_root: ${hydra:run.dir}/grpo_only_online_external
 
   sources:
     sft_checkpoint:
@@ -27,6 +29,9 @@ pipeline:
     ci_reasoning:
       path: ${oc.env:CI_REASONING_PATH}
       type: parquet
+    norm_embeddings:
+      path: ${oc.env:NORM_EMBEDDINGS_PATH,""}
+      type: dir
 
   graph:
     nodes:
@@ -37,9 +42,11 @@ pipeline:
           sft_checkpoint: sft_checkpoint
           chunks: ci_reasoning
           norm_universes: norm_universes
+          embeddings: norm_embeddings
         outputs:
           checkpoint:
             path: outputs/grpo/checkpoint
             type: dir
-        launcher: slurm_gpu_4x
+        # Fewer GPUs needed — servers are external
+        launcher: slurm_train_1x
         wandb_suffix: grpo_training

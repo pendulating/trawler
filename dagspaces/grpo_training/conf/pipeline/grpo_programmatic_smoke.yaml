@@ -3,11 +3,11 @@
 # No norm_universes or reward_cache needed.
 #
 # Usage:
-#   SFT_CHECKPOINT_PATH=... CI_REASONING_PATH=... \
+#   CI_REASONING_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
 #     pipeline=grpo_programmatic_smoke \
 #     training/grpo=colocate_1gpu_9b \
-#     model=qwen3-8b \
+#     model=qwen3.5-9b/sft-ci \
 #     wandb.enabled=false
 
 pipeline:
@@ -15,7 +15,7 @@ pipeline:
 
   sources:
     sft_checkpoint:
-      path: ${oc.env:SFT_CHECKPOINT_PATH}
+      path: ${model.lora_path}
       type: dir
     ci_reasoning:
       path: ${oc.env:CI_REASONING_PATH}

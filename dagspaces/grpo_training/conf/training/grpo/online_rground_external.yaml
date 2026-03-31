@@ -1,0 +1,61 @@
+# @package training.grpo
+# Online R_ground with EXTERNAL embedding + judge servers.
+#
+# Servers must be launched independently (see scripts/launch_auxiliary_servers.sh)
+# and their URLs passed via environment variables. All GPUs on the training
+# node go to the policy model — no GPU allocation for servers.
+#
+# Usage:
+#   EMBEDDING_SERVER_URL=http://gpu1:8001 JUDGE_SERVER_URL=http://gpu2:8002 \
+#   SFT_CHECKPOINT_PATH=... NORM_UNIVERSES_PATH=... CI_REASONING_PATH=... \
+#   python -m dagspaces.grpo_training.cli \
+#     pipeline=grpo_only_online_external \
+#     training/grpo=online_rground_external \
+#     model=qwen3-8b/base
+
+online_rground: true
+
+# External server URLs (required — no managed fallback in this config)
+embedding_server_url: ${oc.env:EMBEDDING_SERVER_URL}
+judge_server_url: ${oc.env:JUDGE_SERVER_URL}
+
+num_generations: 2
+learning_rate: 1.0e-6
+per_device_batch_size: 1
+gradient_accumulation_steps: 16
+num_epochs: 1
+warmup_ratio: 0.1
+max_completion_length: 3072
+gradient_checkpointing: true
+bf16: true
+logging_steps: 10
+save_strategy: steps
+save_steps: 100
+
+# vLLM for policy model (colocate — all GPUs available for training)
+use_vllm: true
+vllm_mode: colocate
+vllm_tensor_parallel_size: 1
+vllm_gpu_memory_utilization: 0.45
+vllm_enable_sleep_mode: true
+
+enable_thinking_grpo: false
+contrastive_ratio: 0.0
+contrastive_lambda: 0.5
+no_flow_scoring: independent
+vignette_ratio: 0.0
+judgment_reward_weights:
+  - 0.50
+  - 0.25
+  - 0.25
+
+# Reward component weights
+reward_weights:
+  - 0.10   # r_uncert  (task clarity / schema validity — gating)
+  - 0.05   # r_complete (structural completeness — saturated post-SFT)
+  - 0.05   # r_consist (internal consistency — saturated post-SFT)
+  - 0.20   # r_context (context identification)
+  - 0.10   # r_cohere (reasoning-to-extraction coherence)
+  - 0.50   # r_ground (normative grounding — ONLINE judge)
+
+context_embedding_model: all-MiniLM-L6-v2

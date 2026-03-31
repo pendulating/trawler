@@ -28,11 +28,11 @@ enable_thinking_grpo: true
 contrastive_ratio: 0.0
 
 reward_weights:
+  - 0.10
+  - 0.05
+  - 0.05
   - 0.20
-  - 0.15
-  - 0.15
-  - 0.15
-  - 0.15
-  - 0.20
+  - 0.10
+  - 0.50
 
 context_embedding_model: all-MiniLM-L6-v2

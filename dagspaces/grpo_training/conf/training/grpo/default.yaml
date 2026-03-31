@@ -29,16 +29,45 @@ vllm_enable_sleep_mode: true     # Offload vLLM weights during optimizer step
 # Enable model thinking during GRPO generation (strip before reward scoring)
 enable_thinking_grpo: true
 
-contrastive_ratio: 0.1
+# Legacy additive contrastive rows (dataset augmentation).
+# Set to 0 — contrastive signal now comes from per-completion dual
+# scoring in OnlineRGround (see contrastive_lambda below).
+contrastive_ratio: 0.0
+
+# Per-completion contrastive penalty weight (λ).
+# R_ground = clamp(correct_score - λ * wrong_score, 0, 1).
+# Each completion is judged against both the correct normative universe
+# and a random wrong one.  λ=0.5 means half-weight penalty for
+# alignment with wrong norms.  Set to 0.0 to disable contrastive.
+contrastive_lambda: 0.5
+
+# No-flow scoring mode:
+#   "independent" — each component scores no-flow completions independently;
+#                   R_ground uses coverage judge to evaluate normative context.
+#   "flat"        — legacy: all components get the same flat no_flow_reward().
+no_flow_scoring: independent
 
 # Reward component weights: [r_uncert, r_complete, r_consist, r_context, r_cohere, r_ground]
 reward_weights:
-  - 0.20   # r_uncert  (task clarity / schema validity — gating)
-  - 0.15   # r_complete (structural completeness)
-  - 0.15   # r_consist (internal consistency)
-  - 0.15   # r_context (context identification)
-  - 0.15   # r_cohere (reasoning-to-extraction coherence)
-  - 0.20   # r_ground (normative grounding — LLM-judged)
+  - 0.10   # r_uncert  (task clarity / schema validity — gating)
+  - 0.05   # r_complete (structural completeness — saturated post-SFT)
+  - 0.05   # r_consist (internal consistency — saturated post-SFT)
+  - 0.20   # r_context (context identification)
+  - 0.10   # r_cohere (reasoning-to-extraction coherence)
+  - 0.50   # r_ground (normative grounding — LLM-judged)
+
+# ── Mixed-task training: norm judgment vignettes ──
+# Ratio of judgment vignettes in the training dataset (0.0 = disabled).
+# At 0.2, ~20% of prompts are "should X share info with Y?" vignettes
+# derived from the norm universes.  Teaches the model to *apply* norms
+# as behavioral constraints, bridging CI extraction → privacy judgment.
+vignette_ratio: 0.0
+
+# Reward weights for judgment vignettes: [r_judgment, r_reasoning, r_norm_cite]
+judgment_reward_weights:
+  - 0.50   # r_judgment (binary correctness vs gold)
+  - 0.25   # r_reasoning (keyword-based reasoning quality)
+  - 0.25   # r_norm_cite (norm citation overlap with source norm)
 
 # Sentence-transformer model for r_context semantic similarity
 context_embedding_model: all-MiniLM-L6-v2

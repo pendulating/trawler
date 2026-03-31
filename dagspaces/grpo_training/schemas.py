@@ -99,5 +99,44 @@ class FlowGovernanceJudgment(BaseModel):
     )
 
 
+class NoFlowCoverageJudgment(BaseModel):
+    """Judge output for assessing whether a text passage contains
+    information flows governed by norms from the normative universe.
+
+    Used by OnlineRGround to score no-flow completions: if the passage
+    clearly contains governed flows but the model declared none, R_ground
+    should be low.
+    """
+    passage_contains_governed_flows: bool = Field(
+        description="Whether the passage describes information flows governed by the provided norms",
+    )
+    coverage_score: float = Field(
+        ge=0.0, le=1.0,
+        description="How strongly the passage's information flows are governed by the norms "
+                    "(0=no governed flows, 1=clear governed flows present)",
+    )
+    explanation: str = Field(
+        description="Brief explanation of the coverage assessment",
+    )
+
+
+class NormJudgmentResult(BaseModel):
+    """Expected output schema for norm judgment vignettes.
+
+    The model is asked whether an action is appropriate in a given
+    social context, grounding its judgment in privacy/information norms.
+    """
+    judgment: Literal["yes", "no"] = Field(
+        description="Whether the described action is appropriate in the given context",
+    )
+    reasoning: str = Field(
+        description="Explanation of why the action is or is not appropriate",
+    )
+    norms_considered: List[str] = Field(
+        default_factory=list,
+        description="Norms of information sharing considered in the judgment",
+    )
+
+
 # Keep backward-compatible alias
 NormGroundingJudgment = FlowGovernanceJudgment

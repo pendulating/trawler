@@ -7,7 +7,7 @@
 #   ABSTRACTED_NORMS_PATH=... SFT_PAIRS_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
 #     pipeline=norm_universe_and_reward_prep \
-#     model=qwen3-8b
+#     model=qwen3-8b/base
 
 defaults:
   - override /hydra/launcher: slurm_monitor

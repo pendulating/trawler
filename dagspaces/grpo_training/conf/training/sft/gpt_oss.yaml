@@ -1,0 +1,37 @@
+# @package training.sft
+# SFT config for GPT-OSS-20B on 2×A6000 with FSDP.
+# Dequantized from Mxfp4 to bf16 (~40GB), too large for single GPU.
+# FSDP shards the model across GPUs (DDP replicates, which OOMs).
+num_epochs: 3
+learning_rate: 1.0e-5
+per_device_batch_size: 1
+gradient_accumulation_steps: 16
+warmup_ratio: 0.1
+weight_decay: 0.01
+max_seq_length: 4096
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+max_grad_norm: 1.0
+bf16: true
+dataloader_num_workers: 4
+logging_steps: 10
+save_strategy: epoch
+
+lora:
+  rank: 64
+  alpha: 128
+  dropout: 0.05
+  target_modules: all-linear
+  task_type: CAUSAL_LM
+
+sample_fraction: null
+include_negative_examples: true
+
+# FSDP: shard model across GPUs (required — 40GB bf16 model doesn't fit on one 48GB A6000)
+fsdp:
+  strategy: "full_shard auto_wrap"
+  auto_wrap_policy: TRANSFORMER_BASED_WRAP
+  backward_prefetch: BACKWARD_PRE
+  forward_prefetch: false
+  cpu_ram_efficient_loading: true

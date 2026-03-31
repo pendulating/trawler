@@ -104,9 +104,20 @@ class SFTTrainingRunner(StageRunner):
         print(f"[sft_training] Launching DDP with {n_gpus} GPUs via accelerate")
         print(f"[sft_training] Command: {' '.join(cmd)}")
 
+        env = os.environ.copy()
+        # PEFT's fsdp_auto_wrap_policy reads FSDP_TRANSFORMER_CLS_TO_WRAP to
+        # find the layer class. Pass it through so models not in PEFT's
+        # auto-detection list (e.g. Qwen3.5) work with FSDP.
+        fsdp_cfg = OmegaConf.select(cfg, "training.sft.fsdp", default=None)
+        if fsdp_cfg:
+            layer_cls = OmegaConf.select(fsdp_cfg, "transformer_layer_cls_to_wrap", default=None)
+            if layer_cls:
+                env["FSDP_TRANSFORMER_CLS_TO_WRAP"] = str(layer_cls)
+                print(f"[sft_training] FSDP_TRANSFORMER_CLS_TO_WRAP={layer_cls}")
+
         result = subprocess.run(
             cmd,
-            env=os.environ.copy(),
+            env=env,
             stdout=sys.stdout,
             stderr=sys.stderr,
         )

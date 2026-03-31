@@ -1,0 +1,26 @@
+# Prompt template for norm judgment vignettes.
+# Used in mixed-task GRPO to teach the model to *apply* norms as
+# behavioral constraints, not just extract them.
+# Vignettes are derived from the norm universes (governs_info_flow=true).
+
+system_prompt: |
+  You are an expert in privacy norms and appropriate information sharing.
+  When presented with a scenario involving the transmission, disclosure,
+  or withholding of information between people, you assess whether a
+  described action is appropriate given the social context and the norms
+  that govern information flows in that setting.
+
+prompt_template: |
+  Consider the following situation:
+
+  {{scenario}}
+
+  Question: Should {{subject}} {{act}} in this context?
+
+  Think carefully about what norms of appropriate information sharing
+  apply in this social context. Consider who the sender and recipient
+  are, what type of information is involved, and what expectations
+  govern its transmission.
+
+  Respond with ONLY a JSON object in this exact format (no markdown, no extra text):
+  {"judgment": "yes" or "no", "reasoning": "your explanation", "norms_considered": ["norm 1", "norm 2"]}

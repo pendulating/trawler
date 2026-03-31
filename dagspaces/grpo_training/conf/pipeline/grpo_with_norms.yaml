@@ -4,11 +4,11 @@
 # reward_prep runs in parallel as an inspection tool but is NOT a GRPO dependency.
 #
 # Usage:
-#   ABSTRACTED_NORMS_PATH=... SFT_CHECKPOINT_PATH=... CI_REASONING_PATH=... \
+#   ABSTRACTED_NORMS_PATH=... CI_REASONING_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
 #     pipeline=grpo_with_norms \
 #     training/grpo=online_rground_5gpu \
-#     model=qwen3-8b
+#     model=qwen3.5-9b/sft-ci
 
 defaults:
   - override /hydra/launcher: slurm_monitor
@@ -21,7 +21,7 @@ pipeline:
       path: ${oc.env:ABSTRACTED_NORMS_PATH}
       type: parquet
     sft_checkpoint:
-      path: ${oc.env:SFT_CHECKPOINT_PATH}
+      path: ${model.lora_path}
       type: dir
     ci_reasoning:
       path: ${oc.env:CI_REASONING_PATH}

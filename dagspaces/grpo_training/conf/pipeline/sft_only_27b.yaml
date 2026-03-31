@@ -5,7 +5,7 @@
 # Usage:
 #   python -m dagspaces.grpo_training.cli -m \
 #     pipeline=sft_only_27b \
-#     model=qwen3.5-27b \
+#     model=qwen3.5-27b/base \
 #     training/sft=sft_27b \
 #     CI_REASONING_PATH=... CI_EXTRACTION_PATH=...
 

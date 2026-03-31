@@ -19,14 +19,7 @@ lora:
   rank: 64
   alpha: 128
   dropout: 0.05
-  target_modules:
-    - q_proj
-    - k_proj
-    - v_proj
-    - o_proj
-    - gate_proj
-    - up_proj
-    - down_proj
+  target_modules: all-linear
   task_type: CAUSAL_LM
 
 # Fraction of training examples to use (0.0–1.0, null = use all)

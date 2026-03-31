@@ -1,0 +1,54 @@
+# @package training.grpo
+# Online R_ground with EXTERNAL servers, G=4 for better advantage estimation.
+#
+# Compared to online_rground_external.yaml (G=2):
+#   - num_generations: 4 (2x more completions per prompt)
+#   - gradient_accumulation_steps: 8 (halved to keep effective batch constant)
+#   - vllm_gpu_memory_utilization: 0.40 (slightly reduced — more concurrent seqs)
+#
+# Expected: ~2x step time, better advantage estimation, more wrong-source
+# diversity per group (each completion gets a different random wrong source).
+
+online_rground: true
+
+embedding_server_url: ${oc.env:EMBEDDING_SERVER_URL}
+judge_server_url: ${oc.env:JUDGE_SERVER_URL}
+
+num_generations: 4
+learning_rate: 1.0e-6
+per_device_batch_size: 1
+gradient_accumulation_steps: 8
+num_epochs: 1
+warmup_ratio: 0.1
+max_completion_length: 2048
+gradient_checkpointing: true
+bf16: true
+logging_steps: 10
+save_strategy: steps
+save_steps: 100
+
+use_vllm: true
+vllm_mode: colocate
+vllm_tensor_parallel_size: 1
+vllm_gpu_memory_utilization: 0.50
+vllm_enable_sleep_mode: true
+
+enable_thinking_grpo: false
+contrastive_ratio: 0.0
+contrastive_lambda: 0.5
+no_flow_scoring: independent
+vignette_ratio: 0.0
+judgment_reward_weights:
+  - 0.50
+  - 0.25
+  - 0.25
+
+reward_weights:
+  - 0.10   # r_uncert
+  - 0.05   # r_complete
+  - 0.05   # r_consist
+  - 0.20   # r_context
+  - 0.10   # r_cohere
+  - 0.50   # r_ground (ONLINE judge)
+
+context_embedding_model: all-MiniLM-L6-v2

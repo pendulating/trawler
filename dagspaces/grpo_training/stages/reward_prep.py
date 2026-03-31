@@ -96,7 +96,7 @@ def run_reward_prep_stage(
 
         # Load the same embedding model for query encoding
         embedding_model_path = str(
-            OmegaConf.select(cfg, "model.embedding_model_source")
+            OmegaConf.select(cfg, "embedding_model.model_source", default=None) or OmegaConf.select(cfg, "model.embedding_model_source", default=None)
             or OmegaConf.select(cfg, "norm_universe.embedding_model")
             or ""
         )
@@ -113,7 +113,7 @@ def run_reward_prep_stage(
         try:
             from sentence_transformers import SentenceTransformer
             model_name = str(
-                OmegaConf.select(cfg, "model.embedding_model_source")
+                OmegaConf.select(cfg, "embedding_model.model_source", default=None) or OmegaConf.select(cfg, "model.embedding_model_source", default=None)
                 or OmegaConf.select(cfg, "reward_prep.retrieval_model")
                 or "all-MiniLM-L6-v2"
             )
