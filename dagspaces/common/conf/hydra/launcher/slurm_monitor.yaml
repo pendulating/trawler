@@ -11,6 +11,7 @@ array_parallelism: 1
 name: ${experiment.name}-monitor
 additional_parameters:
   gres: "none"
+  begin: ${oc.env:SLURM_BEGIN,now}
 srun_args:
   - --gres=none
   - --cpu-bind=none

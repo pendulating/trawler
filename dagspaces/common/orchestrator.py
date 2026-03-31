@@ -195,6 +195,47 @@ def build_run_config(
     if checkpoint_name:
         run_config["checkpoint_name"] = checkpoint_name
 
+    try:
+        model_cfg = getattr(cfg, "model", None)
+        if model_cfg:
+            single_book = getattr(model_cfg, "single_book", False)
+            if single_book:
+                run_config["single_book"] = True
+            book_id = getattr(model_cfg, "book_id", None)
+            if book_id:
+                run_config["book_id"] = str(book_id)
+    except Exception:
+        pass
+
+    # GRPO training hyperparameters (when running GRPO training stage)
+    try:
+        grpo_cfg = OmegaConf.select(cfg, "training.grpo")
+        if grpo_cfg is not None:
+            run_config["grpo"] = {
+                "contrastive_ratio": grpo_cfg.get("contrastive_ratio"),
+                "reward_weights": list(grpo_cfg.get("reward_weights", [])),
+                "online_rground": grpo_cfg.get("online_rground", False),
+                "enable_thinking_grpo": grpo_cfg.get("enable_thinking_grpo"),
+                "num_generations": grpo_cfg.get("num_generations"),
+                "learning_rate": grpo_cfg.get("learning_rate"),
+                "vllm_mode": grpo_cfg.get("vllm_mode"),
+            }
+    except Exception:
+        pass
+
+    # Training metadata sidecar: when evaluating a GRPO checkpoint,
+    # inherit the training hyperparameters that produced it.
+    try:
+        model_cfg = getattr(cfg, "model", None)
+        lora_path = str(getattr(model_cfg, "lora_path", "") or "") if model_cfg else ""
+        if lora_path and "grpo" not in run_config:
+            meta_path = os.path.join(lora_path, "training_metadata.json")
+            if os.path.exists(meta_path):
+                with open(meta_path) as _f:
+                    run_config["training"] = json.load(_f)
+    except Exception:
+        pass
+
     return run_config
 
 

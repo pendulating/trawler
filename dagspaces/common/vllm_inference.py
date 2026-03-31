@@ -23,16 +23,99 @@ import pandas as pd
 from omegaconf import OmegaConf
 
 
-def _strip_think_blocks(text: str) -> str:
-    """Strip ``<think>...</think>`` reasoning blocks from model output.
+def _remap_lora_keys_for_vlm(lora_path: str, model_source: str, stage_name: str) -> str:
+    """Remap LoRA adapter keys from CausalLM to VLM prefix if needed.
 
-    Handles both complete blocks and unterminated ``<think>`` (when the model
-    ran out of tokens mid-reasoning).  Returns the remaining text, stripped.
+    Adapters trained on AutoModelForCausalLM have keys like
+    ``base_model.model.model.layers.X...`` which vLLM parses to
+    ``model.layers.X...``.  But VLM architectures (e.g.
+    Qwen3_5ForConditionalGeneration) expect ``model.language_model.layers.X...``.
+
+    If the base model uses a ``language_model`` prefix and the adapter does not,
+    creates a remapped copy of the adapter in a ``_vlm_remapped/`` subdirectory.
+    Returns the (possibly new) lora_path.
     """
-    # Complete blocks
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+    import glob
+
+    # Quick check: does the base model use language_model prefix?
+    sf_files = sorted(glob.glob(os.path.join(model_source, "*.safetensors")))
+    if not sf_files:
+        return lora_path
+    with safe_open(sf_files[0], framework="pt") as f:
+        base_keys = f.keys()
+        has_lm_prefix = any("language_model.layers." in k for k in base_keys)
+    if not has_lm_prefix:
+        return lora_path
+
+    # Check adapter keys
+    adapter_sf = os.path.join(lora_path, "adapter_model.safetensors")
+    if not os.path.exists(adapter_sf):
+        return lora_path
+    with safe_open(adapter_sf, framework="pt") as f:
+        adapter_keys = list(f.keys())
+    # After vLLM strips "base_model.model.", keys become "model.layers.X...".
+    # We need them to be "model.language_model.layers.X..." instead.
+    needs_remap = any(
+        k.startswith("base_model.model.model.layers.") for k in adapter_keys
+    ) and not any(
+        "language_model.layers." in k for k in adapter_keys
+    )
+    if not needs_remap:
+        return lora_path
+
+    # Create remapped adapter
+    remapped_dir = os.path.join(lora_path, "_vlm_remapped")
+    remapped_sf = os.path.join(remapped_dir, "adapter_model.safetensors")
+    if os.path.exists(remapped_sf):
+        print(f"[{stage_name}] Using cached VLM-remapped LoRA: {remapped_dir}")
+        return remapped_dir
+
+    print(f"[{stage_name}] Remapping LoRA keys: model.layers → model.language_model.layers")
+    os.makedirs(remapped_dir, exist_ok=True)
+
+    # Remap and save weights
+    import torch
+    tensors = {}
+    with safe_open(adapter_sf, framework="pt") as f:
+        for key in f.keys():
+            new_key = key.replace(
+                "base_model.model.model.layers.",
+                "base_model.model.model.language_model.layers.",
+            )
+            tensors[new_key] = f.get_tensor(key)
+    save_file(tensors, remapped_sf)
+
+    # Copy adapter_config.json and other metadata
+    import shutil
+    for fname in ("adapter_config.json", "tokenizer_config.json", "tokenizer.json",
+                  "chat_template.jinja", "README.md"):
+        src = os.path.join(lora_path, fname)
+        if os.path.exists(src):
+            shutil.copy2(src, remapped_dir)
+
+    print(f"[{stage_name}] VLM-remapped LoRA saved to {remapped_dir} "
+          f"({len(tensors)} tensors)")
+    return remapped_dir
+
+
+def _strip_think_blocks(text: str) -> str:
+    """Strip reasoning / thinking blocks from model output.
+
+    Handles multiple formats used by different model families:
+    - ``<think>...</think>`` (Qwen3+, DeepSeek-R1, open-source reasoning models)
+    - ``<|begin_of_thought|>...<|end_of_thought|>`` (context-reasoner-ppo, some PPO models)
+
+    Also handles unterminated blocks (model ran out of tokens mid-reasoning).
+    Returns the remaining text, stripped.
+    """
+    # <think>...</think>
     text = re.sub(r"<think>[\s\S]*?</think>", "", text)
-    # Unterminated block (model ran out of tokens while thinking)
     text = re.sub(r"<think>[\s\S]*$", "", text)
+    # <|begin_of_thought|...end_of_thought|> (with optional trailing ] or >)
+    text = re.sub(r"<\|begin_of_thought\|[\s\S]*?<\|end_of_thought\|[>\]\s]*", "", text)
+    text = re.sub(r"<\|begin_of_thought\|[\s\S]*$", "", text)
     return text.strip()
 
 
@@ -233,7 +316,9 @@ def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
 def _build_engine_kwargs(cfg) -> Dict[str, Any]:
     """Build vLLM LLM constructor kwargs from Hydra config."""
     model_source = str(getattr(cfg.model, "model_source"))
-    ek = dict(getattr(cfg.model, "engine_kwargs", {}))
+    from omegaconf import OmegaConf as _OC
+    _raw_ek = getattr(cfg.model, "engine_kwargs", {})
+    ek = _OC.to_container(_raw_ek, resolve=True) if _OC.is_config(_raw_ek) else dict(_raw_ek)
 
     # Model
     ek["model"] = model_source
@@ -255,6 +340,25 @@ def _build_engine_kwargs(cfg) -> Dict[str, Any]:
     # AWQ auto-detection
     if "awq" in model_source.lower() and "quantization" not in ek:
         ek["quantization"] = "awq"
+
+    # Convert nested hf_overrides dicts to a callable that does deep updates.
+    # vLLM's config.update() with a dict like {"text_config": {"vocab_size": X}}
+    # replaces text_config entirely instead of merging.  A callable gets the
+    # PretrainedConfig object and can update nested attributes properly.
+    _hf_ov = ek.get("hf_overrides")
+    if isinstance(_hf_ov, dict) and any(isinstance(v, dict) for v in _hf_ov.values()):
+        def _make_hf_override_fn(overrides):
+            def _fn(config):
+                for key, val in overrides.items():
+                    if isinstance(val, dict) and hasattr(config, key):
+                        sub = getattr(config, key)
+                        for sk, sv in val.items():
+                            setattr(sub, sk, sv)
+                    else:
+                        setattr(config, key, val)
+                return config
+            return _fn
+        ek["hf_overrides"] = _make_hf_override_fn(_hf_ov)
 
     # Preserve data_parallel_size (our key, not a vLLM LLM kwarg) before filtering
     dp_size = ek.pop("data_parallel_size", None)
@@ -588,6 +692,154 @@ def _run_data_parallel(
 
 
 # ---------------------------------------------------------------------------
+# Transformers fallback for models vLLM no longer supports (e.g. Mllama)
+# ---------------------------------------------------------------------------
+
+# Model families that bypass vLLM entirely and use transformers generate().
+_TRANSFORMERS_FALLBACK_FAMILIES = {"llama-vision"}
+
+
+def _run_transformers_text_inference(
+    df: pd.DataFrame,
+    cfg,
+    preprocess: Callable[[Dict[str, Any]], Dict[str, Any]],
+    postprocess: Callable[[Dict[str, Any]], Dict[str, Any]],
+    stage_name: str = "transformers_inference",
+) -> pd.DataFrame:
+    """Text-only inference via native transformers for unsupported vLLM models.
+
+    Mirrors the run_vllm_inference interface (preprocess/postprocess callables)
+    but uses AutoModelForCausalLM.generate() instead of vLLM.
+    """
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    model_source = str(cfg.model.model_source)
+    print(f"[{stage_name}] Using native transformers fallback for {model_source}")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_source, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"  # required for batched generation
+
+    # Use flash_attention_2 if available for ~2x speedup on long sequences
+    try:
+        import flash_attn  # noqa: F401
+        _attn_impl = "flash_attention_2"
+    except ImportError:
+        _attn_impl = "sdpa"
+    print(f"[{stage_name}] Attention: {_attn_impl}")
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_source,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True,
+        ignore_mismatched_sizes=True,  # Mllama has intentional embed/lm_head size diffs
+        attn_implementation=_attn_impl,
+    )
+
+    # Load and merge LoRA adapter if specified
+    _lora_path = str(getattr(cfg.model, "lora_path", "") or "")
+    if _lora_path:
+        from peft import PeftModel
+        print(f"[{stage_name}] Loading LoRA adapter: {_lora_path}")
+        model = PeftModel.from_pretrained(model, _lora_path)
+        model = model.merge_and_unload()
+        print(f"[{stage_name}] LoRA merged into base model")
+
+    model.eval()
+
+    # Determine think-block stripping
+    _strip_thinking = False
+    try:
+        ctk = getattr(cfg.model, "chat_template_kwargs", None) or {}
+        if hasattr(ctk, "enable_thinking"):
+            _strip_thinking = not bool(ctk.enable_thinking)
+        elif isinstance(ctk, dict):
+            _strip_thinking = not bool(ctk.get("enable_thinking", True))
+    except Exception:
+        pass
+
+    # Preprocess rows
+    print(f"[{stage_name}] Preprocessing {len(df)} rows...")
+    preprocessed_rows: List[Dict[str, Any]] = []
+    for idx, row in enumerate(df.to_dict("records")):
+        try:
+            preprocessed_rows.append(preprocess(row))
+        except Exception as e:
+            row["__preprocess_error__"] = str(e)
+            preprocessed_rows.append(row)
+
+    # Separate valid rows from failed ones
+    valid_indices = []
+    failed_rows = []
+    prompts = []
+    sp_first = {}
+    for i, row in enumerate(preprocessed_rows):
+        if "__preprocess_error__" in row:
+            row["generated_text"] = ""
+            failed_rows.append((i, postprocess(row)))
+        else:
+            messages = row.get("messages", [])
+            sp = row.get("sampling_params", {})
+            if not sp_first:
+                sp_first = sp  # sampling params are same for all rows
+            prompt = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            prompts.append(prompt)
+            valid_indices.append(i)
+
+    max_tokens = int(sp_first.get("max_tokens", 1024))
+    temperature = float(sp_first.get("temperature", 0.0))
+    do_sample = temperature > 0
+
+    # Batch inference — Mllama 11B in bf16 ≈ 22GB, leaving ~26GB on A6000 for
+    # KV cache.  batch_size=16 with max_tokens=1024 fits comfortably.
+    batch_size = 16
+    generated_texts: List[str] = []
+    print(f"[{stage_name}] Generating {len(prompts)} prompts in batches of {batch_size}...")
+
+    for start in range(0, len(prompts), batch_size):
+        batch_prompts = prompts[start:start + batch_size]
+        inputs = tokenizer(
+            batch_prompts, return_tensors="pt", padding=True, truncation=True,
+            max_length=8192,
+        ).to(model.device)
+        prompt_len = inputs["input_ids"].shape[1]
+
+        with torch.inference_mode():
+            output_ids = model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                do_sample=do_sample,
+                temperature=temperature if do_sample else None,
+            )
+        for j in range(len(batch_prompts)):
+            gen_ids = output_ids[j, prompt_len:]
+            gen_text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+            if _strip_thinking and gen_text:
+                gen_text = _strip_think_blocks(gen_text)
+            generated_texts.append(gen_text)
+
+        print(f"[{stage_name}] Batch {start // batch_size + 1}: "
+              f"{min(start + batch_size, len(prompts))}/{len(prompts)} done")
+
+    # Reassemble results in original order
+    results = [None] * len(preprocessed_rows)
+    for i, row_data in failed_rows:
+        results[i] = row_data
+    for vi, gen_text in zip(valid_indices, generated_texts):
+        row = preprocessed_rows[vi]
+        row["generated_text"] = gen_text
+        results[vi] = postprocess(row)
+
+    print(f"[{stage_name}] Completed transformers inference, {len(results)} results")
+    return pd.DataFrame(results)
+
+
+# ---------------------------------------------------------------------------
 # Main inference function
 # ---------------------------------------------------------------------------
 
@@ -627,6 +879,15 @@ def run_vllm_inference(
         print(f"[{stage_name}] Empty input, returning empty DataFrame")
         return pd.DataFrame()
 
+    # Models whose architectures vLLM no longer supports get routed to a
+    # native transformers generate() fallback.
+    _model_family = str(getattr(cfg.model, "model_family", ""))
+    if _model_family in _TRANSFORMERS_FALLBACK_FAMILIES:
+        return _run_transformers_text_inference(
+            df=df, cfg=cfg, preprocess=preprocess, postprocess=postprocess,
+            stage_name=stage_name,
+        )
+
     # Set runtime env vars before importing vLLM.
     for k, v in {**get_pcie_nccl_env_vars(), **get_vllm_runtime_env_vars()}.items():
         os.environ.setdefault(k, v)
@@ -660,6 +921,9 @@ def run_vllm_inference(
             print(f"[{stage_name}] LoRA path fallback failed: {e}")
     print(f"[{stage_name}] LoRA path resolved: {repr(lora_path)}")
     if lora_path:
+        # Remap adapter keys if needed (CausalLM → VLM prefix mismatch)
+        model_source = engine_kwargs.get("model", "")
+        lora_path = _remap_lora_keys_for_vlm(lora_path, model_source, stage_name)
         from vllm.lora.request import LoRARequest
         lora_request = LoRARequest("sft", 1, lora_path)
         print(f"[{stage_name}] LoRA adapter: {lora_path}")

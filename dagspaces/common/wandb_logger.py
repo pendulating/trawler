@@ -735,10 +735,23 @@ def build_wandb_tags(
             if family:
                 tags.append(f"family:{family}")
             lora_path = getattr(model_cfg, "lora_path", None)
-            if lora_path:
+            is_finetuned = getattr(model_cfg, "is_finetuned", False)
+            if lora_path or is_finetuned:
                 tags.append("finetuned")
+                if lora_path:
+                    lp = str(lora_path)
+                    if "grpo_programmatic" in lp:
+                        tags.append("grpo:programmatic")
+                    elif "grpo_only_online" in lp or "grpo_grounded" in lp:
+                        tags.append("grpo:grounded")
             else:
                 tags.append("base")
+            single_book = getattr(model_cfg, "single_book", False)
+            if single_book:
+                tags.append("single_book")
+            book_id = getattr(model_cfg, "book_id", None)
+            if book_id:
+                tags.append(f"book:{book_id}")
     except Exception:
         pass
 
@@ -747,6 +760,64 @@ def build_wandb_tags(
         task = OmegaConf.select(cfg, "prompt.task")
         if task:
             tags.append(f"task:{task}")
+    except Exception:
+        pass
+
+    # GRPO training config tags (only present during training runs)
+    try:
+        from omegaconf import OmegaConf
+        grpo_cfg = OmegaConf.select(cfg, "training.grpo")
+        if grpo_cfg is not None:
+            cr = grpo_cfg.get("contrastive_ratio")
+            if cr is not None:
+                tags.append(f"contrastive:{cr}")
+            if grpo_cfg.get("online_rground"):
+                tags.append("rground:online")
+            else:
+                tags.append("rground:cached")
+            # Reward config shorthand from weight pattern
+            weights = list(grpo_cfg.get("reward_weights", []))
+            if len(weights) == 6:
+                if weights[5] == 0.0 and weights[3] == 0.0 and weights[4] == 0.0:
+                    tags.append("reward:structural")
+                elif weights[5] == 0.0 and weights[4] == 0.0:
+                    tags.append("reward:+context")
+                elif weights[5] == 0.0:
+                    tags.append("reward:+coherence")
+                elif weights[5] > 0.0:
+                    tags.append("reward:full")
+                else:
+                    tags.append("reward:programmatic")
+            if grpo_cfg.get("enable_thinking_grpo"):
+                tags.append("thinking:enabled")
+            else:
+                tags.append("thinking:disabled")
+    except Exception:
+        pass
+
+    # Inherit training tags from sidecar metadata (for eval runs)
+    try:
+        model_cfg = getattr(cfg, "model", None)
+        lora_path = str(getattr(model_cfg, "lora_path", "") or "") if model_cfg else ""
+        if lora_path:
+            import json as _json
+            meta_path = os.path.join(lora_path, "training_metadata.json")
+            if os.path.exists(meta_path):
+                with open(meta_path) as _f:
+                    tmeta = _json.load(_f)
+                cr = tmeta.get("contrastive_ratio")
+                if cr is not None:
+                    tags.append(f"contrastive:{cr}")
+                rw = tmeta.get("reward_weights", [])
+                if len(rw) == 6:
+                    if rw[5] > 0.0:
+                        tags.append("reward:full")
+                    elif rw[4] > 0.0:
+                        tags.append("reward:+coherence")
+                    elif rw[3] > 0.0:
+                        tags.append("reward:+context")
+                    else:
+                        tags.append("reward:structural")
     except Exception:
         pass
 
@@ -929,8 +1000,11 @@ def collect_compute_metadata(
                     model_info["model_family"] = str(model_family)
 
                 lora_path = getattr(model_cfg, "lora_path", None)
+                is_finetuned_flag = getattr(model_cfg, "is_finetuned", False)
                 if lora_path:
                     model_info["lora_path"] = str(lora_path)
+                    model_info["is_finetuned"] = True
+                elif is_finetuned_flag:
                     model_info["is_finetuned"] = True
                 else:
                     model_info["is_finetuned"] = False
@@ -947,6 +1021,13 @@ def collect_compute_metadata(
                             model_info["chat_template_kwargs"] = ctk
                     except Exception:
                         pass
+
+                # Single-book training metadata
+                single_book = getattr(model_cfg, "single_book", False)
+                model_info["single_book"] = bool(single_book)
+                book_id = getattr(model_cfg, "book_id", None)
+                if book_id:
+                    model_info["book_id"] = str(book_id)
 
                 # Derive checkpoint_name for human-readable identification
                 checkpoint_name = getattr(model_cfg, "checkpoint_name", None)
