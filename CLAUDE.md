@@ -16,13 +16,13 @@ uv pip install -e .
 python -m dagspaces.historical_norms.cli pipeline=COLM_norms_fiction
 
 # Training: SFT + GRPO
-python -m dagspaces.grpo_training.cli pipeline=full_training model=qwen3-8b
-python -m dagspaces.grpo_training.cli pipeline=grpo_only model=qwen3-8b
+python -m dagspaces.grpo_training.cli pipeline=full_training model=qwen3-8b/base
+python -m dagspaces.grpo_training.cli pipeline=grpo_only model=qwen3-8b/base
 
 # Benchmark evaluations
-python -m dagspaces.goldcoin_hipaa.cli pipeline=full_eval model=qwen3-8b-grpo-ci
-python -m dagspaces.privacylens.cli pipeline=privacylens_clean model=qwen3-8b-grpo-ci
-python -m dagspaces.vlm_geoprivacy_bench.cli pipeline=mcq_eval model=qwen3-vl-8b-instruct
+python -m dagspaces.goldcoin_hipaa.cli pipeline=full_eval model=qwen3-8b/grpo-ci
+python -m dagspaces.privacylens.cli pipeline=privacylens_clean model=qwen3-8b/grpo-ci
+python -m dagspaces.vlm_geoprivacy_bench.cli pipeline=mcq_eval model=qwen3-vl-8b/instruct
 
 # Debug mode (local, sampled)
 python -m dagspaces.goldcoin_hipaa.cli pipeline=full_eval runtime.debug=true runtime.sample_n=5 hydra/launcher=null
@@ -95,8 +95,8 @@ Site-specific settings (SLURM partition, project paths, NCCL) are in `server.env
 
 ## Adding a New Model
 1. Download to `/share/pierson/matt/zoo/models/<ModelName>/`
-2. Create `dagspaces/common/conf/model/<model-name>.yaml` with `@package _global_` format
-3. Use with any dagspace: `model=<model-name>`
+2. Create `dagspaces/common/conf/model/<model-family>/<variant>.yaml` with `@package _global_` format (e.g., `qwen3.5-9b/base.yaml`, `qwen3.5-9b/sft-ci.yaml`)
+3. Use with any dagspace: `model=<model-family>/<variant>` (e.g., `model=qwen3.5-9b/base`)
 
 ## Key Dependencies
 hydra-core, hydra-submitit-launcher, omegaconf, vllm (>=0.17.0), pandas, pyarrow, wandb, torch, transformers, sentence-transformers, trl, peft
