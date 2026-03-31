@@ -1,0 +1,4 @@
+# @package _global_
+# Think format: model reasons in <think> tags, answers in <answer> tags.
+prompt:
+  think: true

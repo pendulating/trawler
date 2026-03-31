@@ -1,0 +1,4 @@
+# @package _global_
+data:
+  name: cirl_vignettes
+  json_path: ${oc.env:CIRL_DATA,}

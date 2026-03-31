@@ -1,0 +1,4 @@
+# Vendored from CI-RL (github.com/EricGLan/CI-RL) - Apache 2.0 License
+from .agent_naive import AGENT_NAIVE_PROMPT
+from .agent_privacy_enhanced import AGENT_PRIVACY_ENHANCED_PROMPT
+from .shared import AGENT_DUMMY_VARS, AGENT_PRIVACY_ENHANCED_SYSTEM_INFO, AGENT_NAIVE_SYSTEM_INFO

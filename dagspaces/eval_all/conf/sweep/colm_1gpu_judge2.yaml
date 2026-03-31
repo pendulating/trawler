@@ -1,0 +1,41 @@
+# @package _global_
+# Hydra sweep: 1-GPU models, judge server on port 9016 (max 3 concurrent).
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun +sweep=colm_1gpu_judge2
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 2
+    setup:
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      # Judge server assignment for this sweep half
+      - export JUDGE_URL=http://klara.tech.cornell.edu:9016
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:9016
+  sweeper:
+    params:
+      model: >-
+        gemma-3-12b/it,
+        gemma-3-12b/it-sft-ci,
+        gpt-oss-20b/base,
+        gpt-oss-20b/sft-ci,
+        llama3.1-8b/instruct,
+        openthinker3-7b/base,
+        openthinker3-7b/sft-ci,
+        phi-4/base,
+        phi-4/sft-ci,
+        qwen3.5-2b/sft-ci,
+        qwen3.5-4b/sft-ci
+

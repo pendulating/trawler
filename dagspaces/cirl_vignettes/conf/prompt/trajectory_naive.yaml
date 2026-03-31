@@ -1,0 +1,5 @@
+# @package _global_
+# Trajectory eval with naive agent prompt (no privacy guidance).
+prompt:
+  think: false
+  trajectory_prompt_type: naive

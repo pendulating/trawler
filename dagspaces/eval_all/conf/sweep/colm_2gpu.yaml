@@ -1,0 +1,20 @@
+# @package _global_
+# Hydra sweep config: run eval_all across 2-GPU COLM models (max 3 concurrent).
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun \
+#     +sweep=colm_2gpu pipeline=all_benchmarks_2gpu
+#
+# Each model gets its own SLURM job running all benchmarks sequentially.
+# At most 3 jobs run in parallel via array_parallelism.
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 3
+  sweeper:
+    params:
+      model: >-
+        qwen3.5-27b/base,
+        qwen2.5-72b/instruct-awq,
+        llama3.3-70b/instruct

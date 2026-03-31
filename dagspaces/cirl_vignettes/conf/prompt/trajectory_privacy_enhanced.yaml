@@ -1,0 +1,5 @@
+# @package _global_
+# Trajectory eval with privacy-enhanced agent prompt.
+prompt:
+  think: false
+  trajectory_prompt_type: privacy_enhanced

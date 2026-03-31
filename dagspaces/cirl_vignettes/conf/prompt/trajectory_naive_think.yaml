@@ -1,0 +1,5 @@
+# @package _global_
+# Trajectory eval with naive agent prompt + CI-CoT think format.
+prompt:
+  think: true
+  trajectory_prompt_type: naive

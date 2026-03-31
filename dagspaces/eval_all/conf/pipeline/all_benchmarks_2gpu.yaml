@@ -1,0 +1,32 @@
+# @package _global_
+# Same as all_benchmarks.yaml but dispatches to 2-GPU pipeline variants.
+# Use for models requiring tensor_parallel_size=2 (e.g., 27B params).
+defaults:
+  - /model: qwen3.5-27b/base
+  - override /hydra/launcher: slurm_monitor
+
+benchmarks:
+  goldcoin:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval_2gpu
+    vlm_only: false
+  privacylens:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_clean_2gpu
+    vlm_only: false
+  cirl_vignettes:
+    module: dagspaces.cirl_vignettes.cli
+    pipeline: cirl_vignettes_eval_2gpu
+    vlm_only: false
+  cirl_trajectory:
+    module: dagspaces.cirl_vignettes.cli
+    pipeline: cirl_trajectory_eval_2gpu
+    vlm_only: false
+  confaide:
+    module: dagspaces.confaide.cli
+    pipeline: confaide_eval_2gpu
+    vlm_only: false
+  vlm_geoprivacy:
+    module: dagspaces.vlm_geoprivacy_bench.cli
+    pipeline: mcq_eval_2gpu
+    vlm_only: true

@@ -1,0 +1,54 @@
+# @package _global_
+# Same as cirl_trajectory_eval.yaml but with slurm_gpu_2x for multi-GPU models.
+defaults:
+  - /model: qwen2.5-7b/instruct
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/cirl_vignettes
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+        overrides:
+          data:
+            probing_levels: [trajectory]
+
+      trajectory_inference:
+        stage: trajectory_inference
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/trajectory_inference/dataset.parquet
+        launcher: slurm_gpu_2x
+
+      judge_leakage:
+        stage: judge_leakage
+        depends_on: [trajectory_inference]
+        inputs:
+          dataset: trajectory_inference.dataset
+        outputs:
+          dataset: outputs/judge_leakage/dataset.parquet
+
+      judge_helpfulness:
+        stage: judge_helpfulness
+        depends_on: [judge_leakage]
+        inputs:
+          dataset: judge_leakage.dataset
+        outputs:
+          dataset: outputs/judge_helpfulness/dataset.parquet
+
+      compute_trajectory_metrics:
+        stage: compute_trajectory_metrics
+        depends_on: [judge_helpfulness]
+        inputs:
+          dataset: judge_helpfulness.dataset
+        outputs:
+          dataset: outputs/compute_trajectory_metrics/metrics.parquet

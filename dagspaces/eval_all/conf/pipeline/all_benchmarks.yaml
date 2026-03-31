@@ -1,0 +1,30 @@
+# @package _global_
+defaults:
+  - /model: qwen3.5-9b/base
+  - override /hydra/launcher: slurm_monitor
+
+benchmarks:
+  goldcoin:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+  privacylens:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_clean
+    vlm_only: false
+  cirl_vignettes:
+    module: dagspaces.cirl_vignettes.cli
+    pipeline: cirl_vignettes_eval
+    vlm_only: false
+  cirl_trajectory:
+    module: dagspaces.cirl_vignettes.cli
+    pipeline: cirl_trajectory_eval
+    vlm_only: false
+  confaide:
+    module: dagspaces.confaide.cli
+    pipeline: confaide_eval
+    vlm_only: false
+  vlm_geoprivacy:
+    module: dagspaces.vlm_geoprivacy_bench.cli
+    pipeline: mcq_eval
+    vlm_only: true

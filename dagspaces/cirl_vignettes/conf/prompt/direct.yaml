@@ -1,0 +1,4 @@
+# @package _global_
+# Standard probing: model outputs (A) or (B) directly.
+prompt:
+  think: false
