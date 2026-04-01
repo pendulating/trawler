@@ -252,3 +252,12 @@ assets/fonts/
 
 # Secrets / credentials
 notebooks/use_extraction_package/key/
+
+# Cached W&B data
+notebooks/COLM26/wandb_cache/
+
+# Local-only docs (keep out of repo)
+CLAUDE.md
+EXPERIMENTS.md
+GRPO_TRAINING_REVIEW.md
+CI_FLOW_PIPELINE_AUDIT.md
