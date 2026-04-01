@@ -1,6 +1,6 @@
 # Trawler
 
-Experiment infrastructure for *"Reinforcing privacy reasoning in LLMs via normative simulacra"* (COLM 2026). Implements the full pipeline from norm extraction through fine-tuning to benchmark evaluation.
+Experiment infrastructure for *"Reinforcing privacy reasoning in LLMs via normative simulacra from fiction"* (COLM 2026). Implements the full pipeline from norm extraction through fine-tuning to benchmark evaluation.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -13,16 +13,17 @@ LLM agents handle personal information but lack principled privacy reasoning. We
 
 **Key insight:** Fiction novels depict fully-realized societies with rich normative landscapes governing who may share what information with whom. We extract structured *normative simulacra* from these texts — CI information flow tuples paired with Raz-anatomy norms — and use them to fine-tune LLMs in two stages:
 
-1. **SFT** teaches the model the vocabulary and format of CI-grounded reasoning
-2. **GRPO** (Group Relative Policy Optimization, $G{=}4$) rewards reasoning that is structurally complete, internally coherent, and *grounded* in an explicit normative universe verified by an LLM judge — interleaved with norm judgment vignettes that exercise norm *application*
+1. **SFT** teaches the model the vocabulary, format, and a conservative prior for CI-grounded reasoning
+2. **GRPO** (Group Relative Policy Optimization) rewards reasoning that is structurally complete, internally coherent, and *grounded* in an explicit normative universe verified by an LLM judge
 
-The claim: SFT alone teaches *mimicry* of CI output; GRPO teaches actual *reasoning* about the relationship between information flows and the norms that govern them.
+To prevent the model from memorizing source-specific norms rather than learning general CI reasoning, every normative grounding evaluation scores each completion against both the correct normative universe and a randomly selected wrong one (**per-completion contrastive scoring**).
+
+The key claim: SFT alone teaches the *form* of CI reasoning and a prior toward caution, while GRPO calibrates that reasoning against context-specific norms.
 
 ### Research Questions
 
 - **RQ1:** Can an LLM learn contextual privacy reasoning from structured reasoning traces extracted from fiction?
 - **RQ2:** Does reinforcement learning with a normatively-grounded reward improve privacy reasoning beyond SFT alone?
-- **RQ3:** Does fine-tuning on a divergent normative universe (e.g., dystopian text) introduce measurable normative bias?
 
 ### Evaluation
 
@@ -139,7 +140,7 @@ Requires CUDA GPUs. Models are downloaded to a local zoo directory and reference
 
 ## Running Experiments
 
-See **[EXPERIMENTS.md](EXPERIMENTS.md)** for the full COLM execution guide.
+See `EXPERIMENTS.md` (local only, not tracked in repo) for the full COLM execution guide.
 
 ### Quick start
 
@@ -197,7 +198,7 @@ python -m dagspaces.eval_all.cli --multirun \
 
 ## GRPO Reward Function
 
-Six components ($R = \sum w_i R_i$), plus interleaved norm judgment vignettes:
+Six components ($R = \sum w_i R_i$). Three low-weight *gating* signals saturate quickly after SFT; three discriminative components carry the learning signal:
 
 | Component | Weight | Type | Signal |
 |-----------|--------|------|--------|
@@ -206,9 +207,9 @@ Six components ($R = \sum w_i R_i$), plus interleaved norm judgment vignettes:
 | $R_\text{consist}$ | 0.05 | Programmatic | Internal invariant checks |
 | $R_\text{context}$ | 0.20 | Embedding | Cosine similarity of stated context vs. normative universe |
 | $R_\text{cohere}$ | 0.10 | Programmatic | Reasoning trace ↔ extraction coherence |
-| $R_\text{ground}$ | 0.50 | LLM judge | Per-flow: 0.4 norm_match + 0.4 governance + 0.2 appropriateness |
+| $R_\text{ground}$ | 0.50 | LLM judge | Per-flow: 0.4 norm_awareness + 0.4 flow_governance + 0.2 appropriateness |
 
-Norm judgment vignettes (mixed at `vignette_ratio=0.5`) are scored separately: judgment accuracy (0.50) + reasoning quality (0.25) + norm citation (0.25).
+$R_\text{ground}$ uses **per-completion contrastive scoring**: each completion is scored against both the correct normative universe $\hat{\mathcal{N}}_b$ and a randomly selected wrong universe $\hat{\mathcal{N}}_{b'}$, with final score $R_\text{ground} = \text{clamp}(\bar{r}_\text{correct} - \lambda \cdot \bar{r}_\text{wrong}, 0, 1)$. Primary results use $\lambda{=}1.0$.
 
 ---
 
