@@ -22,7 +22,7 @@ sampling_params:
   trajectory_max_tokens: 7000
 
 judge:
-  base_url: ${oc.env:JUDGE_URL,http://localhost:8002}
+  base_url: ${oc.env:JUDGE_SERVER_URL,http://localhost:8002}
   model_name: default
   max_workers: 8
   temperature: 0.0

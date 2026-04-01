@@ -22,7 +22,6 @@ hydra:
       - export PYTHONUNBUFFERED=1
       - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
       # Judge server assignment for this sweep half
-      - export JUDGE_URL=http://klara.tech.cornell.edu:9016
       - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:9016
   sweeper:
     params:
