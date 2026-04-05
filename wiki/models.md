@@ -4,6 +4,15 @@
 
 Shared across all dagspaces: `dagspaces/common/conf/model/<family>/<variant>.yaml`. Resolved via Hydra searchpath (`pkg://dagspaces.common.conf`). Override with `model=<family>/<variant>` on the command line.
 
+**Convenience symlinks at project root** (identical to the buried paths — add yamls in either):
+
+| Symlink | Target |
+|---|---|
+| `models/` | `dagspaces/common/conf/model/` |
+| `launchers/` | `dagspaces/common/conf/hydra/launcher/` |
+
+So `models/gemma-4-31b/it.yaml` is the same file as `dagspaces/common/conf/model/gemma-4-31b/it.yaml`.
+
 Dagspace-local overrides (e.g. `dagspaces/vlm_geoprivacy_bench/conf/model/`) take precedence over shared when present.
 
 ## Model zoo

@@ -107,7 +107,14 @@ Each dagspace is a self-contained pipeline with `cli.py` (Hydra entry), `orchest
 
 ### Model Configs
 
-Models are organized as `conf/model/{family}/{variant}.yaml`:
+Models live under `dagspaces/common/conf/model/{family}/{variant}.yaml`. For convenience, the project root has two symlinks pointing at the shared config dirs — **adding a yaml in either location is equivalent**:
+
+- `models/` → `dagspaces/common/conf/model/`
+- `launchers/` → `dagspaces/common/conf/hydra/launcher/`
+
+So `models/qwen3.5-9b/base.yaml` and `dagspaces/common/conf/model/qwen3.5-9b/base.yaml` are the same file. Prefer whichever is more convenient to tab-complete to.
+
+Organized as `{family}/{variant}.yaml`:
 
 | Family | Variants | Params |
 |--------|----------|--------|

@@ -15,7 +15,7 @@ By convention, `<ModelName>` matches the HF repo leaf (e.g. `Qwen3.5-9B`, `Phi-4
 
 ## 2. Create the model yaml
 
-Path: `dagspaces/common/conf/model/<family>/<variant>.yaml`.
+Path: `dagspaces/common/conf/model/<family>/<variant>.yaml` — **or equivalently** `models/<family>/<variant>.yaml` via the root symlink.
 
 Directory naming: `<family>` = model family (e.g. `qwen3.5-9b`, `gemma-3-12b`). Variants: `base`, `instruct`, `it`, `sft-ci`, `grpo-*`, `awq`, etc.
 

@@ -33,7 +33,7 @@ JUDGE_SERVER_URL=http://...
 
 ## SLURM launchers
 
-`dagspaces/common/conf/hydra/launcher/*.yaml`. Override with `hydra/launcher=<name>`.
+`dagspaces/common/conf/hydra/launcher/*.yaml` — or equivalently `launchers/*.yaml` via the root symlink. Override with `hydra/launcher=<name>`.
 
 | Launcher | GPUs | Typical use |
 |---|---|---|
