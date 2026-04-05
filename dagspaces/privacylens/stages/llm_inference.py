@@ -133,24 +133,48 @@ def run_action_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def _get_judge_client(cfg: DictConfig):
-    """Build a JudgeClient from config, reading judge_server_url."""
+    """Build a JudgeClient from config.
+
+    Reads ``cfg.judge.*`` when present (preferred, supports commercial APIs);
+    falls back to the legacy ``cfg.judge_server_url`` / ``JUDGE_SERVER_URL``
+    env var for vLLM-only setups.
+    """
     from dagspaces.common.judge_client import JudgeClient
 
-    url = str(OmegaConf.select(cfg, "judge_server_url", default="") or "")
+    judge_cfg = OmegaConf.select(cfg, "judge", default=None)
+    if judge_cfg is not None:
+        url = str(getattr(judge_cfg, "base_url", "") or "")
+    else:
+        url = ""
+    if not url:
+        url = str(OmegaConf.select(cfg, "judge_server_url", default="") or "")
     if not url:
         import os
         url = os.environ.get("JUDGE_SERVER_URL", "")
     if not url:
         raise RuntimeError(
-            "No judge_server_url configured. Set JUDGE_SERVER_URL env var "
-            "or add judge_server_url to the dagspace config. "
-            "Launch the server with: sbatch scripts/judge_server.sub"
+            "No judge endpoint configured. Set judge.base_url or JUDGE_SERVER_URL. "
+            "Launch a vLLM server with: sbatch scripts/judge_server.sub, or point at "
+            "a commercial API (e.g. judge.base_url=https://api.openai.com/v1 "
+            "judge.model_name=gpt-4o judge.api_key_env=OPENAI_API_KEY)."
         )
 
-    client = JudgeClient(base_url=url, max_tokens=1024)
+    if judge_cfg is not None:
+        client = JudgeClient(
+            base_url=url,
+            model_name=str(getattr(judge_cfg, "model_name", "default") or "default"),
+            max_workers=int(getattr(judge_cfg, "max_workers", 8) or 8),
+            temperature=float(getattr(judge_cfg, "temperature", 0.0) or 0.0),
+            max_tokens=int(getattr(judge_cfg, "max_tokens", 1024) or 1024),
+            provider=(getattr(judge_cfg, "provider", None) or None),
+            api_key=(getattr(judge_cfg, "api_key", None) or None),
+            api_key_env=(getattr(judge_cfg, "api_key_env", None) or None),
+        )
+    else:
+        client = JudgeClient(base_url=url, max_tokens=1024)
     if not client.health_check():
-        raise RuntimeError(f"Judge server not reachable at {url}")
-    print(f"[privacylens] Judge server OK: {url} (model={client.model_name})",
+        raise RuntimeError(f"Judge endpoint not reachable at {url}")
+    print(f"[privacylens] Judge OK: {url} (provider={client.provider}, model={client.model_name})",
           flush=True)
     return client
 

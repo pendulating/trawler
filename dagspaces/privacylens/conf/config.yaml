@@ -15,9 +15,21 @@ runtime:
   job_memory_gb: 64
 
 # External judge server for leakage + helpfulness evaluation.
-# Launch with: sbatch scripts/judge_server.sub
-# Then export JUDGE_SERVER_URL=http://klara:8002
-judge_server_url: ${oc.env:JUDGE_SERVER_URL,""}
+# Default: local vLLM server launched with `sbatch scripts/judge_server.sub`
+# then `export JUDGE_SERVER_URL=http://klara:8002`.
+# For commercial APIs, override judge.* at the CLI or in a local config:
+#   judge.base_url=https://api.openai.com/v1 judge.model_name=gpt-4o judge.api_key_env=OPENAI_API_KEY
+judge_server_url: ${oc.env:JUDGE_SERVER_URL,""}   # legacy alias; prefer judge.base_url below
+
+judge:
+  base_url: ${judge_server_url}    # overridable independently
+  model_name: default              # vLLM: auto-detects; commercial: set explicitly
+  provider: null                   # null = auto-detect | vllm | openai | anthropic | gemini | openai_compatible
+  api_key: null                    # or use api_key_env
+  api_key_env: null                # e.g. OPENAI_API_KEY
+  max_workers: 8
+  temperature: 0.0
+  max_tokens: 1024
 
 sampling_params:
   seed: 777

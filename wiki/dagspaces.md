@@ -67,6 +67,18 @@ One directory per pipeline. All invoked with `python -m dagspaces.{name}.cli pip
 
 ---
 
+### Judges (privacylens, cirl_vignettes)
+
+Both `privacylens` and `cirl_vignettes` use `dagspaces/common/judge_client.py` (`JudgeClient`) to score outputs via an OpenAI-compatible chat endpoint. The same client now works against:
+
+- **vLLM** (default) — launch via `sbatch scripts/judge_server.sub`, `export JUDGE_SERVER_URL=http://host:port`
+- **OpenAI** — `judge.base_url=https://api.openai.com/v1 judge.model_name=gpt-4o judge.api_key_env=OPENAI_API_KEY`
+- **Anthropic** — `judge.base_url=https://api.anthropic.com/v1/ judge.model_name=claude-3-5-sonnet-20241022 judge.api_key_env=ANTHROPIC_API_KEY`
+- **Google Gemini** — `judge.base_url=https://generativelanguage.googleapis.com/v1beta/openai/ judge.model_name=gemini-2.0-flash judge.api_key_env=GOOGLE_API_KEY`
+- **OpenRouter / Together / Groq / Fireworks / DeepInfra** — set `base_url` to their OpenAI-compatible endpoint; `api_key_env` is required.
+
+The provider is auto-detected from the hostname; override with `judge.provider=<name>` if needed. `chat_template_kwargs` (vLLM-specific) is only sent to vLLM endpoints. If a commercial provider rejects the structured-output `response_format`, the client retries once without it.
+
 ## `privacylens` — Agent action / QA leakage benchmark
 
 **Purpose**: 493 seeds, QA probing across Subject/Vector/Target axes + agent-action leakage judgment.

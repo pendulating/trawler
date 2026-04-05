@@ -22,8 +22,18 @@ sampling_params:
   trajectory_max_tokens: 7000
 
 judge:
+  # Default: vLLM server (auto-detected from hostname). For commercial APIs, e.g.:
+  #   base_url: https://api.openai.com/v1
+  #   model_name: gpt-4o
+  #   api_key_env: OPENAI_API_KEY
+  # Other providers:
+  #   Anthropic: base_url=https://api.anthropic.com/v1/ + api_key_env=ANTHROPIC_API_KEY
+  #   Gemini:    base_url=https://generativelanguage.googleapis.com/v1beta/openai/ + api_key_env=GOOGLE_API_KEY
   base_url: ${oc.env:JUDGE_SERVER_URL,http://localhost:8002}
-  model_name: default
+  model_name: default            # vLLM: auto-detects via /v1/models; commercial: set explicitly
+  provider: null                 # null = auto-detect from base_url; else vllm|openai|anthropic|gemini|openai_compatible
+  api_key: null                  # or set api_key_env below
+  api_key_env: null              # env var name to read key from
   max_workers: 8
   temperature: 0.0
   max_tokens: 400

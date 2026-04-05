@@ -34,6 +34,9 @@ def judge_leakage(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         max_workers=int(getattr(judge_cfg, "max_workers", 8)),
         temperature=float(getattr(judge_cfg, "temperature", 0.0)),
         max_tokens=int(getattr(judge_cfg, "max_tokens", 400)),
+        provider=(getattr(judge_cfg, "provider", None) or None),
+        api_key=(getattr(judge_cfg, "api_key", None) or None),
+        api_key_env=(getattr(judge_cfg, "api_key_env", None) or None),
     )
 
     if not client.health_check():
