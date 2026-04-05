@@ -24,6 +24,8 @@ One directory per pipeline. All invoked with `python -m dagspaces.{name}.cli pip
 
 **Extras**: `ci_schema.py`, `schema_builders.py` — JSON Schemas for guided decoding; `logging_filters.py` — per-book logging.
 
+**Gotcha — prompt defaults**: always use the fiction-specific pipeline variants when processing Gutenberg text (`COLM_norms_fiction_prefetched`, `COLM_flows_fiction_prefetched`, `ci_extraction_from_reasoning_fiction`). The base `ci_extraction.yaml` defaults to **prescriptive** prompts (written for religious texts) and will produce misaligned output on fiction.
+
 ---
 
 ## `grpo_training` — SFT + GRPO

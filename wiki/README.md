@@ -16,6 +16,11 @@ Manuscript: `papers/colm26_normative-simulacra/`. Experiment runbook: `EXPERIMEN
 - [normative-simulacra.md](normative-simulacra.md) — IFT + Raz norm extraction from fiction
 - [thinking-modes.md](thinking-modes.md) — `<think>` token handling across SFT, GRPO, and eval
 
+**Benchmarks** — per-benchmark research references (see [benchmarks/README.md](benchmarks/README.md))
+- [benchmarks/confaide.md](benchmarks/confaide.md) — ConfAIde (ICLR 2024)
+- [benchmarks/privacylens.md](benchmarks/privacylens.md) — PrivacyLens (NeurIPS 2024)
+- [benchmarks/contextreasoner.md](benchmarks/contextreasoner.md) — ContextReasoner (HKUST, PPO baseline)
+
 **Infrastructure**
 - [models.md](models.md) — model config conventions, zoo layout
 - [slurm-and-env.md](slurm-and-env.md) — launchers, `server.env`, GPU sanitization

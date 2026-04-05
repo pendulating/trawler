@@ -42,6 +42,12 @@ Additional stage: **Role abstraction** — replace character names with social r
 
 This distinction is verifiable and becomes a reward signal during GRPO.
 
+### Robustness / fallback notes
+
+- **Silent `has_information_exchange` fallback**: if guided decoding omits this field, `ci_reasoning` infers it from `len(flows) > 0`. Decoding failures can go unnoticed.
+- **Conservative row-expansion defaults**: the flow-expansion step applies empty-string defaults on malformed flow entries so the pipeline doesn't crash mid-run. Schema validity is enforced upstream by guided decoding, but check parse traces if numbers look off.
+- **Extraction receives a per-flow snippet**, not the full chunk, with fallback to `article_text` if the snippet is absent. Reasoning sees the whole chunk; extraction sees the snippet the reasoning pointed to. Affects context-dependent flows that need wider lookaround.
+
 ## Schemas
 
 - `dagspaces/historical_norms/schema.py` — base schemas
