@@ -1,0 +1,13 @@
+# @package _global_
+# Gemma-4-26B-A4B: multimodal MoE, 26B total / ~4B active params per token
+model:
+  model_source: /share/pierson/matt/zoo/models/Gemma-4-26B-A4B
+  model_family: gemma-4
+  thinking_mode: off
+  engine_kwargs:
+    max_model_len: 8192
+    max_num_seqs: 16
+    tensor_parallel_size: 2
+    trust_remote_code: true
+  batch_size: 0
+  concurrency: 1

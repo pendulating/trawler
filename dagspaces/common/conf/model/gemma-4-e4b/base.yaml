@@ -1,0 +1,15 @@
+# @package _global_
+# Gemma-4-E4B: multimodal (text/image/audio → text), 4.5B effective params (~8B total)
+model:
+  model_source: /share/pierson/matt/zoo/models/Gemma-4-E4B
+  model_family: gemma-4
+  # Single source of truth for SFT / GRPO / eval. See wiki/thinking-modes.md.
+  # Gemma-4 is reasoning-capable — set to "off" for structured-extraction tasks.
+  thinking_mode: off
+  engine_kwargs:
+    max_model_len: 8192
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+  batch_size: 0
+  concurrency: 1

@@ -841,16 +841,10 @@ def _run_transformers_text_inference(
 
     model.eval()
 
-    # Determine think-block stripping
-    _strip_thinking = False
-    try:
-        ctk = getattr(cfg.model, "chat_template_kwargs", None) or {}
-        if hasattr(ctk, "enable_thinking"):
-            _strip_thinking = not bool(ctk.enable_thinking)
-        elif isinstance(ctk, dict):
-            _strip_thinking = not bool(ctk.get("enable_thinking", True))
-    except Exception:
-        pass
+    # Determine thinking mode (single source of truth).
+    from dagspaces.common.stage_utils import resolve_thinking_mode
+    _thinking_enabled = resolve_thinking_mode(cfg.model, default=True)
+    _strip_thinking = not _thinking_enabled
 
     # Preprocess rows
     print(f"[{stage_name}] Preprocessing {len(df)} rows...")
@@ -892,7 +886,6 @@ def _run_transformers_text_inference(
     batch_size = 16
     generated_texts: List[str] = []
     generated_reasonings: List[str] = []
-    _thinking_enabled = not _strip_thinking
     print(f"[{stage_name}] Generating {len(prompts)} prompts in batches of {batch_size}...")
 
     for start in range(0, len(prompts), batch_size):
@@ -1025,21 +1018,13 @@ def run_vllm_inference(
         lora_request = LoRARequest("sft", 1, lora_path)
         print(f"[{stage_name}] LoRA adapter: {lora_path}")
 
-    # Determine thinking mode for reasoning extraction.
+    # Determine thinking mode for reasoning extraction (single source of truth:
+    # model.thinking_mode, falling back to chat_template_kwargs.enable_thinking).
     # The chat template flag controls *what prompt* the model sees; reasoning
     # is always extracted from output via `_split_reasoning` regardless.
-    # We still read `enable_thinking` to tell the parser whether truncated
-    # output (no closing tag) should be classified as reasoning or content.
-    _strip_thinking = False
-    try:
-        ctk = getattr(cfg.model, "chat_template_kwargs", None) or {}
-        if hasattr(ctk, "enable_thinking"):
-            _strip_thinking = not bool(ctk.enable_thinking)
-        elif isinstance(ctk, dict):
-            _strip_thinking = not bool(ctk.get("enable_thinking", True))
-    except Exception:
-        pass
-    _thinking_enabled = not _strip_thinking
+    from dagspaces.common.stage_utils import resolve_thinking_mode
+    _thinking_enabled = resolve_thinking_mode(cfg.model, default=True)
+    _strip_thinking = not _thinking_enabled  # retained for legacy log lines
     _model_source = str(engine_kwargs.get("model", "") or "")
     _parser_name = _detect_reasoning_parser(_model_source)
     print(f"[{stage_name}] Reasoning extraction: parser={_parser_name or 'regex-fallback'}, "

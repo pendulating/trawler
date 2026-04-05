@@ -1,0 +1,13 @@
+# @package _global_
+# Gemma-4-31B-IT: multimodal (image+text → text), 31B dense, instruction-tuned
+model:
+  model_source: /share/pierson/matt/zoo/models/Gemma-4-31B-it
+  model_family: gemma-4
+  thinking_mode: off
+  engine_kwargs:
+    max_model_len: 8192
+    max_num_seqs: 8
+    tensor_parallel_size: 2
+    trust_remote_code: true
+  batch_size: 0
+  concurrency: 1

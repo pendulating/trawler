@@ -423,7 +423,18 @@ def run_grpo_training_stage(
     from .rewards import CompositeRewardFunction
 
     weights = grpo_cfg.get("reward_weights", [0.2, 0.15, 0.15, 0.15, 0.15, 0.2])
-    enable_thinking_grpo = grpo_cfg.get("enable_thinking_grpo", True)
+    # Resolve GRPO thinking mode: explicit training-config override wins,
+    # else derive from the model's thinking_mode field (single source of truth).
+    _etg_override = grpo_cfg.get("enable_thinking_grpo", None)
+    if _etg_override is None:
+        from dagspaces.common.stage_utils import resolve_thinking_mode
+        model_cfg = getattr(cfg, "model", None) or {}
+        enable_thinking_grpo = resolve_thinking_mode(model_cfg, default=True)
+        print(f"[grpo_training] enable_thinking_grpo not set in training config — "
+              f"derived from model.thinking_mode: {enable_thinking_grpo}")
+    else:
+        enable_thinking_grpo = bool(_etg_override)
+        print(f"[grpo_training] enable_thinking_grpo from training config: {enable_thinking_grpo}")
 
     # Load context embedding model for r_context
     context_embedding_model = None

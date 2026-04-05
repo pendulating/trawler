@@ -35,6 +35,7 @@ __all__ = [
     "serialize_arrow_unfriendly_in_row",
     "extract_last_json",
     "sanitize_for_json",
+    "resolve_thinking_mode",
 ]
 
 # Module-level guards so one-time setup work only runs once per process.
@@ -321,3 +322,77 @@ def sanitize_for_json(value: Any) -> Any:
         return str(value)
     except Exception:
         return None
+
+
+def resolve_thinking_mode(cfg_model: Any, *, default: bool = True) -> bool:
+    """Resolve the model's thinking mode to a single boolean.
+
+    This is the **single source of truth** for the SFT ↔ GRPO ↔ Eval
+    mode contract. All three phases should derive their thinking flag
+    from this helper so that a model's mode is set in one place.
+
+    Priority (highest wins):
+
+    1. ``cfg_model.thinking_mode`` — preferred, string ``"on"``/``"off"``
+       (also accepts bool or ``"true"``/``"false"``/``"yes"``/``"no"``/
+       ``"auto"``). ``"auto"`` defers to priority 2.
+    2. ``cfg_model.chat_template_kwargs.enable_thinking`` — legacy bool,
+       still honored for backwards compatibility.
+    3. The ``default`` kwarg (``True``).
+
+    Args:
+        cfg_model: the ``model`` subtree of a Hydra config — may be a
+            DictConfig, an OmegaConf dict, or a plain dict.
+        default: fallback when no field is set. ``True`` matches
+            ``tokenizer.apply_chat_template`` defaults.
+
+    Returns:
+        ``True`` if thinking is on, ``False`` if off.
+    """
+    def _coerce(val: Any) -> Optional[bool]:
+        if val is None:
+            return None
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, float)):
+            return bool(val)
+        if isinstance(val, str):
+            s = val.strip().lower()
+            if s in ("on", "true", "yes", "1", "enabled", "enable"):
+                return True
+            if s in ("off", "false", "no", "0", "disabled", "disable"):
+                return False
+            if s == "auto":
+                return None  # defer
+        return None
+
+    # Priority 1: explicit thinking_mode field
+    try:
+        tm = getattr(cfg_model, "thinking_mode", None)
+    except Exception:
+        tm = None
+    if tm is None and isinstance(cfg_model, dict):
+        tm = cfg_model.get("thinking_mode")
+    resolved = _coerce(tm)
+    if resolved is not None:
+        return resolved
+
+    # Priority 2: chat_template_kwargs.enable_thinking (legacy)
+    try:
+        ctk = getattr(cfg_model, "chat_template_kwargs", None)
+    except Exception:
+        ctk = None
+    if ctk is None and isinstance(cfg_model, dict):
+        ctk = cfg_model.get("chat_template_kwargs")
+    if ctk is not None:
+        try:
+            et = getattr(ctk, "enable_thinking", None)
+        except Exception:
+            et = None
+        if et is None and isinstance(ctk, dict):
+            et = ctk.get("enable_thinking")
+        resolved = _coerce(et)
+        if resolved is not None:
+            return resolved
+
+    return default

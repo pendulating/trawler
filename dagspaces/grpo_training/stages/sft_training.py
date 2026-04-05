@@ -25,9 +25,22 @@ from omegaconf import OmegaConf
 # completion tokens. The model family is detected from the tokenizer's native
 # template or config architecture.
 
-_SFT_TEMPLATES = {
-    # Qwen family: <|im_start|>role\ncontent<|im_end|>
-    "qwen": (
+def _qwen_sft_template(thinking_enabled: bool) -> str:
+    """Build the Qwen SFT chat template.
+
+    When ``thinking_enabled=False`` (no-think training), the assistant
+    generation block is prefixed with the empty-think sentinel
+    ``<think>\\n\\n</think>\\n`` — the Qwen3 official recipe that teaches
+    the model "emit empty-think, then answer" at inference time.
+
+    When ``thinking_enabled=True``, no prefix is injected; the model is
+    free to emit its own ``<think>...</think>`` block before the content.
+    Note: unless the SFT dataset contains reasoning traces, this won't
+    actively *train* reasoning — it merely leaves the pretrained
+    reasoning distribution untouched.
+    """
+    prefix = "<think>\n\n</think>\n" if not thinking_enabled else ""
+    return (
         "{%- for message in messages %}"
         "{%- if message.role == 'system' %}"
         "<|im_start|>system\n{{ message.content | trim }}<|im_end|>\n"
@@ -35,14 +48,21 @@ _SFT_TEMPLATES = {
         "<|im_start|>user\n{{ message.content | trim }}<|im_end|>\n"
         "{%- elif message.role == 'assistant' %}"
         "<|im_start|>assistant\n"
-        "{% generation %}<think>\n\n</think>\n{{ message.content | trim }}{% endgeneration %}"
+        "{% generation %}" + prefix + "{{ message.content | trim }}{% endgeneration %}"
         "<|im_end|>\n"
         "{%- endif %}"
         "{%- endfor %}"
         "{%- if add_generation_prompt %}"
         "<|im_start|>assistant\n"
         "{%- endif %}"
-    ),
+    )
+
+
+_SFT_TEMPLATES = {
+    # Qwen family: <|im_start|>role\ncontent<|im_end|>
+    # Preserved as a no-think template for backwards compat; use
+    # ``_qwen_sft_template(thinking_enabled=...)`` to build either variant.
+    "qwen": _qwen_sft_template(thinking_enabled=False),
     # Phi-4: <|im_start|>role<|im_sep|>content<|im_end|>
     "phi-4": (
         "{%- for message in messages %}"
@@ -626,14 +646,29 @@ def run_sft_training_stage(
     native_template = tokenizer.chat_template or ""
     has_native_generation = "{% generation %}" in native_template
 
+    # Resolve thinking mode from cfg.model (single source of truth). For SFT
+    # this controls whether the Qwen manual template injects the empty-think
+    # sentinel prefix. For the native-template path, we simply log the mode
+    # so downstream GRPO/eval can verify alignment.
+    from dagspaces.common.stage_utils import resolve_thinking_mode
+    model_cfg = getattr(cfg, "model", None) or {}
+    _thinking_enabled_sft = resolve_thinking_mode(model_cfg, default=False)
+    print(f"[sft_training] Thinking mode: "
+          f"{'on' if _thinking_enabled_sft else 'off'} "
+          f"(from cfg.model.thinking_mode or chat_template_kwargs.enable_thinking)")
+
     if has_native_generation:
         family = _detect_template_family(tokenizer, base_model)
         print(f"[sft_training] Chat template: native (family={family}, has {{% generation %}} blocks)")
     else:
         family = _detect_template_family(tokenizer, base_model)
-        sft_template = _SFT_TEMPLATES[family]
+        if family == "qwen":
+            sft_template = _qwen_sft_template(thinking_enabled=_thinking_enabled_sft)
+        else:
+            sft_template = _SFT_TEMPLATES[family]
         tokenizer.chat_template = sft_template
-        print(f"[sft_training] Chat template: manual override (family={family})")
+        print(f"[sft_training] Chat template: manual override "
+              f"(family={family}, thinking={'on' if _thinking_enabled_sft else 'off'})")
 
     # Trace logging: log diagnostics ~10 times during training.
     trace_log_path = os.path.join(output_dir, "sft_traces.jsonl")
