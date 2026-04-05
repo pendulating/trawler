@@ -100,8 +100,11 @@ def _remap_lora_keys_for_vlm(lora_path: str, model_source: str, stage_name: str)
     return remapped_dir
 
 
-def _strip_think_blocks(text: str) -> str:
-    """Strip reasoning / thinking blocks from model output.
+def _fallback_strip_reasoning(text: str) -> str:
+    """Fallback regex-based stripping of reasoning/thinking blocks.
+
+    Used only when no family-specific vLLM reasoning parser is available or
+    the parser fails. See ``_split_reasoning`` for the primary path.
 
     Handles multiple formats used by different model families:
     - ``<think>...</think>`` (Qwen3+, DeepSeek-R1, open-source reasoning models)
@@ -117,6 +120,94 @@ def _strip_think_blocks(text: str) -> str:
     text = re.sub(r"<\|begin_of_thought\|[\s\S]*?<\|end_of_thought\|[>\]\s]*", "", text)
     text = re.sub(r"<\|begin_of_thought\|[\s\S]*$", "", text)
     return text.strip()
+
+
+# Backwards-compat alias — imported by dagspaces/grpo_training/stages/rewards.py.
+# Prefer `_split_reasoning` for new code.
+_strip_think_blocks = _fallback_strip_reasoning
+
+
+def _detect_reasoning_parser(model_source: str) -> Optional[str]:
+    """Map a model path to the vLLM reasoning-parser name for that family.
+
+    Returns a parser name registered in ``vllm.reasoning.ReasoningParserManager``,
+    or ``None`` for non-thinking families (Phi-4, Llama, Gemma-3, etc.) where
+    no reasoning extraction is needed.
+    """
+    s = (model_source or "").lower()
+    # Order matters — check more specific names first.
+    if "gemma-4" in s or "gemma4" in s:
+        return "gemma4"
+    if "gpt-oss" in s:
+        return "gptoss"
+    if "deepseek-r1" in s or "deepseek_r1" in s or "deepseek-v3" in s:
+        return "deepseek_r1"
+    if "qwen3" in s:  # covers qwen3, qwen3.5, qwen3-vl, etc.
+        return "qwen3"
+    # Non-thinking families: Phi-4, Llama-3.x, Gemma-3, Qwen2.5, OpenThinker (custom tags → regex).
+    return None
+
+
+def _split_reasoning(
+    text: str,
+    model_source: str,
+    thinking_enabled: bool,
+    tokenizer,
+) -> Tuple[str, str]:
+    """Split model output into ``(reasoning, content)``.
+
+    Primary path: vLLM's family-specific ``ReasoningParser``. These parsers
+    understand the exact reasoning format for each architecture (Qwen3
+    ``<think>...</think>``, Gemma-4 ``thought\\n...\\n``, etc.) and are
+    maintained upstream alongside each model's chat template.
+
+    Fallback path: regex (``_fallback_strip_reasoning``) when no parser
+    matches the model family, the parser fails, or the parser returns
+    content that still contains raw reasoning tags.
+
+    Args:
+        text: raw decoded model output.
+        model_source: path or identifier used to pick a parser.
+        thinking_enabled: whether the chat template was configured with
+            thinking on — passed to the parser so it classifies truncated
+            output correctly (unterminated ``<think>`` is reasoning when
+            enabled, content when disabled).
+        tokenizer: the tokenizer used for generation (parsers need it).
+
+    Returns:
+        ``(reasoning, content)`` — either may be the empty string.
+    """
+    if not text:
+        return "", ""
+
+    parser_name = _detect_reasoning_parser(model_source)
+    if parser_name is not None:
+        try:
+            from vllm.reasoning import ReasoningParserManager
+            parser_cls = ReasoningParserManager.get_reasoning_parser(parser_name)
+            parser = parser_cls(
+                tokenizer,
+                chat_template_kwargs={"enable_thinking": thinking_enabled},
+            )
+            reasoning, content = parser.extract_reasoning(text, None)
+            reasoning = (reasoning or "").strip()
+            content = (content or "").strip()
+            # Safety: if parser handed back content that still contains raw
+            # reasoning tags, something went wrong — fall through to regex.
+            if "<think>" not in content and "</think>" not in content:
+                return reasoning, content
+        except Exception:
+            pass  # fall through
+
+    # Fallback path.
+    content = _fallback_strip_reasoning(text)
+    m = re.search(r"<think>([\s\S]*?)</think>", text)
+    if m:
+        reasoning = m.group(1).strip()
+    else:
+        m2 = re.search(r"<\|begin_of_thought\|([\s\S]*?)<\|end_of_thought\|", text)
+        reasoning = m2.group(1).strip() if m2 else ""
+    return reasoning, content
 
 
 # ---------------------------------------------------------------------------
@@ -779,6 +870,7 @@ def _run_transformers_text_inference(
     for i, row in enumerate(preprocessed_rows):
         if "__preprocess_error__" in row:
             row["generated_text"] = ""
+            row["generated_reasoning"] = ""
             failed_rows.append((i, postprocess(row)))
         else:
             messages = row.get("messages", [])
@@ -799,6 +891,8 @@ def _run_transformers_text_inference(
     # KV cache.  batch_size=16 with max_tokens=1024 fits comfortably.
     batch_size = 16
     generated_texts: List[str] = []
+    generated_reasonings: List[str] = []
+    _thinking_enabled = not _strip_thinking
     print(f"[{stage_name}] Generating {len(prompts)} prompts in batches of {batch_size}...")
 
     for start in range(0, len(prompts), batch_size):
@@ -818,10 +912,12 @@ def _run_transformers_text_inference(
             )
         for j in range(len(batch_prompts)):
             gen_ids = output_ids[j, prompt_len:]
-            gen_text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
-            if _strip_thinking and gen_text:
-                gen_text = _strip_think_blocks(gen_text)
-            generated_texts.append(gen_text)
+            raw_text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+            reasoning, content = _split_reasoning(
+                raw_text, model_source, _thinking_enabled, tokenizer,
+            )
+            generated_texts.append(content)
+            generated_reasonings.append(reasoning)
 
         print(f"[{stage_name}] Batch {start // batch_size + 1}: "
               f"{min(start + batch_size, len(prompts))}/{len(prompts)} done")
@@ -830,9 +926,10 @@ def _run_transformers_text_inference(
     results = [None] * len(preprocessed_rows)
     for i, row_data in failed_rows:
         results[i] = row_data
-    for vi, gen_text in zip(valid_indices, generated_texts):
+    for vi, gen_text, gen_reasoning in zip(valid_indices, generated_texts, generated_reasonings):
         row = preprocessed_rows[vi]
         row["generated_text"] = gen_text
+        row["generated_reasoning"] = gen_reasoning
         results[vi] = postprocess(row)
 
     print(f"[{stage_name}] Completed transformers inference, {len(results)} results")
@@ -928,9 +1025,11 @@ def run_vllm_inference(
         lora_request = LoRARequest("sft", 1, lora_path)
         print(f"[{stage_name}] LoRA adapter: {lora_path}")
 
-    # Determine whether to strip <think> blocks from outputs.
-    # Strip when enable_thinking is explicitly False — the model may still
-    # produce think blocks if its chat template doesn't support the flag.
+    # Determine thinking mode for reasoning extraction.
+    # The chat template flag controls *what prompt* the model sees; reasoning
+    # is always extracted from output via `_split_reasoning` regardless.
+    # We still read `enable_thinking` to tell the parser whether truncated
+    # output (no closing tag) should be classified as reasoning or content.
     _strip_thinking = False
     try:
         ctk = getattr(cfg.model, "chat_template_kwargs", None) or {}
@@ -940,8 +1039,11 @@ def run_vllm_inference(
             _strip_thinking = not bool(ctk.get("enable_thinking", True))
     except Exception:
         pass
-    if _strip_thinking:
-        print(f"[{stage_name}] Thinking block stripping enabled (enable_thinking=false)")
+    _thinking_enabled = not _strip_thinking
+    _model_source = str(engine_kwargs.get("model", "") or "")
+    _parser_name = _detect_reasoning_parser(_model_source)
+    print(f"[{stage_name}] Reasoning extraction: parser={_parser_name or 'regex-fallback'}, "
+          f"thinking_enabled={_thinking_enabled}")
 
     # Check for data parallelism
     dp_size = int(engine_kwargs.pop("data_parallel_size", 1) or 1)
@@ -987,13 +1089,30 @@ def run_vllm_inference(
 
     # Separate valid rows from failed ones for inference
     failed_set = set(failed_indices)
-    valid_indices = [i for i in range(len(preprocessed_rows)) if i not in failed_set]
+    preliminary_valid = [i for i in range(len(preprocessed_rows)) if i not in failed_set]
+
+    # Determine model's max context length for prompt validation.
+    _max_model_len = None
+    if llm is not None:
+        try:
+            _max_model_len = llm.llm_engine.model_config.max_model_len
+        except Exception:
+            pass
+    if _max_model_len is None:
+        try:
+            _max_model_len = int(getattr(tokenizer, "model_max_length", 0) or 0)
+            if _max_model_len <= 0 or _max_model_len > 1_000_000:
+                _max_model_len = None
+        except Exception:
+            pass
 
     # Build prompts and sampling params dicts for valid rows only.
     prompts: List[str] = []
     sp_dicts: List[Dict[str, Any]] = []
+    valid_indices: List[int] = []
+    _oversized_count = 0
 
-    for i in valid_indices:
+    for i in preliminary_valid:
         row = preprocessed_rows[i]
         messages = row.get("messages")
         if messages:
@@ -1015,8 +1134,30 @@ def run_vllm_inference(
                 prompt = "\n\n".join(parts) + "\n\nAssistant:"
         else:
             prompt = str(row.get("article_text", ""))
+
+        # Validate prompt length against model context window
+        if _max_model_len is not None:
+            sp = row.get("sampling_params", {})
+            max_new = int(sp.get("max_tokens", 0) or 0)
+            prompt_tokens = len(tokenizer.encode(prompt, add_special_tokens=False))
+            if prompt_tokens + max(max_new, 1) > _max_model_len:
+                row["__preprocess_error__"] = (
+                    f"Prompt too long: {prompt_tokens} tokens + "
+                    f"{max_new} max_tokens > {_max_model_len} context limit"
+                )
+                failed_set.add(i)
+                _oversized_count += 1
+                continue
+
         prompts.append(prompt)
         sp_dicts.append(row.get("sampling_params", {}))
+        valid_indices.append(i)
+
+    if _oversized_count:
+        print(
+            f"[{stage_name}] WARNING: {_oversized_count} prompts exceed model "
+            f"context length ({_max_model_len}) and will be skipped"
+        )
 
     # -----------------------------------------------------------------------
     # Inference: data-parallel or single-process
@@ -1048,6 +1189,7 @@ def run_vllm_inference(
         for idx, row in enumerate(preprocessed_rows):
             if idx in failed_set:
                 row["generated_text"] = ""
+                row["generated_reasoning"] = ""
                 try:
                     result = postprocess(row)
                 except Exception as e:
@@ -1057,10 +1199,12 @@ def run_vllm_inference(
                 continue
 
             out = next(output_iter)
-            gen_text = out.get("generated_text", "")
-            if _strip_thinking and gen_text:
-                gen_text = _strip_think_blocks(gen_text)
-            row["generated_text"] = gen_text
+            raw_text = out.get("generated_text", "")
+            reasoning, content = _split_reasoning(
+                raw_text, _model_source, _thinking_enabled, tokenizer,
+            )
+            row["generated_text"] = content
+            row["generated_reasoning"] = reasoning
             row["usage"] = {
                 "prompt_tokens": out.get("prompt_tokens", 0),
                 "completion_tokens": out.get("completion_tokens", 0),
@@ -1129,6 +1273,7 @@ def run_vllm_inference(
         for idx, row in enumerate(preprocessed_rows):
             if idx in failed_set:
                 row["generated_text"] = ""
+                row["generated_reasoning"] = ""
                 try:
                     result = postprocess(row)
                 except Exception as e:
@@ -1139,12 +1284,15 @@ def run_vllm_inference(
 
             output = next(output_iter)
             if output.outputs:
-                gen_text = output.outputs[0].text
-                if _strip_thinking and gen_text:
-                    gen_text = _strip_think_blocks(gen_text)
-                row["generated_text"] = gen_text
+                raw_text = output.outputs[0].text
+                reasoning, content = _split_reasoning(
+                    raw_text, _model_source, _thinking_enabled, tokenizer,
+                )
+                row["generated_text"] = content
+                row["generated_reasoning"] = reasoning
             else:
                 row["generated_text"] = ""
+                row["generated_reasoning"] = ""
 
             try:
                 prompt_tokens = len(output.prompt_token_ids) if output.prompt_token_ids else 0
