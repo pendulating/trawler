@@ -107,4 +107,43 @@ One directory per pipeline. All invoked with `python -m dagspaces.{name}.cli pip
 
 ## `eval_all` — cross-benchmark convenience
 
-Top-level aggregator for sweeping a model across all benchmarks.
+Top-level aggregator for sweeping a model across all benchmarks. Runs each benchmark as a child subprocess; each benchmark then submits its own GPU SLURM job for its inference stage.
+
+**Entrypoint**: `python -m dagspaces.eval_all.cli -m pipeline=all_benchmarks model=qwen3.5-9b/base`
+
+### Shared-server mode (avoid reloading the model per benchmark)
+
+By default each benchmark loads vLLM fresh in its own SLURM GPU job — the model is loaded N times for N benchmarks. Enable `server_mode` to host the model in a single long-lived SLURM job and have every benchmark route inference over HTTP.
+
+```bash
+python -m dagspaces.eval_all.cli -m pipeline=all_benchmarks \
+  model=qwen3.5-9b/base \
+  server_mode.enabled=true
+```
+
+What happens:
+1. `eval_all` launches one SLURM GPU job via submitit running `python -m vllm.entrypoints.openai.api_server --model ... --reasoning-parser <auto-detected>`.
+2. That job writes its `host:port` to `vllm_server_logs/address.txt` under the run's output directory.
+3. `eval_all` polls the address file and `/health`, then exports `VLLM_SERVER_URL=http://host:port/v1` into each child benchmark's environment.
+4. `run_vllm_inference` detects the env var and routes every inference call through the OpenAI-compatible client (thread-pooled, ~32 concurrent requests) instead of instantiating `LLM()`.
+5. On exit (normal, exception, or SIGTERM), the server job is cancelled.
+
+**All five benchmarks work unchanged** — the server branch lives inside `run_vllm_inference`. Config knobs (all under `server_mode` in `dagspaces/eval_all/conf/config.yaml`):
+
+| Key | Default | Purpose |
+|---|---|---|
+| `enabled` | `false` | Master switch |
+| `launcher` | `slurm_gpu_1x` | SLURM launcher for the server job |
+| `port` | `8000` | Server port |
+| `served_model_name` | `""` | Falls back to `model.model_source` |
+| `tensor_parallel_size` | `null` | Falls back to `model.engine_kwargs.tensor_parallel_size` |
+| `max_model_len` | `null` | Falls back to `model.engine_kwargs.max_model_len` |
+| `gpu_memory_utilization` | `0.90` | `--gpu-memory-utilization` |
+| `reasoning_parser` | `"auto"` | `"auto"` detects family; `"none"` disables; else explicit name |
+| `startup_timeout_s` | `900` | Wait for `/health` to return 200 |
+| `extra_args` | `[]` | Passed verbatim to `api_server` |
+
+**Caveats**:
+- LoRA checkpoints: `run_vllm_inference`'s server branch doesn't yet attach LoRA adapters dynamically. Use in-process mode (`server_mode.enabled=false`) for LoRA evals.
+- Multi-GPU models: set `server_mode.launcher=slurm_gpu_2x` (or larger) to match the model's `tensor_parallel_size`.
+- Server client concurrency can be tuned via `VLLM_SERVER_CLIENT_CONCURRENCY` env var (default 32).

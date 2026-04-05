@@ -1,6 +1,14 @@
-"""Eval-all orchestrator: dispatches to each eval dagspace as a subprocess."""
+"""Eval-all orchestrator: dispatches to each eval dagspace as a subprocess.
 
+When ``server_mode.enabled=true``, a shared vLLM OpenAI-compatible server
+is launched once for the whole run and each benchmark subprocess routes
+its inference through it via ``VLLM_SERVER_URL`` (see
+``dagspaces/eval_all/server.py``).
+"""
+
+import atexit
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -42,49 +50,81 @@ def run_eval_all(cfg: DictConfig) -> None:
     except Exception:
         parent_output_dir = os.getcwd()
 
+    # Shared vLLM server (optional): launch once, inject URL into child env.
+    server_info = None
+    child_env = os.environ.copy()
+    server_cfg = OmegaConf.select(cfg, "server_mode")
+    if server_cfg is not None and bool(server_cfg.get("enabled", False)):
+        from .server import launch_vllm_server, shutdown_vllm_server
+        print(f"\n{'='*60}\nSERVER MODE: launching shared vLLM server\n{'='*60}")
+        server_info = launch_vllm_server(
+            cfg=cfg,
+            model_cfg=model_cfg,
+            server_cfg=server_cfg,
+            output_dir=parent_output_dir,
+            startup_timeout_s=float(server_cfg.get("startup_timeout_s", 900)),
+        )
+        child_env["VLLM_SERVER_URL"] = server_info["url"]
+
+        # Ensure the server is cancelled on any exit path.
+        def _cleanup(*_args, **_kwargs):
+            if server_info is not None:
+                shutdown_vllm_server(server_info)
+        atexit.register(_cleanup)
+        for _sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                signal.signal(_sig, lambda s, f: (_cleanup(), sys.exit(130)))
+            except Exception:
+                pass
+
     results = {}
-    for bench_name, bench_cfg in benchmarks.items():
-        module = bench_cfg["module"]
-        pipeline = bench_cfg["pipeline"]
-        vlm_only = bench_cfg.get("vlm_only", False)
+    try:
+        for bench_name, bench_cfg in benchmarks.items():
+            module = bench_cfg["module"]
+            pipeline = bench_cfg["pipeline"]
+            vlm_only = bench_cfg.get("vlm_only", False)
 
-        if vlm_only and (skip_vlm or not is_vlm):
-            reason = "skip_vlm=true" if skip_vlm else f"{model_name} is text-only"
+            if vlm_only and (skip_vlm or not is_vlm):
+                reason = "skip_vlm=true" if skip_vlm else f"{model_name} is text-only"
+                print(f"\n{'='*60}")
+                print(f"SKIP {bench_name} ({reason})")
+                print(f"{'='*60}")
+                results[bench_name] = "skipped"
+                continue
+
+            # No -m flag: eval_all is already on a SLURM node (via its own -m).
+            # Each child dagspace's run_experiment() handles GPU job submission
+            # internally. Passing -m here would nest submitit → submitit, which
+            # fails to collect results.
+            child_output_dir = os.path.join(parent_output_dir, bench_name)
+            cmd = [
+                sys.executable, "-m", module,
+                f"pipeline={pipeline}",
+                f"model={model_name}",
+                f"wandb.project={wandb_project}",
+                f"hydra.run.dir={child_output_dir}",
+            ]
+            if debug:
+                cmd.append("runtime.debug=true")
+            if sample_n is not None:
+                cmd.append(f"runtime.sample_n={sample_n}")
+
             print(f"\n{'='*60}")
-            print(f"SKIP {bench_name} ({reason})")
-            print(f"{'='*60}")
-            results[bench_name] = "skipped"
-            continue
+            print(f"START {bench_name} | model={model_name}")
+            print(f"  cmd: {' '.join(cmd)}")
+            print(f"{'='*60}\n")
 
-        # No -m flag: eval_all is already on a SLURM node (via its own -m).
-        # Each child dagspace's run_experiment() handles GPU job submission
-        # internally. Passing -m here would nest submitit → submitit, which
-        # fails to collect results.
-        child_output_dir = os.path.join(parent_output_dir, bench_name)
-        cmd = [
-            sys.executable, "-m", module,
-            f"pipeline={pipeline}",
-            f"model={model_name}",
-            f"wandb.project={wandb_project}",
-            f"hydra.run.dir={child_output_dir}",
-        ]
-        if debug:
-            cmd.append("runtime.debug=true")
-        if sample_n is not None:
-            cmd.append(f"runtime.sample_n={sample_n}")
+            t0 = time.time()
+            proc = subprocess.run(cmd, env=child_env)
+            elapsed = time.time() - t0
 
-        print(f"\n{'='*60}")
-        print(f"START {bench_name} | model={model_name}")
-        print(f"  cmd: {' '.join(cmd)}")
-        print(f"{'='*60}\n")
-
-        t0 = time.time()
-        proc = subprocess.run(cmd)
-        elapsed = time.time() - t0
-
-        status = "ok" if proc.returncode == 0 else f"FAILED (rc={proc.returncode})"
-        results[bench_name] = status
-        print(f"\n  {bench_name} finished in {elapsed:.0f}s — {status}")
+            status = "ok" if proc.returncode == 0 else f"FAILED (rc={proc.returncode})"
+            results[bench_name] = status
+            print(f"\n  {bench_name} finished in {elapsed:.0f}s — {status}")
+    finally:
+        if server_info is not None:
+            from .server import shutdown_vllm_server
+            shutdown_vllm_server(server_info)
 
     # Summary
     print(f"\n{'='*60}")

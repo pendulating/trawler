@@ -468,6 +468,202 @@ def _build_engine_kwargs(cfg) -> Dict[str, Any]:
 # SamplingParams builder
 # ---------------------------------------------------------------------------
 
+def _resolve_server_url(cfg) -> Optional[str]:
+    """Return the vLLM OpenAI-compatible server URL to use, or ``None``.
+
+    Priority (highest wins):
+    1. ``cfg.model.vllm_server_url`` (explicit per-run override)
+    2. ``VLLM_SERVER_URL`` environment variable (set by ``eval_all``)
+
+    A returned URL should be the base URL (e.g. ``http://host:8000/v1``);
+    the trailing ``/v1`` is normalised by the OpenAI client.
+    """
+    url: Optional[str] = None
+    try:
+        url = str(getattr(cfg.model, "vllm_server_url", "") or "")
+    except Exception:
+        url = None
+    if not url:
+        url = os.environ.get("VLLM_SERVER_URL", "") or None
+    return url or None
+
+
+def _sp_to_openai_kwargs(sp_dict: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Translate our sampling_params dict to OpenAI API kwargs + extra_body.
+
+    Returns ``(kwargs, extra_body)`` where ``kwargs`` are fields accepted
+    by ``openai.chat.completions.create`` directly and ``extra_body`` are
+    vLLM-specific extensions (``guided_json``, ``top_k``, etc.).
+    """
+    sp = dict(sp_dict or {})
+    kwargs: Dict[str, Any] = {}
+    extra_body: Dict[str, Any] = {}
+
+    # Direct-mapping OpenAI params
+    for k in ("max_tokens", "temperature", "top_p", "n", "stop",
+              "presence_penalty", "frequency_penalty", "seed"):
+        if k in sp and sp[k] is not None:
+            kwargs[k] = sp[k]
+
+    # vLLM extensions via extra_body
+    for k in ("top_k", "min_p", "repetition_penalty", "length_penalty",
+              "ignore_eos", "skip_special_tokens"):
+        if k in sp and sp[k] is not None:
+            extra_body[k] = sp[k]
+
+    # Guided/structured decoding
+    guided = sp.get("guided_decoding") or sp.get("structured_output")
+    if guided and isinstance(guided, dict):
+        if "json" in guided:
+            extra_body["guided_json"] = guided["json"]
+        if "regex" in guided:
+            extra_body["guided_regex"] = guided["regex"]
+        if "choice" in guided:
+            extra_body["guided_choice"] = guided["choice"]
+        if "grammar" in guided:
+            extra_body["guided_grammar"] = guided["grammar"]
+
+    return kwargs, extra_body
+
+
+def _run_server_inference(
+    df: "pd.DataFrame",
+    cfg,
+    preprocess: Callable[[Dict[str, Any]], Dict[str, Any]],
+    postprocess: Callable[[Dict[str, Any]], Dict[str, Any]],
+    stage_name: str,
+    server_url: str,
+) -> "pd.DataFrame":
+    """Route inference through an OpenAI-compatible vLLM server.
+
+    Mirrors the contract of the in-process path (see ``run_vllm_inference``):
+    the same ``preprocess`` / ``postprocess`` callbacks are invoked, and
+    ``generated_text`` / ``generated_reasoning`` / ``usage`` are populated
+    on each row before postprocess.
+
+    Concurrency is provided by a thread pool (~32 workers); the server
+    handles continuous batching on its end.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from openai import OpenAI
+
+    # Resolve model name — either the full local path (if the server was
+    # launched with --served-model-name pointing at it) or a short name
+    # the user configured via model.vllm_served_model_name.
+    served_name = ""
+    try:
+        served_name = str(getattr(cfg.model, "vllm_served_model_name", "") or "")
+    except Exception:
+        pass
+    if not served_name:
+        served_name = str(getattr(cfg.model, "model_source", "") or "")
+
+    client = OpenAI(base_url=server_url, api_key="EMPTY", timeout=600.0)
+    print(f"[{stage_name}] Server-mode inference → {server_url} (model={served_name})")
+
+    # Chat template kwargs (e.g. enable_thinking)
+    ctk_extra: Dict[str, Any] = {}
+    try:
+        from dagspaces.common.stage_utils import resolve_thinking_mode
+        _thinking_enabled = resolve_thinking_mode(cfg.model, default=True)
+    except Exception:
+        _thinking_enabled = True
+    ctk_extra["enable_thinking"] = _thinking_enabled
+    _model_source = str(getattr(cfg.model, "model_source", "") or "")
+
+    # Preprocess all rows
+    print(f"[{stage_name}] Preprocessing {len(df)} rows...")
+    preprocessed_rows: List[Dict[str, Any]] = []
+    for row in df.to_dict("records"):
+        try:
+            preprocessed_rows.append(preprocess(row))
+        except Exception as e:
+            row["__preprocess_error__"] = str(e)
+            preprocessed_rows.append(row)
+
+    # Build request jobs
+    def _make_request(idx: int):
+        row = preprocessed_rows[idx]
+        if "__preprocess_error__" in row:
+            return idx, "", "", None, row["__preprocess_error__"]
+
+        messages = row.get("messages") or []
+        sp_dict = row.get("sampling_params") or {}
+        sp_kwargs, extra_body = _sp_to_openai_kwargs(sp_dict)
+        extra_body["chat_template_kwargs"] = ctk_extra
+
+        try:
+            resp = client.chat.completions.create(
+                model=served_name,
+                messages=messages,
+                extra_body=extra_body,
+                **sp_kwargs,
+            )
+        except Exception as e:
+            return idx, "", "", None, f"request_error: {e}"
+
+        msg = resp.choices[0].message if resp.choices else None
+        content = (getattr(msg, "content", None) or "") if msg else ""
+        # vLLM reasoning parsers populate reasoning_content when configured
+        reasoning = (getattr(msg, "reasoning_content", None) or "") if msg else ""
+        if not reasoning:
+            # Server didn't parse reasoning — do it client-side.
+            reasoning, content = _split_reasoning(
+                content, _model_source, _thinking_enabled, tokenizer=None,
+            )
+
+        usage = None
+        try:
+            u = resp.usage
+            if u is not None:
+                usage = {
+                    "prompt_tokens": getattr(u, "prompt_tokens", 0),
+                    "completion_tokens": getattr(u, "completion_tokens", 0),
+                    "total_tokens": getattr(u, "total_tokens", 0),
+                }
+        except Exception:
+            pass
+        return idx, content.strip(), reasoning.strip(), usage, None
+
+    max_workers = int(os.environ.get("VLLM_SERVER_CLIENT_CONCURRENCY", "32"))
+    results_raw: List[Optional[Tuple[int, str, str, Any, Optional[str]]]] = [None] * len(preprocessed_rows)
+    print(f"[{stage_name}] Dispatching {len(preprocessed_rows)} requests "
+          f"(concurrency={max_workers})...")
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(_make_request, i) for i in range(len(preprocessed_rows))]
+        done = 0
+        for fut in as_completed(futures):
+            idx, content, reasoning, usage, err = fut.result()
+            results_raw[idx] = (idx, content, reasoning, usage, err)
+            done += 1
+            if done % 50 == 0 or done == len(preprocessed_rows):
+                print(f"[{stage_name}]   {done}/{len(preprocessed_rows)} complete")
+
+    # Postprocess
+    n_errors = sum(1 for r in results_raw if r and r[4])
+    if n_errors:
+        print(f"[{stage_name}] WARNING: {n_errors} request errors — rows marked with __postprocess_error__")
+
+    out_rows: List[Dict[str, Any]] = []
+    for entry in results_raw:
+        idx, content, reasoning, usage, err = entry  # type: ignore
+        row = preprocessed_rows[idx]
+        row["generated_text"] = content
+        row["generated_reasoning"] = reasoning
+        if usage is not None:
+            row["usage"] = usage
+        if err:
+            row["__request_error__"] = err
+        try:
+            out_rows.append(postprocess(row))
+        except Exception as e:
+            row["__postprocess_error__"] = str(e)
+            out_rows.append(row)
+
+    print(f"[{stage_name}] Completed server inference, {len(out_rows)} results")
+    return pd.DataFrame(out_rows)
+
+
 def _build_sampling_params(sp_dict: Dict[str, Any]):
     """Convert a plain dict to vLLM SamplingParams, handling structured output.
 
@@ -968,6 +1164,15 @@ def run_vllm_inference(
     if df is None or len(df) == 0:
         print(f"[{stage_name}] Empty input, returning empty DataFrame")
         return pd.DataFrame()
+
+    # Server mode: route to a long-lived vLLM OpenAI-compatible server.
+    # This lets eval_all share one loaded model across all benchmark jobs.
+    _server_url = _resolve_server_url(cfg)
+    if _server_url:
+        return _run_server_inference(
+            df=df, cfg=cfg, preprocess=preprocess, postprocess=postprocess,
+            stage_name=stage_name, server_url=_server_url,
+        )
 
     # Models whose architectures vLLM no longer supports get routed to a
     # native transformers generate() fallback.

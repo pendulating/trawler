@@ -9,6 +9,24 @@ runtime:
   debug: false
   sample_n: null
   skip_vlm: false
+  job_memory_gb: 64    # used by GPU launchers (via ${runtime.job_memory_gb})
+
+# Shared vLLM server across all benchmarks. When enabled, eval_all launches
+# one long-lived SLURM GPU job that hosts the model via vllm's
+# OpenAI-compatible server; each benchmark subprocess inherits
+# ``VLLM_SERVER_URL`` and routes inference through HTTP instead of
+# loading the model fresh.
+server_mode:
+  enabled: false
+  launcher: slurm_gpu_1x
+  port: 8000
+  served_model_name: ""          # default: use model.model_source path
+  tensor_parallel_size: null     # default: from model.engine_kwargs
+  max_model_len: null            # default: from model.engine_kwargs
+  gpu_memory_utilization: 0.90
+  reasoning_parser: auto         # "auto" detects from model family; "none" disables
+  startup_timeout_s: 900
+  extra_args: []                 # additional CLI args passed to api_server
 
 wandb:
   project: eval-all
