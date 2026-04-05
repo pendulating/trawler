@@ -664,6 +664,53 @@ def _run_server_inference(
     return pd.DataFrame(out_rows)
 
 
+def _shutdown_llm(llm: Any, stage_name: str = "vllm") -> None:
+    """Explicitly shut down a vLLM ``LLM``'s engine workers.
+
+    Why this is necessary: ``vllm.LLM`` does **not** define ``__del__``, and
+    ``v1.LLMEngine.__del__`` only cleans up the DP process group — it does
+    not stop the ``EngineCore`` / ``WorkerProc_TP*`` child processes spawned
+    by multiprocessing. When the calling function returns, those workers
+    keep running; Python's ``multiprocessing._exit_function`` atexit hook
+    then blocks at process exit trying to join them, which holds the
+    SLURM job open indefinitely until walltime or external cancellation.
+
+    Call this before returning from any inference function that instantiates
+    an ``LLM``. Safe to call multiple times; errors are swallowed (cleanup
+    must not mask the real return value).
+    """
+    if llm is None:
+        return
+    try:
+        # Primary path: engine_core_client (V1, multiproc mode).
+        engine = getattr(llm, "llm_engine", None)
+        core = getattr(engine, "engine_core", None) if engine is not None else None
+        if core is not None and hasattr(core, "shutdown"):
+            core.shutdown()
+    except Exception as e:
+        print(f"[{stage_name}] engine shutdown warning: {e}", flush=True)
+    # Force refcount to 0 and run GC so LLMEngine.__del__ fires for DP group cleanup.
+    try:
+        import gc
+        del llm  # type: ignore[misc]
+        gc.collect()
+    except Exception:
+        pass
+    # Best-effort: terminate any multiprocessing children that survived.
+    try:
+        import multiprocessing as _mp
+        survivors = [p for p in _mp.active_children() if p.is_alive()]
+        for p in survivors:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+        if survivors:
+            print(f"[{stage_name}] terminated {len(survivors)} surviving mp children", flush=True)
+    except Exception:
+        pass
+
+
 def _build_sampling_params(sp_dict: Dict[str, Any]):
     """Convert a plain dict to vLLM SamplingParams, handling structured output.
 
@@ -801,6 +848,17 @@ def main():
         with open(result_path, "wb") as f:
             pickle.dump({"rank": rank, "outputs": None, "error": tb}, f)
         sys.exit(1)
+    finally:
+        # Shut down vLLM engine workers so the subprocess can exit cleanly.
+        try:
+            if llm is not None:
+                engine = getattr(llm, "llm_engine", None)
+                core = getattr(engine, "engine_core", None) if engine else None
+                if core is not None and hasattr(core, "shutdown"):
+                    core.shutdown()
+                del llm
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()
@@ -1260,249 +1318,252 @@ def run_vllm_inference(
         llm = LLM(**engine_kwargs)
         tokenizer = llm.get_tokenizer()
 
-    # Preprocess all rows
-    print(f"[{stage_name}] Preprocessing {len(df)} rows...")
-    preprocessed_rows: List[Dict[str, Any]] = []
-    failed_indices: List[int] = []  # indices of preprocess-failed rows
-    for idx, row in enumerate(df.to_dict("records")):
-        try:
-            preprocessed_rows.append(preprocess(row))
-        except Exception as e:
-            row["__preprocess_error__"] = str(e)
-            print(f"[{stage_name}] Preprocess error on row {idx}: {e}")
-            preprocessed_rows.append(row)
-            failed_indices.append(idx)
-
-    if failed_indices:
-        print(f"[{stage_name}] WARNING: {len(failed_indices)} rows failed "
-              f"preprocessing and will be skipped for inference")
-
-    # Separate valid rows from failed ones for inference
-    failed_set = set(failed_indices)
-    preliminary_valid = [i for i in range(len(preprocessed_rows)) if i not in failed_set]
-
-    # Determine model's max context length for prompt validation.
-    _max_model_len = None
-    if llm is not None:
-        try:
-            _max_model_len = llm.llm_engine.model_config.max_model_len
-        except Exception:
-            pass
-    if _max_model_len is None:
-        try:
-            _max_model_len = int(getattr(tokenizer, "model_max_length", 0) or 0)
-            if _max_model_len <= 0 or _max_model_len > 1_000_000:
-                _max_model_len = None
-        except Exception:
-            pass
-
-    # Build prompts and sampling params dicts for valid rows only.
-    prompts: List[str] = []
-    sp_dicts: List[Dict[str, Any]] = []
-    valid_indices: List[int] = []
-    _oversized_count = 0
-
-    for i in preliminary_valid:
-        row = preprocessed_rows[i]
-        messages = row.get("messages")
-        if messages:
+    try:
+        # Preprocess all rows
+        print(f"[{stage_name}] Preprocessing {len(df)} rows...")
+        preprocessed_rows: List[Dict[str, Any]] = []
+        failed_indices: List[int] = []  # indices of preprocess-failed rows
+        for idx, row in enumerate(df.to_dict("records")):
             try:
-                chat_template_kwargs = dict(
-                    getattr(cfg.model, "chat_template_kwargs", {}) or {}
-                )
-                prompt = tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True,
-                    **chat_template_kwargs,
-                )
-            except Exception:
-                # Fallback: simple concatenation
-                parts = []
-                for msg in messages:
-                    role = msg.get("role", "")
-                    content = msg.get("content", "")
-                    parts.append(f"{role}: {content}")
-                prompt = "\n\n".join(parts) + "\n\nAssistant:"
-        else:
-            prompt = str(row.get("article_text", ""))
-
-        # Validate prompt length against model context window
-        if _max_model_len is not None:
-            sp = row.get("sampling_params", {})
-            max_new = int(sp.get("max_tokens", 0) or 0)
-            prompt_tokens = len(tokenizer.encode(prompt, add_special_tokens=False))
-            if prompt_tokens + max(max_new, 1) > _max_model_len:
-                row["__preprocess_error__"] = (
-                    f"Prompt too long: {prompt_tokens} tokens + "
-                    f"{max_new} max_tokens > {_max_model_len} context limit"
-                )
-                failed_set.add(i)
-                _oversized_count += 1
-                continue
-
-        prompts.append(prompt)
-        sp_dicts.append(row.get("sampling_params", {}))
-        valid_indices.append(i)
-
-    if _oversized_count:
-        print(
-            f"[{stage_name}] WARNING: {_oversized_count} prompts exceed model "
-            f"context length ({_max_model_len}) and will be skipped"
-        )
-
-    # -----------------------------------------------------------------------
-    # Inference: data-parallel or single-process
-    # -----------------------------------------------------------------------
-    if dp_size > 1:
-        # All rows share the same sampling_params in our pipeline stages
-        sp_dict = sp_dicts[0] if sp_dicts else {}
-        print(f"[{stage_name}] Running data-parallel inference: "
-              f"{len(prompts)} prompts across {dp_size} replicas...")
-        dp_outputs = _run_data_parallel(
-            engine_kwargs=engine_kwargs,
-            dp_size=dp_size,
-            prompts=prompts,
-            sp_dict=sp_dict,
-            stage_name=stage_name,
-        )
-
-        # Verify output count
-        if len(dp_outputs) != len(prompts):
-            raise RuntimeError(
-                f"[{stage_name}] DP output count mismatch: "
-                f"expected {len(prompts)}, got {len(dp_outputs)}"
-            )
-
-        # Postprocess — merge DP outputs back with failed rows
-        print(f"[{stage_name}] Postprocessing {len(dp_outputs)} outputs...")
-        results: List[Dict[str, Any]] = []
-        output_iter = iter(dp_outputs)
-        for idx, row in enumerate(preprocessed_rows):
-            if idx in failed_set:
-                row["generated_text"] = ""
-                row["generated_reasoning"] = ""
-                try:
-                    result = postprocess(row)
-                except Exception as e:
-                    row["__postprocess_error__"] = str(e)
-                    result = row
-                results.append(result)
-                continue
-
-            out = next(output_iter)
-            raw_text = out.get("generated_text", "")
-            reasoning, content = _split_reasoning(
-                raw_text, _model_source, _thinking_enabled, tokenizer,
-            )
-            row["generated_text"] = content
-            row["generated_reasoning"] = reasoning
-            row["usage"] = {
-                "prompt_tokens": out.get("prompt_tokens", 0),
-                "completion_tokens": out.get("completion_tokens", 0),
-                "total_tokens": out.get("prompt_tokens", 0) + out.get("completion_tokens", 0),
-            }
-            try:
-                result = postprocess(row)
+                preprocessed_rows.append(preprocess(row))
             except Exception as e:
-                row["__postprocess_error__"] = str(e)
-                result = row
-            results.append(result)
+                row["__preprocess_error__"] = str(e)
+                print(f"[{stage_name}] Preprocess error on row {idx}: {e}")
+                preprocessed_rows.append(row)
+                failed_indices.append(idx)
 
-    else:
-        # Single-process path (original behaviour)
-        # Build SamplingParams objects with dedup optimization
-        sp_objects: List[Any] = []
-        _sp_cache: Dict[int, Any] = {}  # id(dict) -> SamplingParams
-        for sp_dict in sp_dicts:
-            sp_id = id(sp_dict)
-            if sp_id not in _sp_cache:
-                _sp_cache[sp_id] = _build_sampling_params(sp_dict)
-            sp_objects.append(_sp_cache[sp_id])
+        if failed_indices:
+            print(f"[{stage_name}] WARNING: {len(failed_indices)} rows failed "
+                  f"preprocessing and will be skipped for inference")
 
-        if len(_sp_cache) == 1 and sp_objects:
-            sampling_params_list = sp_objects[0]  # single object, vLLM broadcasts
-            print(f"[{stage_name}] Using shared SamplingParams for all {len(prompts)} prompts")
-        else:
-            sampling_params_list = sp_objects
+        # Separate valid rows from failed ones for inference
+        failed_set = set(failed_indices)
+        preliminary_valid = [i for i in range(len(preprocessed_rows)) if i not in failed_set]
 
-        try:
-            batch_size = int(getattr(cfg.model, "batch_size", 0) or 0)
-        except Exception:
-            batch_size = 0
-        if batch_size <= 0:
-            batch_size = max(len(prompts), 1)
+        # Determine model's max context length for prompt validation.
+        _max_model_len = None
+        if llm is not None:
+            try:
+                _max_model_len = llm.llm_engine.model_config.max_model_len
+            except Exception:
+                pass
+        if _max_model_len is None:
+            try:
+                _max_model_len = int(getattr(tokenizer, "model_max_length", 0) or 0)
+                if _max_model_len <= 0 or _max_model_len > 1_000_000:
+                    _max_model_len = None
+            except Exception:
+                pass
 
-        # Run inference in batches
-        print(
-            f"[{stage_name}] Running inference on {len(prompts)} prompts "
-            f"(batch_size={batch_size})..."
-        )
-        outputs = []
-        shared_sp = sampling_params_list if not isinstance(sampling_params_list, list) else None
-        for start in range(0, len(prompts), batch_size):
-            end = min(start + batch_size, len(prompts))
-            prompt_batch = prompts[start:end]
-            sampling_batch = shared_sp if shared_sp else sampling_params_list[start:end]
-            print(
-                f"[{stage_name}] Generating batch {start // batch_size + 1}: "
-                f"rows {start}-{end - 1}",
-            )
-            outputs.extend(llm.generate(prompt_batch, sampling_batch, lora_request=lora_request))
+        # Build prompts and sampling params dicts for valid rows only.
+        prompts: List[str] = []
+        sp_dicts: List[Dict[str, Any]] = []
+        valid_indices: List[int] = []
+        _oversized_count = 0
 
-        # Verify output count matches input count
-        if len(outputs) != len(prompts):
-            raise RuntimeError(
-                f"[{stage_name}] vLLM output count mismatch: "
-                f"expected {len(prompts)} outputs for {len(prompts)} prompts, "
-                f"got {len(outputs)}. This indicates silent data loss."
-            )
-
-        # Postprocess — merge inference outputs back with failed rows
-        print(f"[{stage_name}] Postprocessing {len(outputs)} outputs...")
-        results: List[Dict[str, Any]] = []
-        output_iter = iter(outputs)
-        for idx, row in enumerate(preprocessed_rows):
-            if idx in failed_set:
-                row["generated_text"] = ""
-                row["generated_reasoning"] = ""
+        for i in preliminary_valid:
+            row = preprocessed_rows[i]
+            messages = row.get("messages")
+            if messages:
                 try:
-                    result = postprocess(row)
-                except Exception as e:
-                    row["__postprocess_error__"] = str(e)
-                    result = row
-                results.append(result)
-                continue
+                    chat_template_kwargs = dict(
+                        getattr(cfg.model, "chat_template_kwargs", {}) or {}
+                    )
+                    prompt = tokenizer.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True,
+                        **chat_template_kwargs,
+                    )
+                except Exception:
+                    # Fallback: simple concatenation
+                    parts = []
+                    for msg in messages:
+                        role = msg.get("role", "")
+                        content = msg.get("content", "")
+                        parts.append(f"{role}: {content}")
+                    prompt = "\n\n".join(parts) + "\n\nAssistant:"
+            else:
+                prompt = str(row.get("article_text", ""))
 
-            output = next(output_iter)
-            if output.outputs:
-                raw_text = output.outputs[0].text
+            # Validate prompt length against model context window
+            if _max_model_len is not None:
+                sp = row.get("sampling_params", {})
+                max_new = int(sp.get("max_tokens", 0) or 0)
+                prompt_tokens = len(tokenizer.encode(prompt, add_special_tokens=False))
+                if prompt_tokens + max(max_new, 1) > _max_model_len:
+                    row["__preprocess_error__"] = (
+                        f"Prompt too long: {prompt_tokens} tokens + "
+                        f"{max_new} max_tokens > {_max_model_len} context limit"
+                    )
+                    failed_set.add(i)
+                    _oversized_count += 1
+                    continue
+
+            prompts.append(prompt)
+            sp_dicts.append(row.get("sampling_params", {}))
+            valid_indices.append(i)
+
+        if _oversized_count:
+            print(
+                f"[{stage_name}] WARNING: {_oversized_count} prompts exceed model "
+                f"context length ({_max_model_len}) and will be skipped"
+            )
+
+        # -----------------------------------------------------------------------
+        # Inference: data-parallel or single-process
+        # -----------------------------------------------------------------------
+        if dp_size > 1:
+            # All rows share the same sampling_params in our pipeline stages
+            sp_dict = sp_dicts[0] if sp_dicts else {}
+            print(f"[{stage_name}] Running data-parallel inference: "
+                  f"{len(prompts)} prompts across {dp_size} replicas...")
+            dp_outputs = _run_data_parallel(
+                engine_kwargs=engine_kwargs,
+                dp_size=dp_size,
+                prompts=prompts,
+                sp_dict=sp_dict,
+                stage_name=stage_name,
+            )
+
+            # Verify output count
+            if len(dp_outputs) != len(prompts):
+                raise RuntimeError(
+                    f"[{stage_name}] DP output count mismatch: "
+                    f"expected {len(prompts)}, got {len(dp_outputs)}"
+                )
+
+            # Postprocess — merge DP outputs back with failed rows
+            print(f"[{stage_name}] Postprocessing {len(dp_outputs)} outputs...")
+            results: List[Dict[str, Any]] = []
+            output_iter = iter(dp_outputs)
+            for idx, row in enumerate(preprocessed_rows):
+                if idx in failed_set:
+                    row["generated_text"] = ""
+                    row["generated_reasoning"] = ""
+                    try:
+                        result = postprocess(row)
+                    except Exception as e:
+                        row["__postprocess_error__"] = str(e)
+                        result = row
+                    results.append(result)
+                    continue
+
+                out = next(output_iter)
+                raw_text = out.get("generated_text", "")
                 reasoning, content = _split_reasoning(
                     raw_text, _model_source, _thinking_enabled, tokenizer,
                 )
                 row["generated_text"] = content
                 row["generated_reasoning"] = reasoning
-            else:
-                row["generated_text"] = ""
-                row["generated_reasoning"] = ""
-
-            try:
-                prompt_tokens = len(output.prompt_token_ids) if output.prompt_token_ids else 0
-                completion_tokens = (
-                    len(output.outputs[0].token_ids) if output.outputs and output.outputs[0].token_ids else 0
-                )
                 row["usage"] = {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": prompt_tokens + completion_tokens,
+                    "prompt_tokens": out.get("prompt_tokens", 0),
+                    "completion_tokens": out.get("completion_tokens", 0),
+                    "total_tokens": out.get("prompt_tokens", 0) + out.get("completion_tokens", 0),
                 }
-            except Exception:
-                row["usage"] = None
+                try:
+                    result = postprocess(row)
+                except Exception as e:
+                    row["__postprocess_error__"] = str(e)
+                    result = row
+                results.append(result)
+
+        else:
+            # Single-process path (original behaviour)
+            # Build SamplingParams objects with dedup optimization
+            sp_objects: List[Any] = []
+            _sp_cache: Dict[int, Any] = {}  # id(dict) -> SamplingParams
+            for sp_dict in sp_dicts:
+                sp_id = id(sp_dict)
+                if sp_id not in _sp_cache:
+                    _sp_cache[sp_id] = _build_sampling_params(sp_dict)
+                sp_objects.append(_sp_cache[sp_id])
+
+            if len(_sp_cache) == 1 and sp_objects:
+                sampling_params_list = sp_objects[0]  # single object, vLLM broadcasts
+                print(f"[{stage_name}] Using shared SamplingParams for all {len(prompts)} prompts")
+            else:
+                sampling_params_list = sp_objects
 
             try:
-                result = postprocess(row)
-            except Exception as e:
-                row["__postprocess_error__"] = str(e)
-                result = row
-            results.append(result)
+                batch_size = int(getattr(cfg.model, "batch_size", 0) or 0)
+            except Exception:
+                batch_size = 0
+            if batch_size <= 0:
+                batch_size = max(len(prompts), 1)
 
-    print(f"[{stage_name}] Completed inference, {len(results)} results")
-    return pd.DataFrame(results)
+            # Run inference in batches
+            print(
+                f"[{stage_name}] Running inference on {len(prompts)} prompts "
+                f"(batch_size={batch_size})..."
+            )
+            outputs = []
+            shared_sp = sampling_params_list if not isinstance(sampling_params_list, list) else None
+            for start in range(0, len(prompts), batch_size):
+                end = min(start + batch_size, len(prompts))
+                prompt_batch = prompts[start:end]
+                sampling_batch = shared_sp if shared_sp else sampling_params_list[start:end]
+                print(
+                    f"[{stage_name}] Generating batch {start // batch_size + 1}: "
+                    f"rows {start}-{end - 1}",
+                )
+                outputs.extend(llm.generate(prompt_batch, sampling_batch, lora_request=lora_request))
+
+            # Verify output count matches input count
+            if len(outputs) != len(prompts):
+                raise RuntimeError(
+                    f"[{stage_name}] vLLM output count mismatch: "
+                    f"expected {len(prompts)} outputs for {len(prompts)} prompts, "
+                    f"got {len(outputs)}. This indicates silent data loss."
+                )
+
+            # Postprocess — merge inference outputs back with failed rows
+            print(f"[{stage_name}] Postprocessing {len(outputs)} outputs...")
+            results: List[Dict[str, Any]] = []
+            output_iter = iter(outputs)
+            for idx, row in enumerate(preprocessed_rows):
+                if idx in failed_set:
+                    row["generated_text"] = ""
+                    row["generated_reasoning"] = ""
+                    try:
+                        result = postprocess(row)
+                    except Exception as e:
+                        row["__postprocess_error__"] = str(e)
+                        result = row
+                    results.append(result)
+                    continue
+
+                output = next(output_iter)
+                if output.outputs:
+                    raw_text = output.outputs[0].text
+                    reasoning, content = _split_reasoning(
+                        raw_text, _model_source, _thinking_enabled, tokenizer,
+                    )
+                    row["generated_text"] = content
+                    row["generated_reasoning"] = reasoning
+                else:
+                    row["generated_text"] = ""
+                    row["generated_reasoning"] = ""
+
+                try:
+                    prompt_tokens = len(output.prompt_token_ids) if output.prompt_token_ids else 0
+                    completion_tokens = (
+                        len(output.outputs[0].token_ids) if output.outputs and output.outputs[0].token_ids else 0
+                    )
+                    row["usage"] = {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": prompt_tokens + completion_tokens,
+                    }
+                except Exception:
+                    row["usage"] = None
+
+                try:
+                    result = postprocess(row)
+                except Exception as e:
+                    row["__postprocess_error__"] = str(e)
+                    result = row
+                results.append(result)
+
+        print(f"[{stage_name}] Completed inference, {len(results)} results")
+        return pd.DataFrame(results)
+    finally:
+        _shutdown_llm(llm, stage_name=stage_name)
