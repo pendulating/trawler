@@ -102,6 +102,14 @@ class _NoOpLogger:
     def set_config(self, data: Dict[str, Any], allow_val_change: bool = True) -> None:
         pass
 
+    def log_sanity_report(self, report: Any) -> None:
+        # Even with wandb disabled, surface warnings on stderr so the
+        # operator sees them. Tolerate any non-SanityReport object.
+        try:
+            report.print_loud()
+        except Exception:
+            pass
+
     def __enter__(self) -> "_NoOpLogger":
         return self
 

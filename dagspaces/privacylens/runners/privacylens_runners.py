@@ -4,12 +4,81 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
+from omegaconf import OmegaConf
 
 from dagspaces.common.runners.base import StageRunner
 from dagspaces.common.orchestrator import StageResult
+from dagspaces.common.eval_sanity import (
+    SanityReport,
+    compute_parse_health,
+)
+
+
+def _sanity_overrides(cfg: Any) -> tuple[Optional[Dict[str, float]], Optional[List[str]]]:
+    """Pull per-benchmark sanity overrides from cfg, if any.
+
+    Looks at ``cfg.sanity.thresholds`` (dict like ``{parseable_rate:lt: 0.9}``)
+    and ``cfg.sanity.refusal_patterns`` (list[str]). Both are optional;
+    omitted keys fall back to ``DEFAULT_THRESHOLDS`` /
+    ``DEFAULT_REFUSAL_PATTERNS``.
+    """
+    thresholds = None
+    patterns = None
+    try:
+        sanity_cfg = OmegaConf.select(cfg, "sanity")
+        if sanity_cfg is not None:
+            t = OmegaConf.select(sanity_cfg, "thresholds")
+            if t is not None:
+                thresholds = {str(k): float(v) for k, v in OmegaConf.to_container(t, resolve=True).items()}
+            p = OmegaConf.select(sanity_cfg, "refusal_patterns")
+            if p is not None:
+                patterns = [str(x) for x in OmegaConf.to_container(p, resolve=True)]
+    except Exception:
+        pass
+    return thresholds, patterns
+
+
+def _model_name(cfg: Any) -> str:
+    """Best-effort task-LLM identifier for failure-row attribution."""
+    try:
+        for key in ("model.model_source", "model.served_model_name", "model.model_family"):
+            v = OmegaConf.select(cfg, key)
+            if v:
+                return str(v)
+    except Exception:
+        pass
+    return ""
+
+
+def _log_sanity(
+    context: Any,
+    report: SanityReport,
+    *,
+    metadata: Dict[str, Any],
+) -> None:
+    """Log a SanityReport via context.logger and fold a small summary
+    into the stage's StageResult.metadata so the orchestrator's
+    pipeline_manifest captures the headline numbers.
+    """
+    try:
+        if context.logger is not None:
+            context.logger.log_sanity_report(report)
+    except Exception as exc:
+        # Sanity logging never fails the pipeline.
+        print(f"[sanity] log failure for {report.stage}: {exc}", flush=True)
+
+    # Compact summary into stage metadata. Full failure rows live in W&B.
+    metadata.setdefault("sanity", {})
+    metadata["sanity"][report.stage] = {
+        "metrics": dict(report.metrics),
+        "n_warnings": len(report.warnings),
+        "n_failures": int(len(report.failure_rows)),
+        "failures_dropped": int(report.failures_dropped),
+        "warnings": [w.message() for w in report.warnings],
+    }
 
 
 class LoadDatasetRunner(StageRunner):
@@ -56,6 +125,7 @@ class QAProbeInferenceRunner(StageRunner):
 
         input_path = context.inputs["dataset"]
         df = pd.read_parquet(input_path)
+        input_n = len(df)
 
         result_df = run_qa_probe_inference(df, context.cfg)
         result_df = parse_qa_responses(result_df, expected_answer="no")
@@ -64,10 +134,25 @@ class QAProbeInferenceRunner(StageRunner):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         result_df.to_parquet(out_path, index=False)
 
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
+        thresholds, patterns = _sanity_overrides(context.cfg)
+        report = compute_parse_health(
+            result_df,
+            dagspace="privacylens",
+            stage=self.stage_name,
+            model=_model_name(context.cfg),
+            status_col="parse_status",
+            completion_col="generated_text",
+            label_col="predicted_label",
+            # QA fans out 3× per input row (S/V/T axes), so the expected
+            # output count is 3 × input_n. Skip row_count_drop unless we
+            # can be exact.
+            expected_input_n=None,
+            refusal_patterns=patterns,
+            thresholds=thresholds,
         )
+        metadata: Dict[str, Any] = {"rows": len(result_df)}
+        _log_sanity(context, report, metadata=metadata)
+        return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
 
 class AgentActionInferenceRunner(StageRunner):
@@ -100,6 +185,7 @@ class LeakageJudgeInferenceRunner(StageRunner):
 
         input_path = context.inputs["dataset"]
         df = pd.read_parquet(input_path)
+        input_n = len(df)
 
         result_df = run_leakage_judge_inference(df, context.cfg)
         result_df = parse_leakage_responses(result_df)
@@ -108,10 +194,22 @@ class LeakageJudgeInferenceRunner(StageRunner):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         result_df.to_parquet(out_path, index=False)
 
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
+        thresholds, patterns = _sanity_overrides(context.cfg)
+        report = compute_parse_health(
+            result_df,
+            dagspace="privacylens",
+            stage=self.stage_name,
+            model=_model_name(context.cfg),
+            status_col="parse_status",
+            completion_col="leak_judge_text",
+            label_col="leak_flag",
+            expected_input_n=input_n,
+            refusal_patterns=patterns,
+            thresholds=thresholds,
         )
+        metadata: Dict[str, Any] = {"rows": len(result_df)}
+        _log_sanity(context, report, metadata=metadata)
+        return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
 
 class HelpfulnessJudgeInferenceRunner(StageRunner):
@@ -123,6 +221,7 @@ class HelpfulnessJudgeInferenceRunner(StageRunner):
 
         input_path = context.inputs["dataset"]
         df = pd.read_parquet(input_path)
+        input_n = len(df)
 
         result_df = run_helpfulness_judge_inference(df, context.cfg)
         result_df = parse_helpfulness_responses(result_df)
@@ -131,10 +230,22 @@ class HelpfulnessJudgeInferenceRunner(StageRunner):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         result_df.to_parquet(out_path, index=False)
 
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
+        thresholds, patterns = _sanity_overrides(context.cfg)
+        report = compute_parse_health(
+            result_df,
+            dagspace="privacylens",
+            stage=self.stage_name,
+            model=_model_name(context.cfg),
+            status_col="parse_status",
+            completion_col="helpfulness_judge_text",
+            label_col="helpfulness_score",
+            expected_input_n=input_n,
+            refusal_patterns=patterns,
+            thresholds=thresholds,
         )
+        metadata: Dict[str, Any] = {"rows": len(result_df)}
+        _log_sanity(context, report, metadata=metadata)
+        return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
 
 class LeakageJudgeBatchExportRunner(StageRunner):
