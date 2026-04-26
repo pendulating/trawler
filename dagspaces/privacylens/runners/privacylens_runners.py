@@ -4,81 +4,18 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import pandas as pd
-from omegaconf import OmegaConf
 
 from dagspaces.common.runners.base import StageRunner
 from dagspaces.common.orchestrator import StageResult
-from dagspaces.common.eval_sanity import (
-    SanityReport,
-    compute_parse_health,
+from dagspaces.common.eval_sanity import compute_parse_health
+from dagspaces.common.runners.sanity import (
+    log_sanity_to_context as _log_sanity,
+    sanity_overrides as _sanity_overrides,
+    task_model_name as _model_name,
 )
-
-
-def _sanity_overrides(cfg: Any) -> tuple[Optional[Dict[str, float]], Optional[List[str]]]:
-    """Pull per-benchmark sanity overrides from cfg, if any.
-
-    Looks at ``cfg.sanity.thresholds`` (dict like ``{parseable_rate:lt: 0.9}``)
-    and ``cfg.sanity.refusal_patterns`` (list[str]). Both are optional;
-    omitted keys fall back to ``DEFAULT_THRESHOLDS`` /
-    ``DEFAULT_REFUSAL_PATTERNS``.
-    """
-    thresholds = None
-    patterns = None
-    try:
-        sanity_cfg = OmegaConf.select(cfg, "sanity")
-        if sanity_cfg is not None:
-            t = OmegaConf.select(sanity_cfg, "thresholds")
-            if t is not None:
-                thresholds = {str(k): float(v) for k, v in OmegaConf.to_container(t, resolve=True).items()}
-            p = OmegaConf.select(sanity_cfg, "refusal_patterns")
-            if p is not None:
-                patterns = [str(x) for x in OmegaConf.to_container(p, resolve=True)]
-    except Exception:
-        pass
-    return thresholds, patterns
-
-
-def _model_name(cfg: Any) -> str:
-    """Best-effort task-LLM identifier for failure-row attribution."""
-    try:
-        for key in ("model.model_source", "model.served_model_name", "model.model_family"):
-            v = OmegaConf.select(cfg, key)
-            if v:
-                return str(v)
-    except Exception:
-        pass
-    return ""
-
-
-def _log_sanity(
-    context: Any,
-    report: SanityReport,
-    *,
-    metadata: Dict[str, Any],
-) -> None:
-    """Log a SanityReport via context.logger and fold a small summary
-    into the stage's StageResult.metadata so the orchestrator's
-    pipeline_manifest captures the headline numbers.
-    """
-    try:
-        if context.logger is not None:
-            context.logger.log_sanity_report(report)
-    except Exception as exc:
-        # Sanity logging never fails the pipeline.
-        print(f"[sanity] log failure for {report.stage}: {exc}", flush=True)
-
-    # Compact summary into stage metadata. Full failure rows live in W&B.
-    metadata.setdefault("sanity", {})
-    metadata["sanity"][report.stage] = {
-        "metrics": dict(report.metrics),
-        "n_warnings": len(report.warnings),
-        "n_failures": int(len(report.failure_rows)),
-        "failures_dropped": int(report.failures_dropped),
-        "warnings": [w.message() for w in report.warnings],
-    }
 
 
 class LoadDatasetRunner(StageRunner):
