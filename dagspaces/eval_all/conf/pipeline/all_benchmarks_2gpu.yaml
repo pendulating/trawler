@@ -18,10 +18,6 @@ benchmarks:
     module: dagspaces.cirl_vignettes.cli
     pipeline: cirl_vignettes_eval_2gpu
     vlm_only: false
-  cirl_trajectory:
-    module: dagspaces.cirl_vignettes.cli
-    pipeline: cirl_trajectory_eval_2gpu
-    vlm_only: false
   confaide:
     module: dagspaces.confaide.cli
     pipeline: confaide_eval_2gpu
