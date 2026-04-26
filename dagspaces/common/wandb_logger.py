@@ -33,6 +33,7 @@ References:
 from __future__ import annotations
 
 import getpass
+import hashlib
 import json
 import os
 import platform
@@ -717,16 +718,47 @@ def build_wandb_tags(
     cfg,
     *,
     dagspace_name: str = "",
+    phase: Optional[str] = None,
 ) -> List[str]:
     """Build standardized W&B tags from config for cross-run filtering.
 
     Auto-generates tags for benchmark/dagspace name, model family,
-    finetuned vs. base, and eval task type.
+    finetuned vs. base, eval task type, and (when applicable) the
+    async-judge ``judge_mode`` and pipeline ``phase``.
     """
     tags: List[str] = []
 
     if dagspace_name:
         tags.append(f"bench:{dagspace_name}")
+
+    # Judge mode (async-sidecar discriminator). Surfaces the live/async/
+    # batch_export choice so dashboards can filter parity comparisons.
+    try:
+        from omegaconf import OmegaConf
+        judge_mode = OmegaConf.select(cfg, "judge.mode")
+        if judge_mode:
+            tags.append(f"judge_mode:{judge_mode}")
+        judge_url = OmegaConf.select(cfg, "judge.base_url")
+        if judge_url:
+            from urllib.parse import urlparse
+            host = urlparse(str(judge_url)).hostname
+            if host:
+                tags.append(f"judge_endpoint:{host}")
+    except Exception:
+        pass
+
+    if phase:
+        tags.append(f"phase:{phase}")
+
+    # eval_all sweep grouping (set via WANDB_GROUP env var by the
+    # eval_all monitor; surfaced as a tag so children can be filtered
+    # back to their parent sweep).
+    try:
+        env_group = os.environ.get("WANDB_GROUP")
+        if env_group and env_group.strip():
+            tags.append(f"eval_all_run:{env_group.strip()}")
+    except Exception:
+        pass
 
     try:
         model_cfg = getattr(cfg, "model", None)
@@ -822,6 +854,47 @@ def build_wandb_tags(
         pass
 
     return tags
+
+
+def derive_resumable_run_id(
+    group: Optional[str],
+    dagspace: str,
+    model: Optional[str],
+    *,
+    role: str = "child",
+) -> Optional[str]:
+    """Compute a stable W&B run id for resume-across-stages.
+
+    Used by the async-judge flow to keep the export-phase run and the
+    finalize-phase run as a single W&B entity (so the user sees one
+    timeline with the judge wait baked in). Also used by the sidecar to
+    survive SLURM requeue without forking the throughput chart.
+
+    Returns ``None`` when ``group`` is missing — callers should fall
+    back to a fresh run rather than passing ``None`` through to
+    ``wandb.init(id=...)``, which would error.
+
+    Args:
+        group: The W&B group / SLURM eval_all id. Typically the value of
+            ``WANDB_GROUP`` propagated by the eval_all monitor.
+        dagspace: The owning dagspace (``"privacylens"``, ``"sidecar"``,
+            ``"eval_all_summary"``, etc.).
+        model: Optional model identifier (e.g. ``"qwen3.5-9b/base"``).
+            Pass ``None`` for run ids that should not be model-scoped
+            (e.g. the eval_all summary run).
+        role: Discriminator suffix when the same (group, dagspace,
+            model) tuple needs distinct runs (e.g. ``"sidecar"``,
+            ``"summary"``). Defaults to ``"child"``.
+    """
+    if not group:
+        return None
+    parts = [str(group), str(dagspace)]
+    if model is not None:
+        parts.append(str(model))
+    if role:
+        parts.append(str(role))
+    payload = "|".join(parts).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:16]
 
 
 def collect_compute_metadata(
@@ -1118,19 +1191,31 @@ class WandbLogger:
         stage: str,
         run_id: Optional[str] = None,
         run_config: Optional[Dict[str, Any]] = None,
+        *,
+        wandb_id: Optional[str] = None,
+        resume: Optional[str] = None,
     ):
         """Initialise wandb logger.
 
         Args:
             cfg: Hydra config object.
             stage: Stage name (e.g. "classify", "topic", "orchestrator").
-            run_id: Optional run identifier/suffix.
+            run_id: Optional run identifier/suffix appended to the run name.
             run_config: Optional run configuration dict to log.
+            wandb_id: Stable run id (sha256-derived) for resume-across-stages.
+                When set, ``wandb.init(id=..., resume=resume)`` is called so
+                a later WandbLogger with the same id reattaches to the same
+                run (used by the async-judge export → finalize handoff and
+                by the sidecar across SLURM requeue).
+            resume: ``wandb.init`` resume mode (``"allow"`` / ``"must"`` /
+                ``"never"``). Only consulted when ``wandb_id`` is set.
         """
         self.cfg = cfg
         self.stage = stage
         self.run_id = run_id
         self.run_config = run_config or {}
+        self.wandb_id = wandb_id
+        self.resume = resume
         self.wb_config = WandbConfig.from_hydra_config(cfg)
         self._run = None
 
@@ -1148,6 +1233,9 @@ class WandbLogger:
         wb_config: WandbConfig,
         run_id: Optional[str] = None,
         run_config: Optional[Dict[str, Any]] = None,
+        *,
+        wandb_id: Optional[str] = None,
+        resume: Optional[str] = None,
     ) -> "WandbLogger":
         """Create a WandbLogger with a pre-built WandbConfig.
 
@@ -1160,12 +1248,16 @@ class WandbLogger:
             wb_config: Pre-built WandbConfig instance.
             run_id: Optional run identifier/suffix.
             run_config: Optional run configuration dict to log.
+            wandb_id: Stable run id for resume-across-stages.
+            resume: ``wandb.init`` resume mode when ``wandb_id`` is set.
         """
         instance = cls.__new__(cls)
         instance.cfg = cfg
         instance.stage = stage
         instance.run_id = run_id
         instance.run_config = run_config or {}
+        instance.wandb_id = wandb_id
+        instance.resume = resume
         instance.wb_config = wb_config
         instance._run = None
 
@@ -1385,18 +1477,27 @@ class WandbLogger:
             flush=True,
         )
 
+        init_kwargs: Dict[str, Any] = {
+            "project": self.wb_config.project,
+            "entity": self.wb_config.entity,
+            "group": self.wb_config.group,
+            "job_type": self.stage,
+            "name": run_name,
+            "config": self.run_config,
+            "mode": mode,
+            "dir": wandb_dir,
+            "tags": self.wb_config.tags,
+        }
+        # Resumable runs: caller passes a stable id (typically derived via
+        # derive_resumable_run_id) so a subsequent WandbLogger reattaches
+        # to the same run instead of forking a new one. resume="allow"
+        # creates the run if missing and reattaches if present.
+        if self.wandb_id:
+            init_kwargs["id"] = self.wandb_id
+            init_kwargs["resume"] = self.resume or "allow"
+
         try:
-            self._run = self.wandb.init(
-                project=self.wb_config.project,
-                entity=self.wb_config.entity,
-                group=self.wb_config.group,
-                job_type=self.stage,
-                name=run_name,
-                config=self.run_config,
-                mode=mode,
-                dir=wandb_dir,
-                tags=self.wb_config.tags,
-            )
+            self._run = self.wandb.init(**init_kwargs)
 
             try:
                 compute_metadata = collect_compute_metadata(
