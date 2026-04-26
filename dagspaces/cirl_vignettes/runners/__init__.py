@@ -13,6 +13,8 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             TrajectoryInferenceRunner,
             JudgeLeakageRunner,
             JudgeHelpfulnessRunner,
+            JudgeLeakageBatchExportRunner,
+            JudgeHelpfulnessBatchExportRunner,
             ComputeTrajectoryMetricsRunner,
         )
 
@@ -24,6 +26,8 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             "trajectory_inference": TrajectoryInferenceRunner(),
             "judge_leakage": JudgeLeakageRunner(),
             "judge_helpfulness": JudgeHelpfulnessRunner(),
+            "judge_leakage_batch_export": JudgeLeakageBatchExportRunner(),
+            "judge_helpfulness_batch_export": JudgeHelpfulnessBatchExportRunner(),
             "compute_trajectory_metrics": ComputeTrajectoryMetricsRunner(),
         }
     return _STAGE_REGISTRY.copy()

@@ -8,13 +8,33 @@ Reference: CI-RL evaluate_final_action.py (step=helpfulness)
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import json
+import os
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 from omegaconf import DictConfig
 
 from dagspaces.common.judge_client import JudgeClient
+from .judge_leakage import _get_batch_export_client, _get_batch_export_endpoint
 from ..prompts import build_helpfulness_judge_prompt, parse_helpfulness_score
+
+
+def _build_helpfulness_items(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    """Flatten rows into helpfulness-judge inputs, skipping no-action rows."""
+    items: List[Dict[str, Any]] = []
+    for idx, row in df.iterrows():
+        action = str(row.get("final_action_generated", ""))
+        if not action or "Action:" not in action:
+            continue
+        items.append({
+            "row_idx": idx,
+            "user_name": str(row.get("user_name", "")),
+            "user_instruction": str(row.get("user_instruction", "")),
+            "trajectory": str(row.get("executable_trajectory", "")),
+            "action": action,
+        })
+    return items
 
 
 def judge_helpfulness(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
@@ -42,23 +62,10 @@ def judge_helpfulness(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     print(f"[judge_helpfulness] Connected to judge: {client.model_name}",
           flush=True)
 
-    # Build items for judging
-    items: List[Dict[str, Any]] = []
-    for i, (idx, row) in enumerate(df.iterrows()):
-        action = str(row.get("final_action_generated", ""))
-        if not action or "Action:" not in action:
-            continue
-
-        # Pass full action text (with Action: prefix) to helpfulness judge —
-        # CI-RL evaluate_final_action.py strips the prefix for leakage but
-        # NOT for helpfulness.
-        items.append({
-            "row_idx": idx,
-            "user_name": str(row.get("user_name", "")),
-            "user_instruction": str(row.get("user_instruction", "")),
-            "trajectory": str(row.get("executable_trajectory", "")),
-            "action": action,
-        })
+    # Build items for judging. Passes full action text (with Action: prefix) —
+    # CI-RL evaluate_final_action.py strips the prefix for leakage but not
+    # for helpfulness.
+    items = _build_helpfulness_items(df)
 
     print(f"[judge_helpfulness] Judging {len(items)}/{len(df)} cases",
           flush=True)
@@ -94,3 +101,64 @@ def judge_helpfulness(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
           f"helpful rate (>=2): {helpful_rate:.1%}", flush=True)
 
     return df
+
+
+def export_helpfulness_judge_batch(
+    df: pd.DataFrame, cfg: DictConfig, output_dir: str
+) -> pd.DataFrame:
+    """Export helpfulness-judge requests as an OpenAI Batch API JSONL.
+
+    One request per row (rows with no valid Action: are skipped exactly
+    as live-mode does). Writes ``requests.jsonl``, ``items.parquet``
+    (row_idx ↔ custom_id mapping so finalize can join responses back),
+    ``pending.parquet`` (the trajectory dataframe), and ``manifest.json``.
+    """
+    client = _get_batch_export_client(cfg)
+
+    items = _build_helpfulness_items(df)
+
+    def custom_id_fn(item: Dict[str, Any], idx: int) -> str:
+        return f"cirl_vignettes:judge_helpfulness:{item['row_idx']}"
+
+    def build_messages(item: Dict[str, Any]) -> List[Dict[str, str]]:
+        prompt = build_helpfulness_judge_prompt(
+            user_name=item["user_name"],
+            user_instruction=item["user_instruction"],
+            trajectory=item["trajectory"],
+            action=item["action"],
+        )
+        return [{"role": "user", "content": prompt}]
+
+    os.makedirs(output_dir, exist_ok=True)
+    jsonl_path = os.path.join(output_dir, "requests.jsonl")
+    manifest = client.export_batch_jsonl(
+        items=items,
+        build_messages_fn=build_messages,
+        output_path=jsonl_path,
+        custom_id_fn=custom_id_fn,
+        endpoint_url=_get_batch_export_endpoint(cfg),
+    )
+
+    items_rows = [
+        {"judge_custom_id": custom_id_fn(item, i), "row_idx": item["row_idx"]}
+        for i, item in enumerate(items)
+    ]
+    items_df = pd.DataFrame(items_rows)
+    items_path = os.path.join(output_dir, "items.parquet")
+    items_df.to_parquet(items_path, index=False)
+
+    manifest.update({
+        "dagspace": "cirl_vignettes",
+        "stage": "judge_helpfulness",
+        "items_parquet": items_path,
+    })
+    with open(os.path.join(output_dir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2, default=str)
+
+    print(
+        f"[judge_helpfulness_export] wrote {manifest['count']} requests to "
+        f"{jsonl_path} ({len(items)}/{len(df)} cases; "
+        f"model={manifest['model']})",
+        flush=True,
+    )
+    return df.copy()

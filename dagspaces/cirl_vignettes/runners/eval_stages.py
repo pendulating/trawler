@@ -189,6 +189,64 @@ class JudgeHelpfulnessRunner(StageRunner):
         )
 
 
+class JudgeLeakageBatchExportRunner(StageRunner):
+    """Export judge-leakage (row × secret) requests as an OpenAI Batch JSONL."""
+
+    stage_name = "judge_leakage_batch_export"
+
+    def run(self, context: Any) -> StageResult:
+        from ..stages.judge_leakage import export_leakage_judge_batch
+
+        input_path = context.inputs["dataset"]
+        df = pd.read_parquet(input_path)
+
+        out_path = context.output_paths["dataset"]
+        output_dir = os.path.dirname(out_path)
+        os.makedirs(output_dir, exist_ok=True)
+
+        result_df = export_leakage_judge_batch(df, context.cfg, output_dir)
+        result_df.to_parquet(out_path, index=False)
+
+        return StageResult(
+            outputs={
+                "dataset": out_path,
+                "requests_jsonl": os.path.join(output_dir, "requests.jsonl"),
+                "items": os.path.join(output_dir, "items.parquet"),
+                "manifest": os.path.join(output_dir, "manifest.json"),
+            },
+            metadata={"rows": len(result_df)},
+        )
+
+
+class JudgeHelpfulnessBatchExportRunner(StageRunner):
+    """Export judge-helpfulness (per row) requests as an OpenAI Batch JSONL."""
+
+    stage_name = "judge_helpfulness_batch_export"
+
+    def run(self, context: Any) -> StageResult:
+        from ..stages.judge_helpfulness import export_helpfulness_judge_batch
+
+        input_path = context.inputs["dataset"]
+        df = pd.read_parquet(input_path)
+
+        out_path = context.output_paths["dataset"]
+        output_dir = os.path.dirname(out_path)
+        os.makedirs(output_dir, exist_ok=True)
+
+        result_df = export_helpfulness_judge_batch(df, context.cfg, output_dir)
+        result_df.to_parquet(out_path, index=False)
+
+        return StageResult(
+            outputs={
+                "dataset": out_path,
+                "requests_jsonl": os.path.join(output_dir, "requests.jsonl"),
+                "items": os.path.join(output_dir, "items.parquet"),
+                "manifest": os.path.join(output_dir, "manifest.json"),
+            },
+            metadata={"rows": len(result_df)},
+        )
+
+
 class ComputeTrajectoryMetricsRunner(StageRunner):
     stage_name = "compute_trajectory_metrics"
 
