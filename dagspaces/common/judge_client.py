@@ -34,6 +34,12 @@ from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
+# OpenAI Batch API hard limits (docs: wiki/integrations/openai-batch-api.md).
+# A single batch input file may include up to 50,000 requests and be up to
+# 200 MB in size. We only warn — the API enforces both server-side.
+_BATCH_MAX_REQUESTS = 50_000
+_BATCH_MAX_FILE_BYTES = 200 * 1024 * 1024
+
 __all__ = ["JudgeClient"]
 
 
@@ -85,9 +91,10 @@ class JudgeClient:
     Parameters
     ----------
     base_url:
-        Full base URL ending in ``/v1`` (e.g. ``http://klara:8002``,
-        ``https://api.openai.com/v1``). vLLM servers accept both with and
-        without the trailing ``/v1``.
+        Full base URL ending in ``/v1`` (e.g. ``http://klara:8002/v1``,
+        ``https://api.openai.com/v1``). For vLLM, a bare host:port without
+        ``/v1`` is accepted and normalized internally — every OpenAI-compat
+        endpoint vLLM exposes lives under ``/v1/``.
     model_name:
         Model identifier. For vLLM, leave as ``"default"`` to auto-detect
         via ``/v1/models``. For commercial providers, must be explicit
@@ -102,6 +109,14 @@ class JudgeClient:
         ``"openai"``, ``"anthropic"``, ``"gemini"``, ``"openai_compatible"``.
         Only affects whether vLLM-specific fields (``chat_template_kwargs``)
         are sent and which default env var holds the API key.
+    offline:
+        When ``True``, skips the commercial-provider API-key requirement
+        and does not construct the OpenAI SDK client. Used with
+        ``export_batch_jsonl`` when the emitted JSONL will be submitted
+        from a different account / machine, so no credentials exist
+        locally. Any method that would make a network call (``judge_batch``,
+        ``_call_single``, ``health_check`` for non-vLLM providers) will
+        raise when ``offline=True``.
     """
 
     def __init__(
@@ -117,6 +132,7 @@ class JudgeClient:
         api_key: Optional[str] = None,
         api_key_env: Optional[str] = None,
         provider: Optional[str] = None,
+        offline: bool = False,
     ):
         self.base_url = base_url.rstrip("/")
         self.model_name = model_name
@@ -125,12 +141,28 @@ class JudgeClient:
         self.max_retries = max_retries
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.offline = offline
 
         self.provider = (provider or _guess_provider(self.base_url)).lower()
+
+        # vLLM only exposes OpenAI-compat endpoints under /v1 (plus /health at root).
+        # The OpenAI SDK appends /chat/completions directly to base_url, so a
+        # base_url without /v1 silently 404s on every request. Normalize here so
+        # callers can pass either form.
+        if self.provider == "vllm" and not self.base_url.rstrip("/").endswith("/v1"):
+            self.base_url = self.base_url + "/v1"
+
         self._api_key = _resolve_api_key(api_key, api_key_env, self.provider)
 
-        # Commercial providers require an API key and an explicit model name.
-        if self.provider in _COMMERCIAL_PROVIDERS and not self._api_key:
+        # Commercial providers normally require an API key. In ``offline=True``
+        # mode (used for ``export_batch_jsonl`` when the JSONL will be
+        # submitted from a *different* account), we skip that check and also
+        # skip constructing the OpenAI SDK client — no network calls happen.
+        if (
+            self.provider in _COMMERCIAL_PROVIDERS
+            and not self._api_key
+            and not self.offline
+        ):
             env_list = _PROVIDER_ENV_VARS.get(self.provider, [])
             hint = f" (tried env vars: {', '.join(env_list)})" if env_list else ""
             raise ValueError(
@@ -138,14 +170,16 @@ class JudgeClient:
                 f"Pass api_key=... or set api_key_env=<name>{hint}."
             )
 
-        # Build the OpenAI SDK client lazily so import cost is paid once.
-        from openai import OpenAI
-        self._client = OpenAI(
-            base_url=self.base_url,
-            api_key=self._api_key or "EMPTY",
-            timeout=self.timeout,
-            max_retries=self.max_retries,
-        )
+        self._client = None
+        if not self.offline:
+            # Build the OpenAI SDK client lazily so import cost is paid once.
+            from openai import OpenAI
+            self._client = OpenAI(
+                base_url=self.base_url,
+                api_key=self._api_key or "EMPTY",
+                timeout=self.timeout,
+                max_retries=self.max_retries,
+            )
         # Keep a plain requests session for vLLM's /health (not in the OpenAI spec).
         self._session = requests.Session()
 
@@ -160,10 +194,20 @@ class JudgeClient:
         providers, validates that an explicit model name is configured
         (probing their ``/v1/models`` would return hundreds of entries).
         """
+        if self.offline:
+            raise RuntimeError(
+                "JudgeClient is in offline mode; health_check() makes no sense "
+                "because no network calls are allowed. Use offline mode only "
+                "with export_batch_jsonl()."
+            )
         if self.provider == "vllm":
+            # /health is at the server root, not under /v1.
+            health_base = self.base_url
+            if health_base.rstrip("/").endswith("/v1"):
+                health_base = health_base.rstrip("/")[: -len("/v1")]
             try:
                 r = self._session.get(
-                    f"{self.base_url}/health",
+                    f"{health_base}/health",
                     timeout=timeout,
                     headers=self._auth_header(),
                 )
@@ -207,6 +251,11 @@ class JudgeClient:
         errors we retry once without the schema so the caller still gets
         plain text it can parse defensively.
         """
+        if self.offline:
+            raise RuntimeError(
+                "JudgeClient is in offline mode; live judging is disabled. "
+                "Use export_batch_jsonl() to emit a Batch API input file."
+            )
         kwargs: Dict[str, Any] = dict(
             model=self.model_name,
             messages=messages,
@@ -285,3 +334,139 @@ class JudgeClient:
                           flush=True)
 
         return [r or "" for r in results]
+
+    # ------------------------------------------------------------------
+    # Batch export (OpenAI Batch API JSONL)
+    # ------------------------------------------------------------------
+    def export_batch_jsonl(
+        self,
+        items: List[Dict[str, Any]],
+        build_messages_fn: Callable[[Dict[str, Any]], List[Dict[str, str]]],
+        output_path: str,
+        custom_id_fn: Callable[[Dict[str, Any], int], str],
+        json_schema: Optional[Dict[str, Any]] = None,
+        schema_name: str = "result",
+        endpoint_url: str = "/v1/chat/completions",
+    ) -> Dict[str, Any]:
+        """Write items as an OpenAI Batch API input JSONL file.
+
+        Produces one JSONL line per item with the exact same chat-completions
+        body ``_call_single`` would send in live mode (same model, temperature,
+        max_tokens, and ``response_format`` if ``json_schema`` is supplied), so
+        batch and live runs are prompt-identical.
+
+        The Batch API is an OpenAI feature; we refuse to export when the
+        configured provider is ``vllm``. Anthropic and Gemini are allowed with
+        a warning since they share the same OpenAI-compat JSONL shape and can
+        be re-pointed at their own batch endpoints downstream.
+
+        Args:
+            items: list of item dicts, each passed to ``build_messages_fn``.
+            build_messages_fn: callable returning ``[{"role", "content"}, ...]``.
+            output_path: absolute path to the target ``.jsonl`` file.
+            custom_id_fn: callable ``(item, idx) -> str`` returning a unique
+                ``custom_id`` per request. Caller is responsible for uniqueness;
+                this method verifies and raises on duplicates.
+            json_schema: optional JSON Schema for structured decoding; embedded
+                in ``body.response_format`` identically to live mode.
+            schema_name: name field of the embedded json_schema response_format.
+            endpoint_url: one of the Batch-API-supported endpoints; defaults
+                to ``/v1/chat/completions``.
+
+        Returns:
+            Manifest dict with ``path``, ``count``, ``model``, ``provider``,
+            ``endpoint``, ``schema_name`` (if applicable), and ``bytes``.
+        """
+        if self.provider == "vllm":
+            raise ValueError(
+                "export_batch_jsonl() is incompatible with provider='vllm'. "
+                "The OpenAI Batch API is a commercial-only feature. "
+                "Set judge.mode=live for vLLM judging, or point judge.base_url "
+                "at an OpenAI-compatible commercial endpoint."
+            )
+        if self.provider != "openai":
+            print(
+                f"[judge_client] WARN: export_batch_jsonl called with provider="
+                f"{self.provider!r}; the emitted JSONL follows the OpenAI Batch "
+                f"shape and is only directly consumable by OpenAI's /v1/batches.",
+                flush=True,
+            )
+        if not self.model_name or self.model_name == "default":
+            raise ValueError(
+                "export_batch_jsonl() requires an explicit judge.model_name "
+                "(e.g. 'gpt-4o-mini'). 'default' auto-detection is vLLM-only."
+            )
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+        seen_ids: set[str] = set()
+        total_bytes = 0
+        with open(output_path, "w", encoding="utf-8") as f:
+            for idx, item in enumerate(items):
+                cid = custom_id_fn(item, idx)
+                if not isinstance(cid, str) or not cid:
+                    raise ValueError(
+                        f"custom_id_fn must return a non-empty string "
+                        f"(got {cid!r} at idx={idx})"
+                    )
+                if cid in seen_ids:
+                    raise ValueError(
+                        f"duplicate custom_id {cid!r} at idx={idx}; "
+                        f"each Batch API request must have a unique custom_id"
+                    )
+                seen_ids.add(cid)
+
+                messages = build_messages_fn(item)
+                body: Dict[str, Any] = {
+                    "model": self.model_name,
+                    "messages": messages,
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                }
+                if json_schema:
+                    body["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {"name": schema_name, "schema": json_schema},
+                    }
+                line = json.dumps(
+                    {
+                        "custom_id": cid,
+                        "method": "POST",
+                        "url": endpoint_url,
+                        "body": body,
+                    },
+                    ensure_ascii=False,
+                )
+                f.write(line)
+                f.write("\n")
+                total_bytes += len(line) + 1
+
+        count = len(seen_ids)
+        if count > _BATCH_MAX_REQUESTS:
+            print(
+                f"[judge_client] WARN: wrote {count} requests to {output_path}; "
+                f"OpenAI Batch API caps a single input file at "
+                f"{_BATCH_MAX_REQUESTS}. Split before submission.",
+                flush=True,
+            )
+        if total_bytes > _BATCH_MAX_FILE_BYTES:
+            print(
+                f"[judge_client] WARN: {output_path} is "
+                f"{total_bytes / 1024 / 1024:.1f} MB; OpenAI Batch API caps "
+                f"input files at 200 MB. Split before submission.",
+                flush=True,
+            )
+
+        manifest: Dict[str, Any] = {
+            "path": output_path,
+            "count": count,
+            "model": self.model_name,
+            "provider": self.provider,
+            "endpoint": endpoint_url,
+            "bytes": total_bytes,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+        if json_schema:
+            manifest["schema_name"] = schema_name
+        return manifest
