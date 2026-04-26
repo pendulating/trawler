@@ -138,13 +138,28 @@ def parse_responses(df: pd.DataFrame, tier: str) -> pd.DataFrame:
         tier: '2a', '2b', '3_control', '3_free', '3_info', or '3_sharing'.
 
     Returns:
-        DataFrame with ``prediction`` column added.
+        DataFrame with ``prediction`` and ``parse_status`` columns added.
+        ``parse_status`` discriminates ``empty`` / ``unparseable`` /
+        ``parsed`` so eval_sanity catches silent corruption — notably
+        for tiers 3_free / 3_info / 3_sharing, which deterministically
+        return ``no_leak`` / ``error`` from rule-based string matching
+        on empty completions and would otherwise bake into metrics
+        without flag.
     """
     df = df.copy()
+
+    empty_mask = df["generated_text"].fillna("").astype(str).str.strip() == ""
 
     if tier in ("2a", "2b"):
         df["prediction"] = df["generated_text"].apply(
             lambda x: parse_tier2_response(str(x))
+        )
+        df["parse_status"] = df.apply(
+            lambda r: (
+                "empty" if not str(r["generated_text"]).strip()
+                else ("unparseable" if pd.isna(r["prediction"]) else "parsed")
+            ),
+            axis=1,
         )
         total = len(df)
         unparseable = df["prediction"].isna().sum()
@@ -159,14 +174,25 @@ def parse_responses(df: pd.DataFrame, tier: str) -> pd.DataFrame:
         df["prediction"] = df["generated_text"].apply(
             lambda x: parse_tier3_control_response(str(x))
         )
+        df["parse_status"] = df.apply(
+            lambda r: (
+                "empty" if not str(r["generated_text"]).strip()
+                else ("unparseable" if r["prediction"] == "unparseable" else "parsed")
+            ),
+            axis=1,
+        )
         _print_distribution(df, tier)
 
     elif tier == "3_free":
         df["prediction"] = df.apply(parse_tier3_free_response, axis=1)
+        # Rule-based string match always produces leak/no_leak even on
+        # empty text → mark empties so they don't bake into metrics.
+        df["parse_status"] = empty_mask.map(lambda b: "empty" if b else "parsed")
         _print_distribution(df, tier)
 
     elif tier in ("3_info", "3_sharing"):
         df["prediction"] = df.apply(parse_tier3_list_response, axis=1)
+        df["parse_status"] = empty_mask.map(lambda b: "empty" if b else "parsed")
         _print_distribution(df, tier)
 
     else:
