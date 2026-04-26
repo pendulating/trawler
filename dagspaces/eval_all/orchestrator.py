@@ -86,6 +86,16 @@ def run_eval_all(cfg: DictConfig) -> None:
             except Exception:
                 pass
 
+    # eval_all_summary parent W&B run — opens before any benchmark
+    # dispatch so the per-benchmark timings get logged as events into
+    # one place. Stable id keyed on the WANDB_GROUP so a SLURM-requeued
+    # eval_all monitor reattaches instead of forking the timeline.
+    summary_run = _open_eval_all_summary_run(
+        cfg=cfg,
+        wandb_project=wandb_project,
+        model_name=model_name,
+    )
+
     # Async-judge sidecar (optional): launch ONE small CPU subprocess that
     # watches every benchmark's output dir for judge manifests and forwards
     # them to the cluster judge endpoint. Judged benchmarks run their
@@ -110,6 +120,8 @@ def run_eval_all(cfg: DictConfig) -> None:
                 pass
 
     results = {}
+    durations: Dict[str, float] = {}
+    drain_seconds: float = 0.0
     try:
         for bench_name, bench_cfg in benchmarks.items():
             module = bench_cfg["module"]
@@ -157,25 +169,29 @@ def run_eval_all(cfg: DictConfig) -> None:
 
             status = "ok" if proc.returncode == 0 else f"FAILED (rc={proc.returncode})"
             results[bench_name] = status
+            durations[bench_name] = elapsed
             print(f"\n  {bench_name} finished in {elapsed:.0f}s — {status}")
     finally:
         # Phase 2 (drain) and Phase 3 (finalize) for the async-judge flow.
         # Run BEFORE shutting down the task vLLM server so finalize stages
         # that re-use it (none today, but defensive) still see it.
         finalize_results: Dict[str, str] = {}
+        finalize_durations: Dict[str, float] = {}
         if sidecar_proc is not None:
             try:
+                _drain_t0 = time.time()
                 drained = _wait_for_judge_drain(
                     parent_output_dir,
                     sidecar_cfg=sidecar_cfg,
                 )
+                drain_seconds = time.time() - _drain_t0
                 if not drained:
                     print(
                         "[eval_all] WARNING: judge drain timed out — finalize "
                         "stages may fail or be skipped.",
                         file=sys.stderr,
                     )
-                finalize_results = _run_judged_finalize(
+                finalize_results, finalize_durations = _run_judged_finalize(
                     benchmarks=benchmarks,
                     benchmark_results=results,
                     model_name=model_name,
@@ -205,6 +221,20 @@ def run_eval_all(cfg: DictConfig) -> None:
         for bench, status in finalize_results.items():
             marker = "OK" if status == "ok" else "SKIP" if status.startswith("skipped") else "FAIL"
             print(f"  [{marker:>4}] {bench} (finalize): {status}")
+
+    # Close out the summary run — builds the per-benchmark table and
+    # logs aggregate scalars.
+    _close_eval_all_summary_run(
+        run=summary_run,
+        benchmarks=benchmarks,
+        dispatch_results=results,
+        dispatch_durations=durations,
+        finalize_results=finalize_results,
+        finalize_durations=locals().get("finalize_durations", {}),
+        drain_seconds=drain_seconds,
+        parent_output_dir=parent_output_dir,
+        model_name=model_name,
+    )
 
     failed = [b for b, s in results.items() if s not in ("ok", "skipped")]
     failed += [
@@ -367,7 +397,7 @@ def _run_judged_finalize(
     wandb_project: str,
     debug: bool,
     sample_n: Any,
-) -> Dict[str, str]:
+) -> "tuple[Dict[str, str], Dict[str, float]]":
     """Dispatch each judged benchmark's ``finalize_pipeline`` as a child
     CLI invocation against the same per-benchmark output dir as the
     export pipeline used.
@@ -378,6 +408,7 @@ def _run_judged_finalize(
     flaky judge run doesn't kill the whole sweep summary.
     """
     finalize_results: Dict[str, str] = {}
+    finalize_durations: Dict[str, float] = {}
     for bench_name, bench_cfg in benchmarks.items():
         finalize_pipeline = bench_cfg.get("finalize_pipeline")
         if not finalize_pipeline:
@@ -389,6 +420,7 @@ def _run_judged_finalize(
             print(f"  SKIP finalize for {bench_name}: export status = {export_status}")
             print(f"{'!'*60}\n")
             finalize_results[bench_name] = f"skipped:export_{export_status}"
+            finalize_durations[bench_name] = 0.0
             continue
 
         child_output_dir = os.path.join(parent_output_dir, bench_name)
@@ -398,6 +430,7 @@ def _run_judged_finalize(
             print(f"  (export pipeline may not have written them; check sidecar logs)")
             print(f"{'!'*60}\n")
             finalize_results[bench_name] = "skipped:no_manifest"
+            finalize_durations[bench_name] = 0.0
             continue
 
         cmd = [
@@ -422,8 +455,9 @@ def _run_judged_finalize(
         elapsed = time.time() - t0
         status = "ok" if proc.returncode == 0 else f"FAILED (rc={proc.returncode})"
         finalize_results[bench_name] = status
+        finalize_durations[bench_name] = elapsed
         print(f"\n  {bench_name} finalize finished in {elapsed:.0f}s — {status}")
-    return finalize_results
+    return finalize_results, finalize_durations
 
 
 def _judged_run_has_manifests(child_output_dir: str) -> bool:
@@ -438,6 +472,218 @@ def _judged_run_has_manifests(child_output_dir: str) -> bool:
                 if os.path.exists(os.path.join(root, d, "manifest.json")):
                     return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# eval_all_summary parent W&B run
+# ---------------------------------------------------------------------------
+
+def _open_eval_all_summary_run(
+    *,
+    cfg: DictConfig,
+    wandb_project: str,
+    model_name: str,
+):
+    """Open the eval_all_summary parent run. Resumable by group so a
+    requeued monitor reattaches; returns None if W&B is unavailable.
+    """
+    try:
+        import wandb  # type: ignore
+    except Exception:
+        return None
+    if os.environ.get("WANDB_DISABLED", "").lower() in ("true", "1"):
+        return None
+    if not bool(OmegaConf.select(cfg, "wandb.enabled")):
+        # Respect the project's existing wandb.enabled gate so disabled
+        # runs don't accidentally still open a summary.
+        return None
+
+    from dagspaces.common.wandb_logger import derive_resumable_run_id
+
+    group = os.environ.get("WANDB_GROUP") or None
+    entity = os.environ.get("WANDB_ENTITY")
+    judge_mode = str(OmegaConf.select(cfg, "judge.mode") or "live")
+
+    run_id = derive_resumable_run_id(
+        group=group, dagspace="eval_all_summary",
+        model=model_name, role="summary",
+    )
+    tags = [
+        f"bench:eval_all_summary",
+        f"judge_mode:{judge_mode}",
+    ]
+    if group:
+        tags.append(f"eval_all_run:{group}")
+    if model_name:
+        tags.append(f"family:{model_name}")
+
+    init_kwargs: Dict[str, Any] = {
+        "project": wandb_project,
+        "entity": entity,
+        "group": group,
+        "job_type": "eval_all_summary",
+        "name": f"summary-{model_name}-{group or 'standalone'}",
+        "config": {
+            "model": model_name,
+            "judge_mode": judge_mode,
+            "benchmarks": list(OmegaConf.to_container(cfg.benchmarks, resolve=True).keys()),
+        },
+        "tags": tags,
+        "reinit": True,
+    }
+    if run_id:
+        init_kwargs["id"] = run_id
+        init_kwargs["resume"] = "allow"
+
+    try:
+        return wandb.init(**init_kwargs)
+    except Exception as exc:
+        print(f"[eval_all] summary run init failed: {exc}", file=sys.stderr)
+        return None
+
+
+def _read_pipeline_manifest(child_output_dir: str) -> Dict[str, Any]:
+    """Find any pipeline_manifest.json under a child run's output and
+    return it (sanity counts live in node metadata). Tolerant: returns
+    {} if not found or unparseable.
+    """
+    if not os.path.isdir(child_output_dir):
+        return {}
+    for root, dirs, files in os.walk(child_output_dir):
+        if "pipeline_manifest.json" in files:
+            try:
+                import json as _json
+                with open(os.path.join(root, "pipeline_manifest.json")) as f:
+                    return _json.load(f)
+            except Exception:
+                continue
+    return {}
+
+
+def _aggregate_sanity_warnings(manifest: Dict[str, Any]) -> "tuple[int, str]":
+    """Count sanity warnings + extract the worst-warning string from a
+    pipeline_manifest.json. Used by the summary table.
+    """
+    nodes = manifest.get("nodes", {}) or {}
+    total = 0
+    worst_msg = ""
+    for node_name, node_data in nodes.items():
+        meta = (node_data or {}).get("metadata") or {}
+        sanity = meta.get("sanity") or {}
+        for stage_name, stage in sanity.items():
+            if not isinstance(stage, dict):
+                continue
+            warnings = stage.get("warnings") or []
+            total += len(warnings)
+            if warnings and not worst_msg:
+                worst_msg = f"{stage_name}: {warnings[0]}"
+    return total, worst_msg
+
+
+def _close_eval_all_summary_run(
+    *,
+    run,
+    benchmarks: Dict[str, Any],
+    dispatch_results: Dict[str, str],
+    dispatch_durations: Dict[str, float],
+    finalize_results: Dict[str, str],
+    finalize_durations: Dict[str, float],
+    drain_seconds: float,
+    parent_output_dir: str,
+    model_name: str,
+) -> None:
+    """Build the per-benchmark summary table + aggregate scalars, then finish."""
+    if run is None:
+        return
+    try:
+        import wandb  # type: ignore
+        from .primary_metrics import (
+            extract_primary_metrics, format_primary_metrics, PRIMARY_METRICS,
+        )
+    except Exception as exc:
+        try:
+            run.finish()
+        except Exception:
+            pass
+        print(f"[eval_all] summary close failed early: {exc}", file=sys.stderr)
+        return
+
+    cols = [
+        "benchmark", "dispatch_status", "dispatch_seconds",
+        "finalize_status", "finalize_seconds",
+        "primary_metrics", "sanity_warnings", "worst_sanity",
+    ]
+    rows: List[List[Any]] = []
+    aggregate_metrics: Dict[str, Any] = {}
+
+    for bench_name in benchmarks.keys():
+        child_output_dir = os.path.join(parent_output_dir, bench_name)
+        # Find the inner output_root the dagspace actually wrote to.
+        # Convention: <child>/<inner>/outputs/... — pick the first
+        # subdir that contains "outputs/".
+        bench_root = child_output_dir
+        if os.path.isdir(child_output_dir):
+            for sub in os.listdir(child_output_dir):
+                cand = os.path.join(child_output_dir, sub)
+                if os.path.isdir(os.path.join(cand, "outputs")):
+                    bench_root = cand
+                    break
+
+        manifest = _read_pipeline_manifest(child_output_dir)
+        sanity_count, worst = _aggregate_sanity_warnings(manifest)
+        primary_vals = (
+            extract_primary_metrics(bench_root, bench_name)
+            if bench_name in PRIMARY_METRICS else {}
+        )
+        primary_fmt = format_primary_metrics(primary_vals, bench_name) if primary_vals else {}
+        primary_str = ", ".join(f"{k}={v}" for k, v in primary_fmt.items()) or "—"
+
+        rows.append([
+            bench_name,
+            dispatch_results.get(bench_name, "missing"),
+            round(dispatch_durations.get(bench_name, 0.0), 1),
+            finalize_results.get(bench_name, "—"),
+            round(finalize_durations.get(bench_name, 0.0), 1),
+            primary_str,
+            sanity_count,
+            worst or "—",
+        ])
+
+        # Per-benchmark aggregate scalars (so dashboards can plot a single
+        # benchmark's headline metric across many summary runs).
+        for metric_name, val in primary_vals.items():
+            if val is None:
+                continue
+            aggregate_metrics[f"summary/{bench_name}/{metric_name}"] = float(val)
+        aggregate_metrics[f"summary/{bench_name}/dispatch_seconds"] = float(
+            dispatch_durations.get(bench_name, 0.0)
+        )
+        if bench_name in finalize_durations:
+            aggregate_metrics[f"summary/{bench_name}/finalize_seconds"] = float(
+                finalize_durations[bench_name]
+            )
+        aggregate_metrics[f"summary/{bench_name}/sanity_warnings"] = int(sanity_count)
+
+    aggregate_metrics["summary/drain_seconds"] = float(drain_seconds)
+    aggregate_metrics["summary/total_dispatch_seconds"] = float(sum(dispatch_durations.values()))
+    aggregate_metrics["summary/total_finalize_seconds"] = float(sum(finalize_durations.values()))
+    aggregate_metrics["summary/n_benchmarks_ok"] = int(
+        sum(1 for s in dispatch_results.values() if s == "ok")
+    )
+    aggregate_metrics["summary/n_benchmarks_failed"] = int(
+        sum(1 for s in dispatch_results.values() if s != "ok" and s != "skipped")
+    )
+
+    try:
+        run.log({"summary/benchmarks": wandb.Table(columns=cols, data=rows)})
+        run.log(aggregate_metrics)
+    except Exception as exc:
+        print(f"[eval_all] summary log failed: {exc}", file=sys.stderr)
+
+    try:
+        run.finish()
+    except Exception:
+        pass
 
 
 def _resolve_model_name(cfg: DictConfig) -> str:
