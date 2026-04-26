@@ -13,6 +13,7 @@ from dagspaces.common.wandb_logger import (
     WandbLogger as _WandbLoggerBase,
     collect_compute_metadata,
     ensure_local_tmpdir,
+    pipeline_run_id,
 )
 
 ensure_local_tmpdir("vlm_geoprivacy_bench")

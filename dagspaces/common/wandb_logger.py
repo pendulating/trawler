@@ -863,6 +863,57 @@ def build_wandb_tags(
     return tags
 
 
+def pipeline_run_id(
+    cfg,
+    dagspace: str,
+    *,
+    model_name: Optional[str] = None,
+) -> Optional[str]:
+    """Stable W&B run id for cross-stage resume within a pipeline.
+
+    Returns a 16-hex sha256 id derived from
+    ``(WANDB_GROUP, dagspace, model_name)`` when ``cfg.wandb.single_run``
+    is truthy AND a group is available, else ``None``. Callers pass this
+    plus ``resume="allow"`` to :class:`WandbLogger` so every stage of a
+    pipeline (and the matching finalize pipeline that runs later)
+    reattaches to the same run instead of forking a new one per stage.
+
+    Specifically built for the async-judge flow where privacylens_async
+    (export-only) and privacylens_async_finalize (drain + metrics) run
+    in separate processes, often hours apart, but should appear as a
+    single W&B timeline. Other dagspaces benefit too: with
+    ``single_run=true`` (the existing default in every dagspace's
+    config.yaml) all per-stage logs collapse into one run.
+
+    Args:
+        cfg: Hydra config; consults ``cfg.wandb.single_run`` and
+            ``cfg.model.model_source`` (for an auto-resolved model name
+            when one isn't passed).
+        dagspace: Owning dagspace key.
+        model_name: Override the auto-resolved model identifier (e.g.
+            pass the eval_all-resolved model_name like ``qwen3.5-9b/base``
+            instead of the basename of model_source).
+    """
+    try:
+        single = bool(getattr(getattr(cfg, "wandb", None), "single_run", False))
+    except Exception:
+        single = False
+    if not single:
+        return None
+    group = _get_group_from_config(cfg)
+    if not group:
+        return None
+    if model_name is None:
+        try:
+            from omegaconf import OmegaConf
+            src = str(OmegaConf.select(cfg, "model.model_source") or "")
+            if src:
+                model_name = os.path.basename(src.rstrip("/"))
+        except Exception:
+            model_name = None
+    return derive_resumable_run_id(group, dagspace, model_name, role="pipeline")
+
+
 def derive_resumable_run_id(
     group: Optional[str],
     dagspace: str,

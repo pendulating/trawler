@@ -42,7 +42,7 @@ from dagspaces.common.orchestrator import (
 )
 
 from .runners import get_stage_registry
-from .wandb_logger import WandbConfig, WandbLogger
+from .wandb_logger import WandbConfig, WandbLogger, pipeline_run_id
 
 try:
     import submitit
@@ -58,8 +58,17 @@ _STAGE_REGISTRY: Dict[str, Any] = get_stage_registry()
 
 def _get_wandb_logger(cfg: DictConfig, stage: str, run_id: Optional[str] = None, run_config: Optional[Dict[str, Any]] = None):
     wb_config = WandbConfig.from_hydra_config(cfg)
+    # Cross-stage resume: when cfg.wandb.single_run is true, derive a
+    # stable id from (WANDB_GROUP, dagspace, model) so every stage
+    # (and the finalize pipeline that runs later, in async mode)
+    # reattaches to one resumed run instead of forking N runs.
+    pipeline_id = pipeline_run_id(cfg, dagspace="goldcoin")
     if wb_config.enabled:
-        return WandbLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
+        return WandbLogger(
+            cfg, stage=stage, run_id=run_id, run_config=run_config,
+            wandb_id=pipeline_id,
+            resume="allow" if pipeline_id else None,
+        )
     return _NoOpLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
 
 

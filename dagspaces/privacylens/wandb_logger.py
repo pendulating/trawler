@@ -22,6 +22,7 @@ from dagspaces.common.wandb_logger import (
     WandbLogger as _WandbLoggerBase,
     collect_compute_metadata,
     ensure_local_tmpdir,
+    pipeline_run_id,
 )
 from typing import Any, Dict, Optional
 
