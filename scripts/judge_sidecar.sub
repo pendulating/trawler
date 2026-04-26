@@ -1,0 +1,88 @@
+#!/bin/bash
+#SBATCH --job-name=judge-sidecar
+#SBATCH --partition=pierson
+#SBATCH --gres=none
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=4G
+#SBATCH --time=12:00:00
+#SBATCH --output=.slurm_jobs/judge-sidecar/%j.out
+#SBATCH --error=.slurm_jobs/judge-sidecar/%j.err
+#SBATCH --requeue
+
+# Async-judge sidecar: small CPU job that watches a run dir for judge
+# manifest.json files and forwards each row's request body to the live
+# judge endpoint (typically scripts/judge_server.sub on klara). No GPU.
+#
+# Required env / args:
+#   RUN_DIR           Eval root the sidecar should watch (the eval_all
+#                     monitor's hydra.run.dir).
+#   JUDGE_BASE_URL    e.g. http://klara:8002 (where judge_server.sub serves)
+#   JUDGE_MODEL       Optional judge model identifier (telemetry only).
+#   WANDB_GROUP       Inherited from eval_all monitor; ties the sidecar's
+#                     W&B run to its parent sweep and survives requeue.
+#
+# Optional:
+#   JUDGE_API_KEY_ENV Name of an env var holding a Bearer token (commercial
+#                     endpoints). vLLM ignores auth so leave unset for the
+#                     local cluster judge_server.
+#   JUDGE_CONCURRENCY Per-manifest worker pool (default 8).
+#   JUDGE_PARALLEL_MANIFESTS  How many manifests to fan out at once (default 4).
+#
+# Usage:
+#   RUN_DIR=$PWD/multirun/$DATE/$TIME JUDGE_BASE_URL=http://klara:8002 \
+#       sbatch scripts/judge_sidecar.sub
+
+set -euo pipefail
+
+REPO_DIR="${REPO_DIR:-/share/pierson/matt/UAIR}"
+cd "$REPO_DIR"
+
+if [[ -z "${RUN_DIR:-}" ]]; then
+    echo "ERROR: RUN_DIR not set" >&2
+    exit 2
+fi
+if [[ -z "${JUDGE_BASE_URL:-}" ]]; then
+    echo "ERROR: JUDGE_BASE_URL not set (e.g. http://klara:8002)" >&2
+    exit 2
+fi
+
+JUDGE_MODEL="${JUDGE_MODEL:-}"
+JUDGE_CONCURRENCY="${JUDGE_CONCURRENCY:-8}"
+JUDGE_PARALLEL_MANIFESTS="${JUDGE_PARALLEL_MANIFESTS:-4}"
+
+# Activate the project venv exactly as eval_all child workers do.
+if [[ -f server.env ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source server.env
+    set +a
+fi
+# shellcheck source=/dev/null
+source "${TRAWLER_VENV_ACTIVATE:-/share/pierson/matt/UAIR/.venv/bin/activate}"
+
+export PYTHONPATH="${REPO_DIR}:${PYTHONPATH:-}"
+export PYTHONUNBUFFERED=1
+export TOKENIZERS_PARALLELISM=false
+
+# W&B: stay online with retries (the sidecar's per-tick logger handles
+# transient failures itself). Inherit project / entity / group from env.
+export WANDB_DISABLE_SERVICE=true
+
+extra_args=()
+if [[ -n "${JUDGE_API_KEY_ENV:-}" ]]; then
+    extra_args+=(--api-key-env "$JUDGE_API_KEY_ENV")
+fi
+
+echo "[judge_sidecar.sub] HOST=$(hostname) DATE=$(date)"
+echo "[judge_sidecar.sub] RUN_DIR=$RUN_DIR"
+echo "[judge_sidecar.sub] JUDGE_BASE_URL=$JUDGE_BASE_URL"
+echo "[judge_sidecar.sub] JUDGE_MODEL=$JUDGE_MODEL"
+echo "[judge_sidecar.sub] WANDB_GROUP=${WANDB_GROUP:-<unset>}"
+
+exec python -m dagspaces.eval_all.judge_sidecar run \
+    --run-dir "$RUN_DIR" \
+    --base-url "$JUDGE_BASE_URL" \
+    --model "$JUDGE_MODEL" \
+    --concurrency "$JUDGE_CONCURRENCY" \
+    --parallel-manifests "$JUDGE_PARALLEL_MANIFESTS" \
+    "${extra_args[@]}"
