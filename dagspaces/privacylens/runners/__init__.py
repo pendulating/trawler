@@ -24,6 +24,8 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             AgentActionInferenceRunner,
             LeakageJudgeInferenceRunner,
             HelpfulnessJudgeInferenceRunner,
+            LeakageJudgeBatchExportRunner,
+            HelpfulnessJudgeBatchExportRunner,
             ComputeMetricsRunner,
         )
 
@@ -34,6 +36,8 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             "agent_action_inference": AgentActionInferenceRunner(),
             "leakage_judge_inference": LeakageJudgeInferenceRunner(),
             "helpfulness_judge_inference": HelpfulnessJudgeInferenceRunner(),
+            "leakage_judge_batch_export": LeakageJudgeBatchExportRunner(),
+            "helpfulness_judge_batch_export": HelpfulnessJudgeBatchExportRunner(),
             "compute_metrics": ComputeMetricsRunner(),
         }
     return _STAGE_REGISTRY.copy()

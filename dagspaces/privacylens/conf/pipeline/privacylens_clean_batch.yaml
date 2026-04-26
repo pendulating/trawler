@@ -1,0 +1,87 @@
+# @package _global_
+#
+# Batch-export variant of privacylens_clean: the task LLM (QA probe + agent
+# action) still runs locally on GPUs, but the judge stages write OpenAI
+# Batch API JSONL files and the pipeline terminates without calling a live
+# judge. Compute_metrics is NOT included; finalize via the companion script.
+#
+# End-to-end flow:
+#
+#   # 1. Export phase (this pipeline). NO OpenAI credentials needed here —
+#   #    the judge stages construct the client in offline mode and never
+#   #    hit the network. Whoever runs step 2 needs OPENAI_API_KEY.
+#   #    The target model is controlled by judge.batch.target_model
+#   #    (default: gpt-5.2); override at the CLI if you want a different
+#   #    model name written into each JSONL line's body.model field.
+#   python -m dagspaces.privacylens.cli pipeline=privacylens_clean_batch \
+#       judge.mode=batch_export \
+#       judge.batch.target_model=gpt-5.2
+#
+#   # 2. Submit each judge JSONL (from any machine with OPENAI_API_KEY set,
+#   #    not necessarily the one that ran step 1)
+#   python -m dagspaces.common.batch_api submit \
+#       <run_dir>/privacylens_eval/outputs/leakage_judge_batch/requests.jsonl
+#   python -m dagspaces.common.batch_api submit \
+#       <run_dir>/privacylens_eval/outputs/helpfulness_judge_batch/requests.jsonl
+#
+#   # 3. Poll and fetch each batch once status == completed
+#   python -m dagspaces.common.batch_api fetch <leakage_batch_id> \
+#       -o <run_dir>/.../outputs/leakage_judge_batch/output.jsonl
+#   python -m dagspaces.common.batch_api fetch <helpfulness_batch_id> \
+#       -o <run_dir>/.../outputs/helpfulness_judge_batch/output.jsonl
+#
+#   # 4. Finalize: merge outputs + parse + compute_metrics
+#   python scripts/privacylens_batch_finalize.py \
+#       --run-dir <run_dir>/privacylens_eval
+
+defaults:
+  - /model: qwen2.5-72b/awq
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:run.dir}/privacylens_eval
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+
+      qa_probe_inference:
+        stage: qa_probe_inference
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/qa_probe_inference/results.parquet
+        launcher: slurm_gpu_1x
+
+      agent_action_inference:
+        stage: agent_action_inference
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/agent_action_inference/results.parquet
+        launcher: slurm_gpu_1x
+
+      # --- Batch export: writes requests.jsonl + pending.parquet, no GPU ---
+      leakage_judge_batch_export:
+        stage: leakage_judge_batch_export
+        depends_on: [agent_action_inference]
+        inputs:
+          dataset: agent_action_inference.dataset
+        outputs:
+          dataset: outputs/leakage_judge_batch/pending.parquet
+
+      helpfulness_judge_batch_export:
+        stage: helpfulness_judge_batch_export
+        depends_on: [agent_action_inference]
+        inputs:
+          dataset: agent_action_inference.dataset
+        outputs:
+          dataset: outputs/helpfulness_judge_batch/pending.parquet

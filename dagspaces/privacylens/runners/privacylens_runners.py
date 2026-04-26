@@ -137,6 +137,71 @@ class HelpfulnessJudgeInferenceRunner(StageRunner):
         )
 
 
+class LeakageJudgeBatchExportRunner(StageRunner):
+    """Write leakage-judge requests as an OpenAI Batch API JSONL file.
+
+    Produces, in the node's output directory:
+        - pending.parquet  (dataset + judge_custom_id column)
+        - requests.jsonl   (Batch API input)
+        - manifest.json    (count, model, provider, schema name)
+
+    The node's declared ``dataset`` output should point at pending.parquet
+    so downstream ingest stages can pick it up via the ArtifactRegistry.
+    """
+
+    stage_name = "leakage_judge_batch_export"
+
+    def run(self, context: Any) -> StageResult:
+        from ..stages.llm_inference import export_leakage_judge_batch
+
+        input_path = context.inputs["dataset"]
+        df = pd.read_parquet(input_path)
+
+        out_path = context.output_paths["dataset"]
+        output_dir = os.path.dirname(out_path)
+        os.makedirs(output_dir, exist_ok=True)
+
+        result_df = export_leakage_judge_batch(df, context.cfg, output_dir)
+        result_df.to_parquet(out_path, index=False)
+
+        return StageResult(
+            outputs={
+                "dataset": out_path,
+                "requests_jsonl": os.path.join(output_dir, "requests.jsonl"),
+                "manifest": os.path.join(output_dir, "manifest.json"),
+            },
+            metadata={"rows": len(result_df)},
+        )
+
+
+class HelpfulnessJudgeBatchExportRunner(StageRunner):
+    """Write helpfulness-judge requests as an OpenAI Batch API JSONL file."""
+
+    stage_name = "helpfulness_judge_batch_export"
+
+    def run(self, context: Any) -> StageResult:
+        from ..stages.llm_inference import export_helpfulness_judge_batch
+
+        input_path = context.inputs["dataset"]
+        df = pd.read_parquet(input_path)
+
+        out_path = context.output_paths["dataset"]
+        output_dir = os.path.dirname(out_path)
+        os.makedirs(output_dir, exist_ok=True)
+
+        result_df = export_helpfulness_judge_batch(df, context.cfg, output_dir)
+        result_df.to_parquet(out_path, index=False)
+
+        return StageResult(
+            outputs={
+                "dataset": out_path,
+                "requests_jsonl": os.path.join(output_dir, "requests.jsonl"),
+                "manifest": os.path.join(output_dir, "manifest.json"),
+            },
+            metadata={"rows": len(result_df)},
+        )
+
+
 class ComputeMetricsRunner(StageRunner):
     stage_name = "compute_metrics"
 

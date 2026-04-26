@@ -311,7 +311,7 @@ def run_experiment(cfg: DictConfig) -> None:
                             or ("result" in exc_text and "pickle" in exc_text)
                         )
                         if missing_result:
-                            wait_s = int(OmegaConf.select(cfg, "runtime.submitit_result_wait_s", default=120))
+                            wait_s = int(OmegaConf.select(cfg, "runtime.submitit_result_wait_s", default=300))
                             _print_status({
                                 "debug": "waiting_for_result_pickle",
                                 "job_id": job.job_id,
@@ -349,16 +349,17 @@ def run_experiment(cfg: DictConfig) -> None:
                                         )
                                         if not check.stdout.strip() or check.stdout.strip() not in ("R", "PD", "CG"):
                                             break
-                                    # Wait a bit for NFS to sync, then read result
-                                    for _ in range(30):
-                                        if os.path.exists(result_path):
-                                            break
-                                        time.sleep(2)
+                                # Job left squeue (completed or failed) — wait
+                                # for NFS to propagate the result pickle.
+                                for _ in range(30):
                                     if os.path.exists(result_path):
-                                        with open(result_path, "rb") as f:
-                                            _outcome, _result = pickle.load(f)
-                                        job_result = _result
-                                        _print_status({"debug": "recovered_result_after_squeue_wait", "job_id": job.job_id})
+                                        break
+                                    time.sleep(2)
+                                if os.path.exists(result_path):
+                                    with open(result_path, "rb") as f:
+                                        _outcome, _result = pickle.load(f)
+                                    job_result = _result
+                                    _print_status({"debug": "recovered_result_after_squeue_wait", "job_id": job.job_id})
                             except Exception as inner_exc:
                                 _print_status({
                                     "debug": "squeue_fallback_failed",
@@ -376,7 +377,12 @@ def run_experiment(cfg: DictConfig) -> None:
                         if outcome == "error":
                             raise RuntimeError(f"SLURM job {job.job_id} failed:\n{payload}")
                         job_result = payload
-
+                    if not isinstance(job_result, dict):
+                        raise RuntimeError(
+                            f"SLURM job {job.job_id} for node '{node.key}' returned "
+                            f"unexpected result type {type(job_result).__name__}: "
+                            f"{str(job_result)[:500]}"
+                        )
                     result = StageResult(outputs=job_result["outputs"], metadata=job_result["metadata"])
                 else:
                     _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})

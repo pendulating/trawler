@@ -22,14 +22,22 @@ runtime:
 judge_server_url: ${oc.env:JUDGE_SERVER_URL,""}   # legacy alias; prefer judge.base_url below
 
 judge:
+  mode: live                       # live | batch_export (use pipeline=privacylens_clean_batch)
+  # Live-mode config (ignored when mode=batch_export — the export stage
+  # does not contact any API at all and only needs judge.batch.* below).
   base_url: ${judge_server_url}    # overridable independently
   model_name: default              # vLLM: auto-detects; commercial: set explicitly
   provider: null                   # null = auto-detect | vllm | openai | anthropic | gemini | openai_compatible
   api_key: null                    # or use api_key_env
   api_key_env: null                # e.g. OPENAI_API_KEY
   max_workers: 8
-  temperature: 0.0
-  max_tokens: 1024
+  temperature: 0.0                 # shared with batch-export (body.temperature)
+  max_tokens: 1024                 # shared with batch-export (body.max_tokens)
+  batch:
+    # Batch-export-mode config. Only consulted when mode=batch_export.
+    target_model: gpt-5.2           # model name written into each JSONL body.model
+    target_endpoint: /v1/chat/completions
+    output_jsonl: null             # ingest override; default picks up output.jsonl next to pending.parquet
 
 sampling_params:
   seed: 777
