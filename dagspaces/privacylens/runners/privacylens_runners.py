@@ -80,6 +80,7 @@ class QAProbeInferenceRunner(StageRunner):
             status_col="parse_status",
             completion_col="generated_text",
             label_col="predicted_label",
+            finish_reason_col="finish_reason",
             # QA fans out 3× per input row (S/V/T axes), so the expected
             # output count is 3 × input_n. Skip row_count_drop unless we
             # can be exact.
@@ -140,6 +141,7 @@ class LeakageJudgeInferenceRunner(StageRunner):
             status_col="parse_status",
             completion_col="leak_judge_text",
             label_col="leak_flag",
+            finish_reason_col="finish_reason",
             expected_input_n=input_n,
             refusal_patterns=patterns,
             thresholds=thresholds,
@@ -176,6 +178,7 @@ class HelpfulnessJudgeInferenceRunner(StageRunner):
             status_col="parse_status",
             completion_col="helpfulness_judge_text",
             label_col="helpfulness_score",
+            finish_reason_col="finish_reason",
             expected_input_n=input_n,
             refusal_patterns=patterns,
             thresholds=thresholds,
@@ -227,6 +230,7 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
             status_col="parse_status",
             completion_col="leak_judge_text",
             label_col="leak_flag",
+            finish_reason_col="finish_reason",
             expected_input_n=int(result["leakage_meta"]["rows"]),
             refusal_patterns=patterns,
             thresholds=thresholds,
@@ -239,6 +243,7 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
             status_col="parse_status",
             completion_col="helpfulness_judge_text",
             label_col="helpfulness_score",
+            finish_reason_col="finish_reason",
             expected_input_n=int(result["helpfulness_meta"]["rows"]),
             refusal_patterns=patterns,
             thresholds=thresholds,
