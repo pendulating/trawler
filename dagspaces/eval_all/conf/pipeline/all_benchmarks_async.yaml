@@ -1,0 +1,82 @@
+# @package _global_
+#
+# Async-judge variant of all_benchmarks. Runs every eval end-to-end like the
+# regular pipeline, but:
+#
+# 1. Privacylens (the only currently-judged benchmark) uses the async
+#    export pipeline, which writes requests.jsonl + items.parquet +
+#    pending.parquet + manifest.json and exits without calling the live
+#    judge or running compute_metrics.
+#
+# 2. The eval_all monitor launches a small CPU sidecar
+#    (dagspaces/eval_all/judge_sidecar.py) at startup that watches each
+#    benchmark's output dir for manifests and forwards each row's request
+#    body to the cluster judge endpoint (typically
+#    scripts/judge_server.sub on klara). The sidecar logs throughput +
+#    per-row failures to its own W&B run.
+#
+# 3. Other benchmarks (goldcoin, cirl_vignettes, confaide, vlm_geoprivacy)
+#    run unchanged — they have no judge stage, so they finish on their
+#    own timeline while privacylens is still being judged.
+#
+# 4. After every benchmark dispatch returns, the monitor calls
+#    wait_for_drain() to block until every emitted judge manifest has a
+#    done.flag. Then for each judged benchmark it dispatches the
+#    *_async_finalize pipeline (parse + compute_metrics) against the
+#    same per-benchmark output dir.
+#
+# Result: while privacylens's judges grind for 100+ minutes, all other
+# benchmarks complete in parallel and the operator gets metrics as soon
+# as the slowest manifest drains, instead of after the sequential
+# benchmark-by-benchmark wait the live pipeline imposes.
+#
+# Required cluster setup:
+#   sbatch scripts/judge_server.sub      # 2-GPU vLLM judge service
+#                                        # on klara:8002 by default
+
+defaults:
+  - /model: qwen3.5-9b/base
+  - override /hydra/launcher: slurm_monitor
+
+# Surfaces in W&B as judge_mode:async on every child run.
+judge:
+  mode: async
+  base_url: ${oc.env:JUDGE_BASE_URL,http://klara:8002}
+
+judge_sidecar:
+  enabled: true
+  base_url: ${judge.base_url}
+  model: ${oc.env:JUDGE_MODEL,Qwen3.6-27B}
+  concurrency: 8
+  parallel_manifests: 4
+  # Drain timeout is the upper bound on "how long after every benchmark
+  # has dispatched are we willing to wait for judges to finish." 6h is
+  # generous for a 5-model sweep; tune down for smaller runs.
+  drain_timeout_s: 21600
+  drain_poll_interval_s: 30.0
+  # Optional: name an env var holding a Bearer token for commercial
+  # judge endpoints. Leave null/unset for the local cluster judge_server.
+  api_key_env: null
+
+benchmarks:
+  goldcoin:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+  privacylens:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_async
+    finalize_pipeline: privacylens_async_finalize
+    vlm_only: false
+  cirl_vignettes:
+    module: dagspaces.cirl_vignettes.cli
+    pipeline: cirl_vignettes_eval
+    vlm_only: false
+  confaide:
+    module: dagspaces.confaide.cli
+    pipeline: confaide_eval
+    vlm_only: false
+  vlm_geoprivacy:
+    module: dagspaces.vlm_geoprivacy_bench.cli
+    pipeline: mcq_eval
+    vlm_only: true
