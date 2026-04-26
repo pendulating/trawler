@@ -1789,6 +1789,84 @@ class WandbLogger:
                 file=sys.stderr,
             )
 
+    def log_sanity_report(self, report) -> None:
+        """Log an evaluation-stage SanityReport to W&B.
+
+        Writes scalars under ``sanity/<stage>/<metric>``, the
+        per-row failure table under ``sanity/<stage>/failures``,
+        and a one-row-per-warning table under
+        ``sanity/<stage>/warnings``. Always also calls
+        ``report.print_loud()`` to surface warnings on stderr —
+        warnings only ever warn, never fail, but they need to be
+        visible.
+
+        Accepts ``dagspaces.common.eval_sanity.SanityReport``. Imported
+        lazily to keep this module's import graph independent of
+        eval_sanity (the logger predates the sanity layer).
+        """
+        # Loud first — even when wandb is disabled, the operator sees them.
+        try:
+            report.print_loud()
+        except Exception:
+            pass
+
+        if not self.enabled or self._run is None:
+            return
+
+        stage = getattr(report, "stage", None) or self.stage
+        prefix = f"sanity/{stage}"
+
+        try:
+            metrics = getattr(report, "metrics", {}) or {}
+            if metrics:
+                self.log_metrics(
+                    {f"{prefix}/{k}": float(v) for k, v in metrics.items()},
+                    commit=False,
+                )
+        except Exception as e:
+            print(
+                f"[wandb] Warning: Failed to log sanity metrics for {stage}: {e}",
+                file=sys.stderr,
+            )
+
+        try:
+            warnings = getattr(report, "warnings", []) or []
+            if warnings:
+                rows = [
+                    {
+                        "metric": w.metric,
+                        "value": float(w.value),
+                        "threshold": float(w.threshold),
+                        "comparison": w.comparison,
+                        "severity": w.severity,
+                        "message": w.message(),
+                    }
+                    for w in warnings
+                ]
+                import pandas as _pd
+                self.log_table(_pd.DataFrame(rows), key=f"{prefix}/warnings")
+        except Exception as e:
+            print(
+                f"[wandb] Warning: Failed to log sanity warnings for {stage}: {e}",
+                file=sys.stderr,
+            )
+
+        try:
+            failure_rows = getattr(report, "failure_rows", None)
+            if failure_rows is not None and len(failure_rows) > 0:
+                self.log_table(failure_rows, key=f"{prefix}/failures")
+            dropped = int(getattr(report, "failures_dropped", 0) or 0)
+            if dropped > 0:
+                self.log_metrics(
+                    {f"{prefix}/failures_dropped": dropped},
+                    commit=False,
+                )
+        except Exception as e:
+            print(
+                f"[wandb] Warning: Failed to log sanity failure rows for {stage}: {e}",
+                file=sys.stderr,
+            )
+
     def log_artifact(
         self, artifact_path: str, name: str, type: str = "dataset"
     ) -> None:
