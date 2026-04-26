@@ -157,14 +157,15 @@ def parse_applicability_response(response: str) -> str:
 
 
 def parse_responses(df: pd.DataFrame, task: str) -> pd.DataFrame:
-    """Parse generated_text column and add prediction column.
+    """Parse generated_text column and add prediction + parse_status columns.
 
     Args:
         df: DataFrame with ``generated_text`` column.
         task: "compliance" or "applicability".
 
     Returns:
-        DataFrame with ``prediction`` column added.
+        DataFrame with ``prediction`` and ``parse_status`` columns added.
+        ``parse_status`` ∈ {empty, unparseable, parsed} for eval_sanity.
     """
     df = df.copy()
 
@@ -178,6 +179,14 @@ def parse_responses(df: pd.DataFrame, task: str) -> pd.DataFrame:
         )
     else:
         raise ValueError(f"Unknown task: {task!r}")
+
+    df["parse_status"] = df.apply(
+        lambda r: (
+            "empty" if not str(r["generated_text"]).strip()
+            else ("unparseable" if r["prediction"] == "unparseable" else "parsed")
+        ),
+        axis=1,
+    )
 
     # Report parsing stats
     total = len(df)
