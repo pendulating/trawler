@@ -295,7 +295,78 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
         except Exception as exc:
             print(f"[finalize_async] metric log failure: {exc}", flush=True)
 
+        # Artifact lineage: log the metrics bundle and use_artifact()
+        # the upstream export bundles by group alias so the W&B UI
+        # shows a clickable trail metrics → judge_output → export.
+        try:
+            if context.logger is not None and result.get("metrics_json"):
+                group = os.environ.get("WANDB_GROUP") or ""
+                aliases = ["latest"] + ([group] if group else [])
+                use_refs = [
+                    f"privacylens-leakage_judge-export:{group or 'latest'}",
+                    f"privacylens-helpfulness_judge-export:{group or 'latest'}",
+                ]
+                paths = [result["metrics_json"]]
+                if result.get("metrics_parquet"):
+                    paths.append(result["metrics_parquet"])
+                if result.get("leakage_results"):
+                    paths.append(result["leakage_results"])
+                if result.get("helpfulness_results"):
+                    paths.append(result["helpfulness_results"])
+                context.logger.log_artifact(
+                    name="privacylens-metrics",
+                    type="metrics",
+                    paths=paths,
+                    aliases=aliases,
+                    metadata={
+                        "group": group,
+                        "leakage_rate": metadata["metrics"].get("leakage_rate"),
+                        "qa_accuracy": metadata["metrics"].get("qa_accuracy"),
+                        "helpfulness_mean_score": metadata["metrics"].get("helpfulness_mean_score"),
+                        "adjusted_leakage_rate": metadata["metrics"].get("adjusted_leakage_rate"),
+                    },
+                    description="PrivacyLens async-judge finalize metrics",
+                    use_artifacts=use_refs,
+                )
+        except Exception as exc:
+            print(f"[finalize_async] artifact log failure: {exc}", flush=True)
+
         return StageResult(outputs=outputs, metadata=metadata)
+
+
+def _log_export_artifact(context: Any, *, stage: str, output_dir: str, n_rows: int) -> None:
+    """Log the requests/items/pending/manifest bundle as a versioned
+    W&B artifact + alias by WANDB_GROUP for cross-run lineage.
+
+    Lineage flow: <dagspace>-<stage>-export → (sidecar fills output.jsonl)
+    → <dagspace>-metrics. The metrics artifact use_artifacts() this one
+    by name+alias so the W&B UI shows a clickable trail from the final
+    metric back to the exact requests that produced it.
+    """
+    if context.logger is None:
+        return
+    paths = []
+    for fname in ("requests.jsonl", "items.parquet", "pending.parquet", "manifest.json"):
+        p = os.path.join(output_dir, fname)
+        if os.path.exists(p):
+            paths.append(p)
+    if not paths:
+        return
+    group = os.environ.get("WANDB_GROUP") or ""
+    aliases = ["latest"]
+    if group:
+        aliases.append(group)
+    try:
+        context.logger.log_artifact(
+            name=f"privacylens-{stage}-export",
+            type="judge-export",
+            paths=paths,
+            aliases=aliases,
+            metadata={"stage": stage, "n_rows": int(n_rows), "group": group},
+            description=f"Async-judge export bundle for privacylens.{stage}",
+        )
+    except Exception as exc:
+        print(f"[export_artifact] log failed for {stage}: {exc}", flush=True)
 
 
 class LeakageJudgeBatchExportRunner(StageRunner):
@@ -308,6 +379,10 @@ class LeakageJudgeBatchExportRunner(StageRunner):
 
     The node's declared ``dataset`` output should point at pending.parquet
     so downstream ingest stages can pick it up via the ArtifactRegistry.
+
+    Also logs the bundle as a versioned W&B artifact
+    ``privacylens-leakage_judge-export`` (aliased ``:<group>``) so the
+    finalize stage can ``use_artifact()`` it for lineage.
     """
 
     stage_name = "leakage_judge_batch_export"
@@ -325,6 +400,10 @@ class LeakageJudgeBatchExportRunner(StageRunner):
         result_df = export_leakage_judge_batch(df, context.cfg, output_dir)
         result_df.to_parquet(out_path, index=False)
 
+        _log_export_artifact(
+            context, stage="leakage_judge", output_dir=output_dir, n_rows=len(result_df),
+        )
+
         return StageResult(
             outputs={
                 "dataset": out_path,
@@ -336,7 +415,12 @@ class LeakageJudgeBatchExportRunner(StageRunner):
 
 
 class HelpfulnessJudgeBatchExportRunner(StageRunner):
-    """Write helpfulness-judge requests as an OpenAI Batch API JSONL file."""
+    """Write helpfulness-judge requests as an OpenAI Batch API JSONL file.
+
+    Same artifact-logging behavior as LeakageJudgeBatchExportRunner —
+    the bundle lands as ``privacylens-helpfulness_judge-export`` so
+    finalize can record lineage.
+    """
 
     stage_name = "helpfulness_judge_batch_export"
 
@@ -352,6 +436,10 @@ class HelpfulnessJudgeBatchExportRunner(StageRunner):
 
         result_df = export_helpfulness_judge_batch(df, context.cfg, output_dir)
         result_df.to_parquet(out_path, index=False)
+
+        _log_export_artifact(
+            context, stage="helpfulness_judge", output_dir=output_dir, n_rows=len(result_df),
+        )
 
         return StageResult(
             outputs={

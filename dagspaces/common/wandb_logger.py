@@ -1926,27 +1926,102 @@ class WandbLogger:
             )
 
     def log_artifact(
-        self, artifact_path: str, name: str, type: str = "dataset"
-    ) -> None:
-        """Log artifact to wandb.
+        self,
+        artifact_path: Optional[str] = None,
+        name: Optional[str] = None,
+        type: str = "dataset",
+        *,
+        paths: Optional[List[str]] = None,
+        dir: Optional[str] = None,
+        aliases: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        description: Optional[str] = None,
+        use_artifacts: Optional[List[str]] = None,
+    ) -> Any:
+        """Log a versioned W&B artifact.
 
         Args:
-            artifact_path: Path to artifact file/directory.
-            name: Artifact name.
-            type: Artifact type (e.g. "dataset", "model").
+            artifact_path: Single file path (legacy positional).
+            name: Artifact name. Required.
+            type: Artifact type (e.g. "dataset", "model", "metrics").
+            paths: Multiple file paths to bundle into one artifact.
+                Mutually compatible with ``artifact_path`` (both are
+                included).
+            dir: Directory to add wholesale (recursive).
+            aliases: Aliases (e.g. ``["latest", group_id]``) for later
+                ``use_artifact("name:alias")`` retrieval.
+            metadata: Optional metadata dict written into the artifact.
+            description: Optional human description.
+            use_artifacts: Names (with optional ``:alias`` suffix) of
+                upstream artifacts to consume FIRST so this run records
+                a lineage edge from those into the new artifact.
+
+        Returns the logged Artifact handle (or ``None`` when wandb is
+        disabled / on failure).
         """
         if not self.enabled or self._run is None:
-            return
+            return None
+        if name is None:
+            print("[wandb] log_artifact: name is required", file=sys.stderr)
+            return None
+
+        # Record lineage edges first.
+        if use_artifacts:
+            for ref in use_artifacts:
+                self.use_artifact(ref)
 
         try:
-            artifact = self.wandb.Artifact(name=name, type=type)
-            artifact.add_file(artifact_path)
-            self.wandb.log_artifact(artifact)
+            artifact = self.wandb.Artifact(
+                name=name,
+                type=type,
+                description=description,
+                metadata=metadata or {},
+            )
+            files_added = 0
+            if artifact_path:
+                artifact.add_file(artifact_path)
+                files_added += 1
+            if paths:
+                for p in paths:
+                    if p and os.path.exists(p):
+                        artifact.add_file(p)
+                        files_added += 1
+            if dir and os.path.isdir(dir):
+                artifact.add_dir(dir)
+                files_added += 1
+            if files_added == 0:
+                print(
+                    f"[wandb] log_artifact '{name}': no files added — skipping",
+                    file=sys.stderr,
+                )
+                return None
+            return self.wandb.log_artifact(artifact, aliases=aliases or None)
         except Exception as e:
             print(
                 f"[wandb] Warning: Failed to log artifact '{name}': {e}",
                 file=sys.stderr,
             )
+            return None
+
+    def use_artifact(self, ref: str) -> Any:
+        """Record a lineage edge from an upstream artifact into this run.
+
+        Args:
+            ref: ``"<name>"`` (resolves ``:latest``) or ``"<name>:<alias>"``.
+
+        Returns the artifact handle (or ``None`` if wandb is disabled
+        or the artifact can't be resolved — failures are non-fatal).
+        """
+        if not self.enabled or self._run is None:
+            return None
+        try:
+            return self._run.use_artifact(ref)
+        except Exception as e:
+            print(
+                f"[wandb] use_artifact('{ref}') failed: {e}",
+                file=sys.stderr,
+            )
+            return None
 
     def log_plot(self, key: str, figure) -> None:
         """Log matplotlib/plotly figure or wandb plot object.
