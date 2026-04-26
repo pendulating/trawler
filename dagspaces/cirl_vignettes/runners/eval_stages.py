@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, Dict
 
 import pandas as pd
 
 from dagspaces.common.runners.base import StageRunner
 from dagspaces.common.orchestrator import StageResult
+from dagspaces.common.eval_sanity import compute_parse_health
+from dagspaces.common.runners.sanity import (
+    log_sanity_to_context,
+    sanity_overrides,
+    task_model_name,
+)
 
 
 class LoadDatasetRunner(StageRunner):
@@ -82,6 +88,7 @@ class ParseResponsesRunner(StageRunner):
 
         input_path = context.inputs["dataset"]
         df = pd.read_parquet(input_path)
+        input_n = len(df)
 
         result_df = parse_responses(df)
 
@@ -89,10 +96,23 @@ class ParseResponsesRunner(StageRunner):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         result_df.to_parquet(out_path, index=False)
 
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
+        thresholds, patterns = sanity_overrides(context.cfg)
+        report = compute_parse_health(
+            result_df,
+            dagspace="cirl_vignettes",
+            stage=self.stage_name,
+            model=task_model_name(context.cfg),
+            status_col="parse_status",
+            completion_col="generated_text",
+            label_col="prediction",
+            finish_reason_col="finish_reason",
+            expected_input_n=input_n,
+            refusal_patterns=patterns,
+            thresholds=thresholds,
         )
+        metadata: Dict[str, Any] = {"rows": len(result_df)}
+        log_sanity_to_context(context, report, metadata=metadata)
+        return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
 
 class ComputeMetricsRunner(StageRunner):

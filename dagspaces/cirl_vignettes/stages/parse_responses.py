@@ -67,13 +67,24 @@ def parse_responses(df: pd.DataFrame) -> pd.DataFrame:
         df: DataFrame with ``generated_text`` column.
 
     Returns:
-        DataFrame with ``prediction`` column added (A/B/unparseable).
+        DataFrame with ``prediction`` column added (A/B/unparseable) and
+        a ``parse_status`` column ∈ {empty, unparseable, parsed} for
+        eval_sanity.
     """
     df = df.copy()
 
     df["prediction"] = df["generated_text"].apply(
         lambda x: parse_probing_response(str(x))
     )
+
+    def _status(row) -> str:
+        if not str(row["generated_text"]).strip():
+            return "empty"
+        if row["prediction"] == "unparseable":
+            return "unparseable"
+        return "parsed"
+
+    df["parse_status"] = df.apply(_status, axis=1)
 
     total = len(df)
     unparseable = (df["prediction"] == "unparseable").sum()
