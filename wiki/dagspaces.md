@@ -125,6 +125,10 @@ Top-level aggregator for sweeping a model across all benchmarks. Runs each bench
 
 **Entrypoint**: `python -m dagspaces.eval_all.cli -m pipeline=all_benchmarks model=qwen3.5-9b/base`
 
+**Default = async-judge mode**: `all_benchmarks.yaml` ships with `judge.mode=async` and `judge_sidecar.enabled=true`. Privacylens uses its `privacylens_async` export pipeline (no in-line judge call); a small CPU sidecar launched by the eval_all monitor forwards each judge request to `scripts/judge_server.sub` while other benchmarks proceed; after every benchmark dispatches, the monitor drains the sidecar and runs `privacylens_async_finalize` for parse + metrics. Requires a running judge endpoint reachable at `${JUDGE_BASE_URL,http://klara:8002}`.
+
+**Live mode (legacy)**: Use `pipeline=all_benchmarks_live` for the strictly-live path that blocks each benchmark on its inline judge. Pick this when the cluster judge_server isn't up or for live-vs-async parity comparisons.
+
 ### Shared-server mode (avoid reloading the model per benchmark)
 
 By default each benchmark loads vLLM fresh in its own SLURM GPU job — the model is loaded N times for N benchmarks. Enable `server_mode` to host the model in a single long-lived SLURM job and have every benchmark route inference over HTTP.

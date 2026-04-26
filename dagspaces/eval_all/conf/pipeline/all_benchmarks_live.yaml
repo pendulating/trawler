@@ -1,0 +1,41 @@
+# @package _global_
+#
+# Live-judge variant of all_benchmarks. Each benchmark runs its full live
+# pipeline (including the in-line judge call for privacylens) and
+# eval_all's dispatch loop blocks on each child until it finishes.
+#
+# Use this when:
+#   - The cluster judge_server isn't running and the default async
+#     all_benchmarks pipeline has nowhere to drain to.
+#   - You want strict live mode for live-vs-async parity comparisons.
+#   - You're debugging a single judge call and want it inline.
+#
+# Otherwise use the default all_benchmarks.yaml, which uses the async
+# sidecar so privacylens's judge time doesn't serialize the rest of
+# the sweep.
+
+defaults:
+  - /model: qwen3.5-9b/base
+  - override /hydra/launcher: slurm_monitor
+
+benchmarks:
+  goldcoin:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+  privacylens:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_clean
+    vlm_only: false
+  cirl_vignettes:
+    module: dagspaces.cirl_vignettes.cli
+    pipeline: cirl_vignettes_eval
+    vlm_only: false
+  confaide:
+    module: dagspaces.confaide.cli
+    pipeline: confaide_eval
+    vlm_only: false
+  vlm_geoprivacy:
+    module: dagspaces.vlm_geoprivacy_bench.cli
+    pipeline: mcq_eval
+    vlm_only: true
