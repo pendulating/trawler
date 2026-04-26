@@ -7,7 +7,7 @@ model:
   chat_template_kwargs:
     enable_thinking: false
   engine_kwargs:
-    max_model_len: 8192
+    max_model_len: 16384
     max_num_seqs: 16
     tensor_parallel_size: 1
     trust_remote_code: true

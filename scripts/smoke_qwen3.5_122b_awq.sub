@@ -1,0 +1,134 @@
+#!/bin/bash
+#SBATCH --job-name=qwen3.5-122b-smoke
+#SBATCH --partition=pierson
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=256G
+#SBATCH --time=02:00:00
+#SBATCH --output=.slurm_jobs/qwen3.5-122b-smoke/%j.out
+#SBATCH --error=.slurm_jobs/qwen3.5-122b-smoke/%j.err
+
+# Smoke-test vLLM serve for QuantTrio/Qwen3.5-122B-A10B-AWQ on 4x RTX A6000.
+#
+# Usage:
+#   sbatch scripts/smoke_qwen3.5_122b_awq.sub
+#   sbatch scripts/smoke_qwen3.5_122b_awq.sub --port 9010
+
+set -euo pipefail
+
+PORT=8010
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --port) PORT="$2"; shift 2 ;;
+        --port=*) PORT="${1#*=}"; shift ;;
+        *) echo "Unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
+
+echo "=== Qwen3.5-122B-A10B-AWQ smoke test ==="
+echo "HOST=$(hostname) DATE=$(date)"
+echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
+
+REPO_DIR="/share/pierson/matt/UAIR"
+MODEL="/share/pierson/matt/zoo/models/Qwen3.5-122B-A10B-AWQ"
+TP=4
+MAX_MODEL_LEN=32768
+HF_HOME="${HF_HOME:-/share/pierson/matt/.cache/huggingface}"
+
+cd "$REPO_DIR"
+source .venv/bin/activate
+echo "Python: $(which python) ($(python --version))"
+python -c "import vllm; print('vllm', vllm.__version__)"
+
+export HF_HOME
+export WANDB_MODE=disabled
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export TOKENIZERS_PARALLELISM=false
+
+# PCIe / A6000 NCCL config (no NVLink)
+export NCCL_DEBUG=WARN
+export NCCL_IB_DISABLE=1
+
+echo "--- Allocated GPUs ---"
+nvidia-smi --query-gpu=index,name,memory.total,pci.bus_id --format=csv,noheader
+echo "--- Topology ---"
+nvidia-smi topo -m || true
+
+if nvidia-smi topo -m 2>/dev/null | grep -qE "NODE|PHB|SYS"; then
+    echo "WARN: cross-switch GPUs detected, disabling P2P/SHM"
+    export NCCL_P2P_DISABLE=1
+    export NCCL_SHM_DISABLE=1
+    export NCCL_CUMEM_HOST_ENABLE=0
+fi
+
+mkdir -p "$REPO_DIR/.slurm_jobs/qwen3.5-122b-smoke"
+
+echo "Model: $MODEL"
+echo "Port:  $PORT"
+echo "TP:    $TP"
+
+SERVE_ARGS=(
+    vllm serve "$MODEL"
+    --served-model-name qwen3.5-122b-a10b-awq
+    --port "$PORT"
+    --host 0.0.0.0
+    --tensor-parallel-size "$TP"
+    --enable-expert-parallel
+    --quantization awq_marlin
+    --kv-cache-dtype fp8
+    --max-model-len "$MAX_MODEL_LEN"
+    --max-num-batched-tokens "$MAX_MODEL_LEN"
+    --max-num-seqs 16
+    --gpu-memory-utilization 0.92
+    --enable-chunked-prefill
+    --enable-prefix-caching
+    --disable-custom-all-reduce
+    --trust-remote-code
+)
+
+echo "Command: ${SERVE_ARGS[*]}"
+"${SERVE_ARGS[@]}" &
+SERVER_PID=$!
+
+# Health check (MoE load can take a while)
+for i in $(seq 1 240); do
+    if curl -sf "http://localhost:${PORT}/health" > /dev/null 2>&1; then
+        echo "[$(date)] server ready on port ${PORT} after ${i}*5s"
+        break
+    fi
+    if [ "$i" -eq 240 ]; then
+        echo "[$(date)] ERROR: server not ready after 1200s" >&2
+        kill $SERVER_PID 2>/dev/null || true
+        exit 1
+    fi
+    sleep 5
+done
+
+echo ""
+echo "--- Smoke completion probe ---"
+curl -sS "http://localhost:${PORT}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "qwen3.5-122b-a10b-awq",
+        "messages": [{"role": "user", "content": "Reply with exactly the word PONG."}],
+        "max_tokens": 16,
+        "temperature": 0
+    }' | tee /dev/stderr | python -c "import sys, json; r=json.load(sys.stdin); print('\\nPROBE RESPONSE:', r['choices'][0]['message']['content'])"
+
+echo ""
+echo "--- GPU mem after load ---"
+nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
+
+HOSTNAME=$(hostname)
+cat <<BANNER
+
+============================================================
+  Smoke test server up (SLURM job ${SLURM_JOB_ID})
+    URL: http://${HOSTNAME}:${PORT}
+    PID: ${SERVER_PID}
+  Cancel with: scancel ${SLURM_JOB_ID}
+============================================================
+BANNER
+
+wait $SERVER_PID 2>/dev/null || true
+echo "[$(date)] server exited."

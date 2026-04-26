@@ -1,7 +1,9 @@
 # @package _global_
 model:
-  model_source: /share/pierson/matt/zoo/models/Qwen3.5-4B-Base
+  model_source: /share/pierson/matt/zoo/models/Qwen3.5-9B
   model_family: qwen3.5
+  # Single source of truth for SFT / GRPO / eval. See wiki/thinking-modes.md.
+  thinking_mode: off
   chat_template_kwargs:
     enable_thinking: false
   engine_kwargs:

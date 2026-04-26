@@ -16,6 +16,20 @@ srun_args:
   - --gres=none
   - --cpu-bind=none
 setup:
+  # Make the submission context work on every pierson node:
+  #
+  #   1. ~/.local/bin must come first so the local `sbatch` shim (which
+  #      forwards through ssh to unicorn-login-04) wins on hosts where
+  #      the native slurm client is broken (e.g. lisbeth: missing
+  #      /usr/local/slurm/current/etc/slurm.conf). On hosts where the
+  #      native client works (e.g. klara), the shim still works but
+  #      adds a harmless ssh round-trip, so this ordering is safe.
+  #
+  #   2. /usr/local/slurm/current/bin must be on PATH for `srun` (which
+  #      submitit appends to the bottom of this script) to resolve on
+  #      nodes like klara where it's missing from slurmd's default PATH.
+  #      There's no ~/.local/bin/srun shim, so we need this dir too.
+  - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
   - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}

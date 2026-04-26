@@ -1,13 +1,13 @@
 # @package _global_
 model:
-  model_source: /share/pierson/matt/zoo/models/Qwen3.5-9B
+  model_source: /share/pierson/matt/zoo/models/Qwen3.5-9B-Base
   model_family: qwen3.5
   # Single source of truth for SFT / GRPO / eval. See wiki/thinking-modes.md.
   thinking_mode: off
   chat_template_kwargs:
     enable_thinking: false
   engine_kwargs:
-    max_model_len: 8192
+    max_model_len: 16384
     max_num_seqs: 32
     tensor_parallel_size: 1
     trust_remote_code: true

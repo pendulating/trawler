@@ -1,6 +1,6 @@
 # @package _global_
 model:
-  model_source: /share/pierson/matt/zoo/models/Llama-3.1-8B-Instruct
+  model_source: /share/pierson/matt/zoo/models/Llama-3.1-8B
   model_family: llama3
   engine_kwargs:
     max_model_len: 16384

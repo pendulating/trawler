@@ -1,0 +1,21 @@
+# @package _global_
+model:
+  model_source: /share/pierson/matt/zoo/models/Qwen3.5-122B-A10B-AWQ
+  model_family: qwen3.5
+  chat_template_kwargs:
+    enable_thinking: false
+  engine_kwargs:
+    max_model_len: 32768
+    max_num_batched_tokens: 32768
+    enable_chunked_prefill: true
+    enable_prefix_caching: true
+    gpu_memory_utilization: 0.92
+    tensor_parallel_size: 4
+    enable_expert_parallel: true
+    quantization: awq
+    kv_cache_dtype: fp8
+    max_num_seqs: 16
+    disable_log_stats: true
+    trust_remote_code: true
+  batch_size: 0
+  concurrency: 1
