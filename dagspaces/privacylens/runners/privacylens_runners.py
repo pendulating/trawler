@@ -248,6 +248,114 @@ class HelpfulnessJudgeInferenceRunner(StageRunner):
         return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
 
+class PrivacylensFinalizeAsyncRunner(StageRunner):
+    """Drain async-judge outputs and run compute_metrics.
+
+    Reads ``outputs/{leakage,helpfulness}_judge_batch/{pending,items,output}.jsonl``
+    from the pipeline ``output_root``, OR-aggregates per-secret leakage
+    responses, parses helpfulness, and writes ``metrics.json`` +
+    ``metrics.parquet``. Both judge stages get a SanityReport via
+    compute_parse_health since the same parsers are reused.
+
+    Loudly raises if a manifest is missing — Phase 1 single-machine
+    smoke test surfaces "you forgot to fill output.jsonl"; Phase 2's
+    eval_all post_judge_metrics pipeline catches the same exception
+    and skips the affected benchmark with a banner instead of failing
+    the sweep.
+    """
+
+    stage_name = "privacylens_finalize_async"
+
+    def run(self, context: Any) -> StageResult:
+        from ..stages.finalize_async import finalize_async
+
+        metrics_parquet_out = context.output_paths.get("dataset")
+        if metrics_parquet_out:
+            metrics_dir = os.path.dirname(metrics_parquet_out)
+        else:
+            metrics_dir = None
+
+        result = finalize_async(
+            context.output_root,
+            metrics_dir=metrics_dir,
+        )
+
+        thresholds, patterns = _sanity_overrides(context.cfg)
+        model = _model_name(context.cfg)
+        leak_report = compute_parse_health(
+            result["leakage_df"],
+            dagspace="privacylens",
+            stage="leakage_judge_finalize",
+            model=model,
+            status_col="parse_status",
+            completion_col="leak_judge_text",
+            label_col="leak_flag",
+            expected_input_n=int(result["leakage_meta"]["rows"]),
+            refusal_patterns=patterns,
+            thresholds=thresholds,
+        )
+        help_report = compute_parse_health(
+            result["helpfulness_df"],
+            dagspace="privacylens",
+            stage="helpfulness_judge_finalize",
+            model=model,
+            status_col="parse_status",
+            completion_col="helpfulness_judge_text",
+            label_col="helpfulness_score",
+            expected_input_n=int(result["helpfulness_meta"]["rows"]),
+            refusal_patterns=patterns,
+            thresholds=thresholds,
+        )
+
+        outputs: Dict[str, str] = {
+            "metrics_json": result["metrics_json"],
+        }
+        # If the pipeline declared a `dataset` output, point it at the
+        # parquet so downstream nodes can depend on it.
+        if metrics_parquet_out:
+            outputs["dataset"] = result["metrics_parquet"]
+
+        metadata: Dict[str, Any] = {
+            "rows": len(result["leakage_df"]),
+            "leakage": result["leakage_meta"],
+            "helpfulness": result["helpfulness_meta"],
+            "metrics": {
+                "leakage_rate": result["metrics"].get("leakage", {}).get("leakage_rate"),
+                "qa_accuracy": result["metrics"].get("qa_probing", {}).get("accuracy"),
+                "helpfulness_mean_score": result["metrics"].get("helpfulness", {}).get("mean_score"),
+                "adjusted_leakage_rate": result["metrics"].get("adjusted_leakage", {}).get("adjusted_leakage_rate"),
+            },
+        }
+        _log_sanity(context, leak_report, metadata=metadata)
+        _log_sanity(context, help_report, metadata=metadata)
+
+        # Headline metrics under finalize/eval/* — same convention as the
+        # live ComputeMetricsRunner.
+        try:
+            if context.logger is not None:
+                m = result["metrics"]
+                wb_metrics: Dict[str, Any] = {}
+                qa = m.get("qa_probing") or {}
+                leak = m.get("leakage") or {}
+                helpf = m.get("helpfulness") or {}
+                adj = m.get("adjusted_leakage") or {}
+                if qa:
+                    wb_metrics["finalize/eval/qa_accuracy"] = qa.get("accuracy", 0.0)
+                if leak:
+                    wb_metrics["finalize/eval/leakage_rate"] = leak.get("leakage_rate", 0.0)
+                if helpf:
+                    wb_metrics["finalize/eval/helpfulness_mean_score"] = helpf.get("mean_score", 0.0)
+                    wb_metrics["finalize/eval/helpful_rate"] = helpf.get("helpful_rate", 0.0)
+                if adj:
+                    wb_metrics["finalize/eval/adjusted_leakage_rate"] = adj.get("adjusted_leakage_rate", 0.0)
+                if wb_metrics:
+                    context.logger.log_metrics(wb_metrics)
+        except Exception as exc:
+            print(f"[finalize_async] metric log failure: {exc}", flush=True)
+
+        return StageResult(outputs=outputs, metadata=metadata)
+
+
 class LeakageJudgeBatchExportRunner(StageRunner):
     """Write leakage-judge requests as an OpenAI Batch API JSONL file.
 

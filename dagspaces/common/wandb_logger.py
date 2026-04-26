@@ -245,7 +245,14 @@ class WandbConfig:
             wandb_cfg = getattr(cfg, "wandb", None)
             env_entity = os.environ.get("WANDB_ENTITY")
             env_project = os.environ.get("WANDB_PROJECT")
-            auto_tags = build_wandb_tags(cfg, dagspace_name=dagspace_name)
+            # phase=cfg.wandb.phase if set; the pipeline yaml uses this to
+            # discriminate export-vs-finalize runs in the async-judge flow.
+            phase: Optional[str] = None
+            if wandb_cfg is not None:
+                phase_attr = getattr(wandb_cfg, "phase", None)
+                if phase_attr:
+                    phase = str(phase_attr)
+            auto_tags = build_wandb_tags(cfg, dagspace_name=dagspace_name, phase=phase)
 
             if wandb_cfg is None:
                 return cls(

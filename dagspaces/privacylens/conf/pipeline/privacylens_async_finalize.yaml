@@ -1,0 +1,40 @@
+# @package _global_
+#
+# Finalize half of the async-judge flow. Run AFTER privacylens_async has
+# finished its export phase AND output.jsonl files have been filled by the
+# sidecar (or by a manual one-shot judge run for Phase 1 smoke tests).
+#
+# Reads from the same output_root as the export pipeline — so invoke with
+# the same hydra.run.dir:
+#
+#   python -m dagspaces.privacylens.cli pipeline=privacylens_async_finalize \
+#       hydra.run.dir=outputs/<RUN>
+#
+# This pipeline is single-node: it merges the per-secret leakage answers,
+# parses helpfulness, computes all metrics, and emits sanity reports for
+# both judge stages (so refusals / fallback_default rows surface even
+# after a long async wait).
+
+defaults:
+  - /model: qwen2.5-72b/awq
+  - override /hydra/launcher: slurm_monitor
+
+judge:
+  mode: async
+
+wandb:
+  phase: finalize
+
+pipeline:
+  output_root: ${hydra:run.dir}/privacylens_eval
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      finalize:
+        stage: privacylens_finalize_async
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/compute_metrics/metrics.parquet
+          metrics_json: outputs/compute_metrics/metrics.json

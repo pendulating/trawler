@@ -27,6 +27,7 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             LeakageJudgeBatchExportRunner,
             HelpfulnessJudgeBatchExportRunner,
             ComputeMetricsRunner,
+            PrivacylensFinalizeAsyncRunner,
         )
 
         _STAGE_REGISTRY = {
@@ -39,6 +40,8 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             "leakage_judge_batch_export": LeakageJudgeBatchExportRunner(),
             "helpfulness_judge_batch_export": HelpfulnessJudgeBatchExportRunner(),
             "compute_metrics": ComputeMetricsRunner(),
+            # Async-judge finalize: drain output.jsonl + parse + metrics.
+            "privacylens_finalize_async": PrivacylensFinalizeAsyncRunner(),
         }
     return _STAGE_REGISTRY.copy()
 

@@ -1,0 +1,99 @@
+# @package _global_
+#
+# Async-judge variant of privacylens. The task LLM (QA probe + agent action)
+# still runs locally on GPUs and the judge stages emit JSONL request files,
+# but a small CPU **sidecar** (launched by eval_all when judge.mode=async)
+# forwards each request to the cluster's judge_server.sub vLLM service while
+# other benchmarks continue to advance. This pipeline ENDS after the judge
+# exports — compute_metrics moves into a separate post_judge_metrics
+# pipeline that runs once all judging has drained.
+#
+# In Phase 1 (single-machine, no eval_all sidecar yet) the operator launches
+# the sidecar / fills output.jsonl manually, then runs the
+# privacylens_async_finalize pipeline against the same run dir. Phase 2
+# wires the eval_all monitor to launch the sidecar automatically and run
+# post_judge_metrics after drain. The on-disk schema is identical to the
+# existing batch_export mode (requests.jsonl + items.parquet + pending.parquet
+# + manifest.json), so the finalize logic is shared.
+#
+# End-to-end (Phase 1 manual flow):
+#
+#   # 1. Export phase (this pipeline). No judge calls happen here — the
+#   #    *_judge_batch_export stages write JSONLs and exit.
+#   python -m dagspaces.privacylens.cli pipeline=privacylens_async \
+#       judge.mode=async judge.batch.target_model=Qwen3.6-27B \
+#       hydra.run.dir=outputs/<RUN>
+#
+#   # 2. Run the manual sidecar oneshot to fill output.jsonl from the live
+#   #    judge endpoint:
+#   python -m dagspaces.eval_all.judge_sidecar oneshot \
+#       --run-dir outputs/<RUN>/privacylens_eval \
+#       --base-url http://klara:8002 --model Qwen3.6-27B
+#
+#   # 3. Finalize: parse + compute_metrics into a metrics.json on the same
+#   #    W&B group, with sanity reports for both judges:
+#   python -m dagspaces.privacylens.cli pipeline=privacylens_async_finalize \
+#       hydra.run.dir=outputs/<RUN>
+
+defaults:
+  - /model: qwen2.5-72b/awq
+  - override /hydra/launcher: slurm_monitor
+
+# Surfaces in W&B as judge_mode:async / phase:export tags. The pipeline yaml
+# is the source of truth for both — overrides at the CLI flow through.
+judge:
+  mode: async
+
+wandb:
+  phase: export
+
+pipeline:
+  output_root: ${hydra:run.dir}/privacylens_eval
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+
+      qa_probe_inference:
+        stage: qa_probe_inference
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/qa_probe_inference/results.parquet
+        launcher: slurm_gpu_1x
+
+      agent_action_inference:
+        stage: agent_action_inference
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/agent_action_inference/results.parquet
+        launcher: slurm_gpu_1x
+
+      # --- Async export: writes requests.jsonl + items.parquet + pending.parquet
+      # --- + manifest.json. No GPU; no judge calls. The sidecar fills
+      # --- output.jsonl out-of-band; the privacylens_async_finalize pipeline
+      # --- consumes it.
+      leakage_judge_batch_export:
+        stage: leakage_judge_batch_export
+        depends_on: [agent_action_inference]
+        inputs:
+          dataset: agent_action_inference.dataset
+        outputs:
+          dataset: outputs/leakage_judge_batch/pending.parquet
+
+      helpfulness_judge_batch_export:
+        stage: helpfulness_judge_batch_export
+        depends_on: [agent_action_inference]
+        inputs:
+          dataset: agent_action_inference.dataset
+        outputs:
+          dataset: outputs/helpfulness_judge_batch/pending.parquet
