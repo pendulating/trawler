@@ -82,7 +82,12 @@ DEFAULT_HTTP_RETRIES = 3
 DEFAULT_HTTP_BACKOFF_S = 1.5
 DEFAULT_DRAIN_TIMEOUT_S = 6 * 60 * 60  # 6h — generous default; eval_all overrides.
 
-MANIFEST_GLOB = "**/judge_*/manifest.json"
+# Discover any manifest.json under the watch root that has an adjacent
+# requests.jsonl — that's the only reliable cross-dagspace signal that
+# this directory holds a judge batch we should fan out. Naming
+# conventions vary: privacylens uses ``leakage_judge_batch`` /
+# ``helpfulness_judge_batch``; future judged dagspaces may differ.
+MANIFEST_GLOB = "**/manifest.json"
 PARTIAL_SUFFIX = ".partial"
 DONE_FLAG = "done.flag"
 ERRORS_LOG = "errors.jsonl"
@@ -154,9 +159,20 @@ class FailureRecord:
 # ---------------------------------------------------------------------------
 
 def _discover_manifests(watch_root: str) -> List[str]:
-    """Return absolute paths to every ``judge_*/manifest.json`` under root."""
+    """Return absolute paths to every judge ``manifest.json`` under root.
+
+    A manifest is recognised by having an adjacent ``requests.jsonl`` —
+    that's the export-stage's contract regardless of dagspace naming
+    convention. Hydra's ``.hydra/`` and submitit's ``.submitit/``
+    directories also contain ``manifest.json`` files, so the
+    requests.jsonl check is what makes this filter judge-specific.
+    """
     pattern = os.path.join(watch_root, MANIFEST_GLOB)
-    return sorted(glob.glob(pattern, recursive=True))
+    out: List[str] = []
+    for p in sorted(glob.glob(pattern, recursive=True)):
+        if os.path.exists(os.path.join(os.path.dirname(p), "requests.jsonl")):
+            out.append(p)
+    return out
 
 
 def _read_manifest(path: str) -> Dict[str, Any]:
