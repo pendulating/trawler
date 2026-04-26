@@ -90,8 +90,14 @@ class WandbLogger(_WandbLoggerBase):
         stage: str,
         run_id: Optional[str] = None,
         run_config: Optional[Dict[str, Any]] = None,
+        *,
+        wandb_id: Optional[str] = None,
+        resume: Optional[str] = None,
     ) -> None:
-        super().__init__(cfg, stage=stage, run_id=run_id, run_config=run_config)
+        super().__init__(
+            cfg, stage=stage, run_id=run_id, run_config=run_config,
+            wandb_id=wandb_id, resume=resume,
+        )
         self.wb_config = WandbConfig.from_hydra_config(cfg)
 
 
