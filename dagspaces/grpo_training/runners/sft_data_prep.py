@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 import pandas as pd
+from omegaconf import OmegaConf
 
 from dagspaces.common.orchestrator import (
     StageExecutionContext,
@@ -48,6 +49,11 @@ class SFTDataPrepRunner(StageRunner):
             "rows": output_rows,
             "ci_reasoning_rows": len(ci_reasoning_df),
             "ci_extraction_rows": len(ci_extraction_df),
+            "flow_context": bool(OmegaConf.select(cfg, "training.sft.flow_context", default=True)),
+            "flow_appropriateness": bool(OmegaConf.select(cfg, "training.sft.flow_appropriateness", default=True)),
+            "flow_norms_meta": bool(OmegaConf.select(cfg, "training.sft.flow_norms_meta", default=True)),
+            "flow_confidence": bool(OmegaConf.select(cfg, "training.sft.flow_confidence", default=True)),
+            "include_negative_examples": bool(OmegaConf.select(cfg, "training.sft.include_negative_examples", default=True)),
         }
 
         outputs = _collect_outputs(

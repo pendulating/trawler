@@ -109,7 +109,20 @@ def _parse_completion(text: str) -> Optional[Dict[str, Any]]:
             "has_information_exchange": has_exchange,
         }
 
-        # Build nested extraction objects
+        # Build nested extraction objects.
+        #
+        # NOTE (SFT pair-format ablation incompatibility): the per-flow reads
+        # below assume the full SFT schema (context, appropriateness,
+        # norms_invoked, norm_source, is_new_flow, confidence). SFT checkpoints
+        # produced with any `training.sft.flow_*=false` toggle (see
+        # dagspaces/grpo_training/conf/training/sft/{no_context,no_appropriateness,
+        # no_norms_meta,no_confidence,minimal_tuple}.yaml) will emit completions
+        # missing those fields. The `.get(..., default)` calls here silently
+        # substitute defaults (e.g. confidence_quant=5, is_new_flow=False),
+        # which makes r_uncert / r_complete / r_consist / r_context / r_ground
+        # degenerate without any error. Running GRPO on an ablated SFT
+        # checkpoint is UNSUPPORTED — those checkpoints are SFT-only artifacts
+        # for downstream CI benchmark evaluation.
         extraction = []
         for flow in flat_flows:
             if not isinstance(flow, dict):
@@ -916,6 +929,7 @@ class CompositeRewardFunction:
                         "task_type": "norm_judgment",
                         "source_id": meta.get("source_id", ""),
                         "gold_judgment": gold_j,
+                        "prompt": prompt_texts[i][:4000] if prompt_texts[i] else "",
                         "completion_len": len(extracted_texts[i]),
                         "completion": extracted_texts[i],
                         "components": {
@@ -942,6 +956,7 @@ class CompositeRewardFunction:
                     "contrastive_source": meta.get("contrastive_source"),
                     "gold_has_exchange": meta.get("gold_has_exchange"),
                     "is_no_flow": is_no_flow[i],
+                    "prompt": prompt_texts[i][:4000] if prompt_texts[i] else "",
                     "completion_len": len(extracted_texts[i]),
                     "completion": extracted_texts[i],
                     "components": {

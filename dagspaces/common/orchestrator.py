@@ -223,6 +223,20 @@ def build_run_config(
     except Exception:
         pass
 
+    # SFT pair-format ablation toggles (surfaced for W&B run grouping/filtering).
+    try:
+        sft_cfg = OmegaConf.select(cfg, "training.sft")
+        if sft_cfg is not None:
+            run_config["sft"] = {
+                "flow_context": sft_cfg.get("flow_context", True),
+                "flow_appropriateness": sft_cfg.get("flow_appropriateness", True),
+                "flow_norms_meta": sft_cfg.get("flow_norms_meta", True),
+                "flow_confidence": sft_cfg.get("flow_confidence", True),
+                "include_negative_examples": sft_cfg.get("include_negative_examples", True),
+            }
+    except Exception:
+        pass
+
     # Training metadata sidecar: when evaluating a GRPO checkpoint,
     # inherit the training hyperparameters that produced it.
     try:

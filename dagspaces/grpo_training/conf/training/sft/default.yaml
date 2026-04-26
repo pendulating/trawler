@@ -27,3 +27,22 @@ sample_fraction: null
 
 # Include has_information_exchange=False chunks as negative SFT examples
 include_negative_examples: true
+
+# Per-flow field ablation toggles (SFT instruction-format ablation).
+# Each toggle drops the corresponding fields from BOTH the assistant JSON and
+# the user-side instruction prose. Base 5-tuple (sender, recipient, subject,
+# information_type, transmission_principle) and top-level reasoning +
+# has_information_exchange are always emitted.
+#
+# WARNING (GRPO incompatibility): downstream rewards.py reads `context`,
+# `appropriateness`, `norms_invoked`, `is_new_flow`, and `confidence` from each
+# flow. SFT checkpoints trained with any flow_*=false are SFT-only artifacts;
+# running GRPO on them will silently degrade to default values for missing
+# fields (e.g. confidence=5, is_new_flow=False) and is unsupported.
+#
+# Predefined ablation variants live alongside this file: no_context.yaml,
+# no_appropriateness.yaml, no_norms_meta.yaml, no_confidence.yaml, minimal_tuple.yaml.
+flow_context: true            # ci_context
+flow_appropriateness: true    # ci_appropriateness
+flow_norms_meta: true         # bundles ci_norms_invoked + ci_norm_source + ci_is_new_flow
+flow_confidence: true         # ci_confidence_qual

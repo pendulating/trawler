@@ -1,0 +1,53 @@
+# @package _global_
+# Hydra sweep: all 16 SFT pair-format ablation variants for qwen3.5-9b/instruct.
+#
+# Sweeps the four flow_* toggles independently (2^4 = 16 combinations) via the
+# sft_only pipeline. Each variant submits one orchestrator (slurm_monitor) that
+# fans out to sft_data_prep (slurm_cpu) + sft_training (slurm_gpu_1x) child
+# jobs. Total: 16 variants × 3 SLURM jobs = ~48 jobs.
+#
+# Output layout (Hydra multirun):
+#   multirun/<date>_sft_pair_ablation/<time>/<tag>/sft_only/outputs/sft/checkpoint
+# where <tag> = ctx-True_appr-True_norms-False_conf-True etc. (OmegaConf
+# stringifies bools as "True"/"False"; capitalization is intentional and
+# unambiguous.)
+#
+# W&B identification: every run logs an `sft.flow_*` block under run_config
+# (see dagspaces/common/orchestrator.py:build_run_config). Filter or group on
+# those keys in the W&B UI to compare ablation rows.
+#
+# WARNING (GRPO incompatibility): ablation checkpoints drop fields that
+# rewards.py reads (context, appropriateness, norms_invoked, is_new_flow,
+# confidence). Evaluate them directly on CI benchmarks (Phase 5); do not feed
+# them into Phase 4 GRPO — missing fields silently degrade to defaults.
+#
+# Usage:
+#   python -m dagspaces.grpo_training.cli --multirun +sweep=sft_pair_ablations
+#
+# Override knobs (still composable on CLI):
+#   model=qwen3.5-9b/base                    # different base model
+#   hydra.launcher.array_parallelism=8       # raise concurrent SFT GPU cap
+
+defaults:
+  - override /pipeline: sft_only
+  - override /model: qwen3.5-9b/instruct
+
+experiment:
+  name: sft_pair_ablation
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 4 concurrent SFT training GPUs. Raise if cluster quota allows; the full
+    # sweep peaks at 16 simultaneous slurm_gpu_1x children if uncapped.
+    array_parallelism: 3
+  sweep:
+    # Semantic per-job subdir so checkpoints are identifiable on disk without
+    # cross-referencing job_num against the W&B run config.
+    subdir: ctx-${training.sft.flow_context}_appr-${training.sft.flow_appropriateness}_norms-${training.sft.flow_norms_meta}_conf-${training.sft.flow_confidence}
+  sweeper:
+    params:
+      training.sft.flow_context: true,false
+      training.sft.flow_appropriateness: true,false
+      training.sft.flow_norms_meta: true,false
+      training.sft.flow_confidence: true,false
