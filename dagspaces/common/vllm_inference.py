@@ -600,9 +600,10 @@ def _run_server_inference(
                 **sp_kwargs,
             )
         except Exception as e:
-            return idx, "", "", None, f"request_error: {e}"
+            return idx, "", "", None, None, f"request_error: {e}"
 
-        msg = resp.choices[0].message if resp.choices else None
+        choice = resp.choices[0] if resp.choices else None
+        msg = getattr(choice, "message", None) if choice else None
         content = (getattr(msg, "content", None) or "") if msg else ""
         # vLLM reasoning parsers populate reasoning_content when configured
         reasoning = (getattr(msg, "reasoning_content", None) or "") if msg else ""
@@ -611,6 +612,7 @@ def _run_server_inference(
             reasoning, content = _split_reasoning(
                 content, _model_source, _thinking_enabled, tokenizer=None,
             )
+        finish_reason = getattr(choice, "finish_reason", None) if choice else None
 
         usage = None
         try:
@@ -623,35 +625,37 @@ def _run_server_inference(
                 }
         except Exception:
             pass
-        return idx, content.strip(), reasoning.strip(), usage, None
+        return idx, content.strip(), reasoning.strip(), usage, finish_reason, None
 
     max_workers = int(os.environ.get("VLLM_SERVER_CLIENT_CONCURRENCY", "32"))
-    results_raw: List[Optional[Tuple[int, str, str, Any, Optional[str]]]] = [None] * len(preprocessed_rows)
+    results_raw: List[Optional[Tuple[int, str, str, Any, Optional[str], Optional[str]]]] = [None] * len(preprocessed_rows)
     print(f"[{stage_name}] Dispatching {len(preprocessed_rows)} requests "
           f"(concurrency={max_workers})...")
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = [ex.submit(_make_request, i) for i in range(len(preprocessed_rows))]
         done = 0
         for fut in as_completed(futures):
-            idx, content, reasoning, usage, err = fut.result()
-            results_raw[idx] = (idx, content, reasoning, usage, err)
+            idx, content, reasoning, usage, finish_reason, err = fut.result()
+            results_raw[idx] = (idx, content, reasoning, usage, finish_reason, err)
             done += 1
             if done % 50 == 0 or done == len(preprocessed_rows):
                 print(f"[{stage_name}]   {done}/{len(preprocessed_rows)} complete")
 
     # Postprocess
-    n_errors = sum(1 for r in results_raw if r and r[4])
+    n_errors = sum(1 for r in results_raw if r and r[5])
     if n_errors:
         print(f"[{stage_name}] WARNING: {n_errors} request errors — rows marked with __postprocess_error__")
 
     out_rows: List[Dict[str, Any]] = []
     for entry in results_raw:
-        idx, content, reasoning, usage, err = entry  # type: ignore
+        idx, content, reasoning, usage, finish_reason, err = entry  # type: ignore
         row = preprocessed_rows[idx]
         row["generated_text"] = content
         row["generated_reasoning"] = reasoning
         if usage is not None:
             row["usage"] = usage
+        if finish_reason is not None:
+            row["finish_reason"] = finish_reason
         if err:
             row["__request_error__"] = err
         try:
@@ -829,10 +833,21 @@ def main():
                 len(out.outputs[0].token_ids)
                 if out.outputs and out.outputs[0].token_ids else 0
             )
+            # finish_reason ∈ {"stop", "length", "abort", None}; vLLM populates
+            # "length" when the completion hit max_tokens. eval_sanity uses
+            # this to compute truncated_rate so models silently capped at
+            # max_tokens get flagged instead of having their truncated
+            # outputs baked into metrics.
+            finish_reason = (
+                out.outputs[0].finish_reason
+                if out.outputs and getattr(out.outputs[0], "finish_reason", None)
+                else None
+            )
             serialised.append({
                 "generated_text": text,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
+                "finish_reason": finish_reason,
             })
 
         with open(result_path, "wb") as f:
