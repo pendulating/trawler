@@ -1,0 +1,53 @@
+# @package _global_
+# Hydra sweep: rerun eval_all for Qwen3.5 {2B,4B,9B} × {instruct,base}.
+# Previous runs for these were invalidated by the /v1 URL bug in judge_client.py
+# that silently 404'd every judge call.
+#
+# Naming gotcha: `base` = instruction-tuned release, `base` = pretrained
+# checkpoint only. See dagspaces/common/conf/model/qwen3.5-*.
+#
+# Max 2 eval_all pipelines run simultaneously (array_parallelism: 2) to keep
+# judge-server concurrency sane.
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun +sweep=instruct_v_no_ft
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 2
+    setup:
+      # Ensure sbatch (via ~/.local/bin shim) and srun (from the slurm client
+      # dir) resolve when the monitor job runs on a compute node whose
+      # default PATH lacks them — matches slurm_monitor.yaml's workaround.
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      model: >-
+        qwen3.5-2b/instruct,
+        qwen3.5-2b/base,
+        qwen3.5-4b/instruct,
+        qwen3.5-4b/base,
+        qwen3.5-9b/instruct,
+        qwen3.5-9b/base,
+        llama3.1-8b/instruct, 
+        llama3.1-8b/base,
+        gemma-4-e4b/base, 
+        gemma-4-e4b/instruct,
+        gemma-4-e2b/base, 
+        gemma-4-e2b/instruct, 
+        gemma-4-31b/base, 
+        gemma-4-31b/instruct

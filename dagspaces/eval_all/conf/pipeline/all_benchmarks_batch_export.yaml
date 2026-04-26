@@ -1,0 +1,60 @@
+# @package _global_
+#
+# Batch-export variant of all_benchmarks: runs every eval end-to-end like
+# the regular pipeline, but judged benchmarks (privacylens) switch to their
+# ``*_batch`` pipelines so the judge stages write OpenAI Batch API JSONLs
+# instead of calling a live judge. Those sub-pipelines construct the
+# JudgeClient in offline mode — no OpenAI credentials are needed on the
+# machine running this eval. After the run, hand the emitted
+# requests.jsonl files off (or submit them yourself) via:
+#
+#     python -m dagspaces.common.batch_api submit <path>/requests.jsonl
+#
+# Non-judged benchmarks (goldcoin_hipaa, cirl_vignettes probing, confaide,
+# vlm_geoprivacy) run unchanged — they have no judge stage, so there's
+# nothing to export and the regular pipeline finishes on its own.
+#
+# The child dagspaces' export stages read ONLY ``judge.mode`` and
+# ``judge.batch.*`` — every live-mode field (base_url, provider, api_key,
+# api_key_env) is ignored in batch-export mode, so we don't smuggle in a
+# fake live endpoint. The target model comes from
+# ``judge.batch.target_model`` (default: gpt-5.2) defined in each
+# child dagspace's config.yaml. To override it for the whole variant,
+# append ``judge.batch.target_model=<other-model>`` to judge_batch_extras
+# below or pass it directly at the CLI, e.g.:
+#
+#     python -m dagspaces.eval_all.cli -m \
+#         pipeline=all_benchmarks_batch_export model=qwen3.5-9b/base \
+#         '++judge_batch_extras=[judge.mode=batch_export,judge.batch.target_model=gpt-4o]'
+defaults:
+  - /model: qwen3.5-9b/base
+  - override /hydra/launcher: slurm_monitor
+
+# Hydra overrides appended to every judged child CLI. Keep this minimal
+# — anything that isn't explicitly about enabling batch-export belongs
+# in the child dagspace's config, not here.
+judge_batch_extras:
+  - judge.mode=batch_export
+
+benchmarks:
+  goldcoin:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+  privacylens:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_clean_batch
+    vlm_only: false
+    extra_args: ${judge_batch_extras}
+  cirl_vignettes:
+    module: dagspaces.cirl_vignettes.cli
+    pipeline: cirl_vignettes_eval
+    vlm_only: false
+  confaide:
+    module: dagspaces.confaide.cli
+    pipeline: confaide_eval
+    vlm_only: false
+  vlm_geoprivacy:
+    module: dagspaces.vlm_geoprivacy_bench.cli
+    pipeline: mcq_eval
+    vlm_only: true

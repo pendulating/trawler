@@ -83,6 +83,7 @@ def run_eval_all(cfg: DictConfig) -> None:
             module = bench_cfg["module"]
             pipeline = bench_cfg["pipeline"]
             vlm_only = bench_cfg.get("vlm_only", False)
+            extra_args = bench_cfg.get("extra_args") or []
 
             if vlm_only and (skip_vlm or not is_vlm):
                 reason = "skip_vlm=true" if skip_vlm else f"{model_name} is text-only"
@@ -108,6 +109,10 @@ def run_eval_all(cfg: DictConfig) -> None:
                 cmd.append("runtime.debug=true")
             if sample_n is not None:
                 cmd.append(f"runtime.sample_n={sample_n}")
+            # Per-benchmark Hydra overrides (e.g. judge.mode=batch_export for
+            # the all_benchmarks_batch_export variant).
+            for extra in extra_args:
+                cmd.append(str(extra))
 
             print(f"\n{'='*60}")
             print(f"START {bench_name} | model={model_name}")
