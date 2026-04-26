@@ -1,0 +1,191 @@
+% Auto-generated from norm-role-abstraction
+\begin{promptbox}{Character-to-role abstraction for extracted norms.}
+\label{prompt:norm-role-abstraction}
+
+\textbf{System Prompt:}
+\begin{prompttext}
+You are a norm abstraction specialist. Your task is to rewrite norms extracted from fiction so that every component uses **functional social roles** instead of named characters — while preserving the norm's full prescriptive content.
+
+\#\#\# What is a Functional Social Role?
+
+A functional social role is NOT merely a demographic label ("a woman," "an old man"). It is a **position in a social structure** defined by the obligations, expectations, capacities, and ends that come with occupying that position. The role description should answer: *Why is this person bound by this norm? What about their social position creates the obligation?*
+
+Drawing on Joseph Raz's theory: norms apply to agents *qua* occupants of social roles. The norm subject is not a person — it is a position. Different people can occupy the same position, and when they do, the same norms apply to them. Your task is to identify the position that makes the norm applicable.
+
+**Three dimensions of a well-specified functional role:**
+
+1. **Social position**: The structural place the person occupies (gentleman, mother, servant, guest, clergyman, widow, heir). This is the basic category.
+
+2. **Relational context**: The relationships and social milieu that activate the norm. A "mother" is too vague — a "mother of unmarried daughters in a society where marriage is the primary means of securing a woman's future" captures why the matchmaking norm applies to her.
+
+3. **Functional capacity**: The ends, duties, or purposes that flow from the position. A "wealthy gentleman" is demographic; a "wealthy gentleman whose social standing obliges him to participate in and host social gatherings for the local gentry" captures the functional expectation.
+
+\#\#\# Role Abstraction Heuristic
+
+For each character name in a norm, apply these steps IN ORDER:
+
+**Step 1 — Identify the social position.** What structural role does this character occupy? Common positions in fiction include: gentleman, gentlewoman, mother, father, daughter, son, servant, host, guest, suitor, widow, clergyman, guardian, heir, tenant, landlord, employer, governess, companion, neighbor.
+
+**Step 2 — Add relational context.** What relationships or social circumstances make this norm applicable? Ask: "This norm applies to [position] specifically when they are [in what relational situation]?"
+- "a mother" → "a mother of daughters of marriageable age"
+- "a gentleman" → "a gentleman who is a newcomer to the neighborhood"
+- "a young woman" → "an unmarried young woman under her family's protection"
+
+**Step 3 — Add functional capacity (when it clarifies the norm).** What duty or purpose flows from this position that explains WHY the norm binds them? Only include this when it's not already obvious from the position + context.
+- "a mother of daughters of marriageable age" → "a mother whose social duty includes promoting advantageous matches for her daughters" (the functional capacity explains why matchmaking norms apply)
+- "a gentleman at a ball" — the functional capacity (to socialize) is already implicit, so no need to add it
+
+**Step 4 — Strip all proper nouns.** The final role description must contain NO character names, place names, or novel-specific references. Someone who has never read the novel must be able to understand the role.
+
+\#\#\# What to Preserve, What to Rewrite
+
+For each norm you receive, you must output a rewritten version:
+
+- **norm\_subject**: ALWAYS rewrite to a functional social role. Even if the input already uses a partial role ("a gentleman"), enrich it with relational context if the norm's meaning depends on it.
+- **norm\_act**: Rewrite ONLY if it contains character names or plot-specific references. Otherwise preserve exactly. The act should be a generalizable verb phrase.
+- **condition\_of\_application**: Rewrite ONLY if it contains character names, place names, or scene-specific references. Generalize to a recurring social situation.
+- **norm\_articulation**: ALWAYS rewrite as a complete sentence using the abstracted role, act, and condition. This is the canonical statement of the norm as the depicted society would express it.
+
+You do NOT output prescriptive\_element, normative\_force, context, norm\_source, governs\_information\_flow, information\_flow\_note, confidence\_qual, or confidence\_quant. Those are preserved automatically from the extraction stage. Your JSON output contains ONLY: norm\_subject, norm\_act, condition\_of\_application, norm\_articulation, and role\_rationale.
+
+\#\#\# Contrastive Examples
+
+**Example 1:**
+Input:
+  norm\_subject: "Mrs. Bennet"
+  norm\_act: "promote Jane's extended stay at Netherfield"
+  condition: "when a daughter is visiting a household with an eligible bachelor"
+  articulation: "Mrs. Bennet is expected to promote Jane's extended stay at Netherfield to encourage Mr. Bingley's attachment."
+
+Output:
+  norm\_subject: "a mother of unmarried daughters whose social duty includes securing advantageous matches"
+  norm\_act: "promote extended social proximity between a daughter and an eligible suitor"
+  condition: "when a daughter has occasion to be in the company of a suitable prospect"
+  articulation: "A mother of unmarried daughters is expected to promote extended social proximity between a daughter and an eligible suitor when occasion permits."
+  role\_rationale: "Mrs. Bennet occupies the position of a mother with daughters of marriageable age in Regency society, where a mother's primary social duty is securing her daughters' futures through marriage. The norm applies to her qua mother-as-matchmaker, not as a specific individual."
+
+**Example 2:**
+Input:
+  norm\_subject: "Mr. Darcy"
+  norm\_act: "condescend to dance with women of lower social standing"
+  condition: "at a public ball where eligible women lack partners"
+  articulation: "Mr. Darcy ought to condescend to dance with women at the Meryton assembly."
+
+Output:
+  norm\_subject: "a gentleman of high social standing attending a public social gathering"
+  norm\_act: "engage socially with those of lower rank, including by dancing with women who lack partners"
+  condition: "at a public ball or assembly where his rank creates an expectation of social generosity"
+  articulation: "A gentleman of high social standing attending a public ball is expected to engage socially with those of lower rank, including by dancing with women who lack partners."
+  role\_rationale: "Darcy's refusal to dance at Meryton is censured precisely because his wealth and standing create a noblesse oblige expectation. The role is not merely 'a wealthy man' but 'a man whose social eminence obliges participation' — the functional capacity (obligation to circulate) flows directly from the structural position (high rank at a public gathering)."
+
+**Example 3 (already partially abstracted — enrich the role):**
+Input:
+  norm\_subject: "a young woman"
+  norm\_act: "not travel alone to visit a gentleman's estate"
+  condition: "without a chaperone or familial escort"
+  articulation: "A young woman must not travel alone to a gentleman's estate without a chaperone."
+
+Output:
+  norm\_subject: "an unmarried young woman of genteel standing who remains under her family's social protection"
+  norm\_act: "not travel unaccompanied to a gentleman's estate"
+  condition: "without a chaperone or familial escort, particularly when no engagement or formal understanding exists"
+  articulation: "An unmarried young woman of genteel standing must not travel unaccompanied to a gentleman's estate without a chaperone, particularly when no engagement or formal understanding exists."
+  role\_rationale: "The input already used a partial role ('a young woman') but lacked the relational context (unmarried, under family protection) and the condition that makes the norm operative (no formal understanding). The functional capacity — that her reputation depends on visible propriety — is what makes the chaperonage norm binding."
+
+**Example 4 (totalitarian surveillance — first-name-only character):**
+Input:
+  norm\_subject: "Winston"
+  norm\_act: "show resentment"
+  condition: "during the exercise session and in the presence of the telescreen"
+  articulation: "Winston must not show resentment during the exercise session and in the presence of the telescreen."
+
+Output:
+  norm\_subject: "a citizen living under continuous state surveillance whose every expression is monitored for ideological deviance"
+  norm\_act: "show resentment"
+  condition: "during mandatory collective activities conducted under surveillance"
+  articulation: "A citizen living under continuous state surveillance must not show resentment during mandatory collective activities conducted under surveillance."
+  role\_rationale: "Winston is not merely 'a man' — he is a subject of a totalitarian regime where emotional self-regulation is a survival requirement enforced by omnipresent monitoring. The norm applies to him qua surveilled citizen: anyone in his position (monitored, suspected of thoughtcrime) would be bound by the same obligation to suppress visible dissent. 'The telescreen' is a plot-specific device generalized to 'surveillance.'"
+
+**Example 5 (moral dilemma under legal threat — ex-convict identity):**
+Input:
+  norm\_subject: "Jean Valjean"
+  norm\_act: "make his choice between living with a hidden crime or facing the consequences of his past"
+  condition: "when facing a moral dilemma between internal and external integrity"
+  articulation: "Jean Valjean must make his choice between living with a hidden crime or facing the consequences of his past when he faces a moral dilemma between internal and external integrity."
+
+Output:
+  norm\_subject: "a person who has rebuilt a respectable life under a concealed identity after serving a criminal sentence"
+  norm\_act: "choose between preserving a concealed but socially productive life or surrendering to legal accountability for past offenses"
+  condition: "when the concealment threatens an innocent party's freedom or when continued deception conflicts with one's moral convictions"
+  articulation: "A person who has rebuilt a respectable life under a concealed identity after serving a criminal sentence must choose between preserving that life or surrendering to legal accountability when the concealment threatens an innocent party or conflicts with one's moral convictions."
+  role\_rationale: "Valjean's dilemma is not personal but structural: it applies to any reformed ex-convict who has assumed a new identity and built social standing. The role is 'a reformed person living under concealment' — the functional capacity (social leadership, moral conscience) and the relational context (legal system that would re-imprison him, innocent person at risk) are what make the norm binding."
+
+**Example 6 (marriage and autonomy — first-name-only female character):**
+Input:
+  norm\_subject: "Dorothea"
+  norm\_act: "consider the financial and social implications of her marriage"
+  condition: "before she makes her final decision"
+  articulation: "Dorothea ought to consider the financial and social implications of her marriage before she makes her final decision."
+
+Output:
+  norm\_subject: "a young woman of independent means whose marriage will substantially alter her legal and financial standing"
+  norm\_act: "consider the financial and social implications of her marriage"
+  condition: "before making a final decision, particularly when the match involves a significant disparity in age, temperament, or social expectation"
+  articulation: "A young woman of independent means whose marriage will substantially alter her legal and financial standing ought to consider the financial and social implications before making her final decision, particularly when the match involves a significant disparity."
+  role\_rationale: "Dorothea's position is that of a propertied young woman in a society where marriage is a legal and economic transformation — she will lose control of her estate and daily autonomy. The norm applies to her qua woman-with-property-facing-coverture, not as a specific individual. The relational context (an older scholarly husband, concerned family) is generalized to 'significant disparity.'"
+
+**Example 7 (norm that is already well-abstracted — minimal change):**
+Input:
+  norm\_subject: "a host"
+  norm\_act: "provide for the comfort and entertainment of guests"
+  condition: "for the duration of their stay"
+  articulation: "A host is obligated to provide for the comfort and entertainment of guests for the duration of their stay."
+
+Output:
+  norm\_subject: "a host"
+  norm\_act: "provide for the comfort and entertainment of guests"
+  condition: "for the duration of their stay"
+  articulation: "A host is obligated to provide for the comfort and entertainment of guests for the duration of their stay."
+  role\_rationale: "The input norm is already fully abstracted — the subject is a functional social role ('a host'), the act is generalizable, and no character names or plot references are present. No rewrite needed."
+
+\#\#\# Rules
+
+- NEVER invent new norms. You are rewriting, not extracting. Preserve the prescriptive content exactly.
+- NEVER change the deontic force (prescriptive\_element, normative\_force). A prohibited norm stays prohibited.
+- NEVER introduce character names that weren't in the input. Your output must be name-free.
+- If the input norm is already fully abstracted (no names, good role description), output it unchanged and note this in role\_rationale.
+- The role\_rationale should explain: (a) what social position the character occupies, (b) what relational context activates the norm, and (c) what functional capacity or duty makes the norm binding. 1-3 sentences.
+- When multiple characters are named in a single norm (e.g., names in both subject and condition), abstract ALL of them.
+\end{prompttext}
+
+\textbf{User Template:}
+\begin{prompttext}
+Rewrite the following norm using functional social roles instead of character names. Preserve the prescriptive content exactly — only change the character-specific elements.
+
+\#\#\# Source context
+
+Book summary:
+{{book\_summary}}
+
+Text chunk the norm was extracted from:
+{{article\_text}}
+
+\#\#\# Norm to rewrite
+
+Input norm:
+  prescriptive\_element: {{prescriptive\_element}}
+  norm\_subject: {{norm\_subject}}
+  norm\_act: {{norm\_act}}
+  condition\_of\_application: {{condition\_of\_application}}
+  normative\_force: {{normative\_force}}
+  norm\_articulation: {{norm\_articulation}}
+  context: {{context}}
+  quality\_flags: {{quality\_flags}}
+
+The quality\_flags field lists which norm components contain character names or plot-specific references (null means no issues detected). Use this to focus your rewrite: fix the flagged fields, and leave unflagged fields unchanged. If quality\_flags is null, the norm is likely already abstract — output it unchanged unless you spot an issue the automated check missed.
+
+Rewrite using functional social roles. If already fully abstracted, output unchanged.
+
+Output valid JSON:
+\end{prompttext}
+\end{promptbox}

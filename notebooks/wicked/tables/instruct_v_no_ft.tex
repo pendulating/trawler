@@ -1,0 +1,24 @@
+\begin{table}[t]
+\centering
+\caption{Pretrained (no-FT) vs.\ instruction-tuned performance across CI benchmarks (\%). Adj Leak = leakage among helpful responses only. $\Delta$ = instruct $-$ no-FT. $\downarrow$ = lower is better.}
+\label{tab:instruct-vs-no-ft}
+\begin{tabular}{llcccccccc}
+\toprule
+ &  & \multicolumn{2}{c}{\textbf{GoldCoin-HIPAA}} & \multicolumn{3}{c}{\textbf{PrivacyLens}} & \multicolumn{1}{c}{\textbf{ConfAIde}} & \multicolumn{1}{c}{\textbf{CIRL-Vig.}} & \multicolumn{1}{c}{\textbf{VLM-GeoPri.}} \\
+\cmidrule(lr){3-4} \cmidrule(lr){5-7} \cmidrule(lr){8-8} \cmidrule(lr){9-9} \cmidrule(lr){10-10}
+\textbf{Model} & \textbf{Cond.} & App F1 & Comp F1 & QA Acc & Adj Leak $\downarrow$ & Helpful & Pearson $r$ & Complete & Q7 Acc \\
+\midrule
+Qwen3.5-2B & No-FT & 56.5 & 44.8 & 92.8 & 57.9 & 3.9 & 30.5 & 0.0 & 21.2 \\
+ & Instruct & 57.6 & 58.6 & 98.2 & 50.0 & 16.2 & 18.9 & 0.0 & 21.2 \\
+ & $\Delta$ & \textcolor{teal}{+1.1} & \textcolor{teal}{+13.8} & \textcolor{teal}{+5.4} & \textcolor{teal}{-7.9} & \textcolor{teal}{+12.4} & \textcolor{red}{-11.6} & 0.0 & 0.0 \\
+\addlinespace
+Qwen3.5-4B & No-FT & 88.8 & 51.4 & 99.1 & 57.3 & 33.3 & 52.8 & 0.0 & 58.8 \\
+ & Instruct & 90.1 & 73.1 & 90.8 & 53.1 & 45.0 & 52.9 & 0.0 & 52.9 \\
+ & $\Delta$ & \textcolor{teal}{+1.3} & \textcolor{teal}{+21.7} & \textcolor{red}{-8.3} & \textcolor{teal}{-4.2} & \textcolor{teal}{+11.8} & \textcolor{teal}{+0.1} & 0.0 & \textcolor{red}{-5.9} \\
+\addlinespace
+Qwen3.5-9B & No-FT & 93.4 & 51.4 & 98.6 & 0.0 & 0.0 & 60.3 & 0.0 & 54.0 \\
+ & Instruct & 95.8 & 73.3 & 95.5 & 61.9 & 53.8 & 64.1 & 0.0 & 63.7 \\
+ & $\Delta$ & \textcolor{teal}{+2.3} & \textcolor{teal}{+21.9} & \textcolor{red}{-3.0} & \textcolor{red}{+61.9} & \textcolor{teal}{+53.8} & \textcolor{teal}{+3.8} & 0.0 & \textcolor{teal}{+9.7} \\
+\bottomrule
+\end{tabular}
+\end{table}

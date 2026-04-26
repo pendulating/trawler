@@ -1,0 +1,17 @@
+\begin{table}[ht]
+\centering
+\caption{Per-completion contrastive ablation (Qwen3.5-9B, CI extraction). Independent no-flow scoring.}
+\label{tab:contrastive-v2}
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{2}{c}{\textbf{GoldCoin}} & \multicolumn{3}{c}{\textbf{PrivacyLens}} & \multicolumn{1}{c}{\textbf{VLM}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-6} \cmidrule(lr){7-7}
+\textbf{Configuration} & App F1 & Comp F1 & QA Acc & Adj Leak $\downarrow$ & Helpful & Q7 Acc \\
+\midrule
+\textit{SFT only (no GRPO)} & 93.4 & 73.3 & 97.6 & 27.4 & 97.8 & 60.8 \\
+\midrule
+v2: $\lambda=0.5$ & \textbf{93.9} & 74.4 & 97.5 & 28.2 & 97.0 & \textbf{60.0} \\
+v2: $\lambda=1.0$ & \textbf{93.9} & \textbf{76.1} & \textbf{97.6} & \textbf{27.1} & \textbf{97.4} & \textbf{60.0} \\
+\bottomrule
+\end{tabular}
+\end{table}

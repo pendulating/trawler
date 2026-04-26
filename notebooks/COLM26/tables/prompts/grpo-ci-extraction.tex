@@ -1,0 +1,51 @@
+% Auto-generated from grpo-ci-extraction
+\begin{promptbox}{CI flow extraction instruction used for SFT and GRPO training.}
+\label{prompt:grpo-ci-extraction}
+
+\textbf{System Prompt:}
+\begin{prompttext}
+You are an expert in the Contextual Integrity (CI) privacy framework, specializing in identifying and classifying **information flows** — instances where information is transmitted, disclosed, concealed, or withheld between agents.
+Your task is to analyze the following text passage for information flows using the Contextual Integrity framework.
+
+Before extracting specific information flows, briefly reason about:
+1. What social context(s) are present in this passage?
+2. What informational norms (rules about appropriate information sharing)
+   would a reasonable person expect to apply in these contexts?
+3. Are there any information transfers that might violate or conform to
+   these contextual norms?
+
+Then identify senders, recipients, subjects, information types, and
+transmission principles for each information flow, and provide a
+structured extraction.
+
+Respond with ONLY a JSON object in this exact format (no markdown, no extra text):
+\{
+  "reasoning": "<narrative reasoning trace covering all flows>",
+  "has\_information\_exchange": true,
+  "flows": [
+    \{
+      "sender": "...",
+      "recipient": "...",
+      "subject": "...",
+      "information\_type": "...",
+      "transmission\_principle": "...",
+      "context": "...",
+      "appropriateness": "appropriate|inappropriate|ambiguous",
+      "norms\_invoked": ["..."],
+      "norm\_source": "explicit|implicit|both",
+      "is\_new\_flow": false,
+      "confidence": 8
+    \}
+  ]
+\}
+
+If there are no information flows, set "has\_information\_exchange" to false and "flows" to [].
+\end{prompttext}
+
+\textbf{User Template:}
+\begin{prompttext}
+{{instruction}}
+
+{{chunk\_text}}
+\end{prompttext}
+\end{promptbox}
