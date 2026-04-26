@@ -69,13 +69,13 @@ echo "[$(date)] Waiting for servers to become ready..."
 for port_label in "${EMB_PORT}:embedding" "${JUDGE_PORT}:judge"; do
     port="${port_label%%:*}"
     label="${port_label##*:}"
-    for i in $(seq 1 120); do
+    for i in $(seq 1 240); do
         if curl -sf "http://localhost:${port}/health" > /dev/null 2>&1; then
             echo "[$(date)] ${label} server ready on port ${port}"
             break
         fi
-        if [ "$i" -eq 120 ]; then
-            echo "[$(date)] ERROR: ${label} server not ready after 600s"
+        if [ "$i" -eq 240 ]; then
+            echo "[$(date)] ERROR: ${label} server not ready after 1200s"
             kill $EMB_PID $JUDGE_PID 2>/dev/null || true
             exit 1
         fi

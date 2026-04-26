@@ -184,10 +184,30 @@ def _classify_columns(df: pd.DataFrame) -> dict:
         elif cl in ("prediction", "predicted_label") or cl.endswith("_pred"):
             info["prediction_cols"].append(c)
         # Context (verbose text fields that provide background)
-        elif cl in ("vignette", "generate_background", "story", "text"):
+        elif cl in ("vignette", "generate_background", "story", "text", "trajectory"):
             info["context_cols"].append(c)
 
+    # Detect dict-typed context columns with extractable sub-fields
+    context_subfields: dict[str, list[tuple[str, str]]] = {}
+    for c in info["context_cols"]:
+        if c in _CONTEXT_SUBFIELDS and c in cols:
+            # Verify column actually contains dicts by checking first non-null
+            sample = df[c].dropna().iloc[0] if df[c].notna().any() else None
+            if isinstance(sample, dict):
+                context_subfields[c] = _CONTEXT_SUBFIELDS[c]
+    info["context_subfields"] = context_subfields
+
     return info
+
+
+# Sub-fields to extract from dict-typed context columns as separate toggleable entries.
+# Maps column_name -> [(sub_key, display_label)]
+_CONTEXT_SUBFIELDS = {
+    "trajectory": [
+        ("sensitive_info_items", "Sensitive Info Items"),
+        ("user_instruction", "User Instruction"),
+    ],
+}
 
 
 # ── Data serialization ───────────────────────────────────────────────────
@@ -213,6 +233,66 @@ def _serialize(v: Any) -> Any:
     if isinstance(v, bytes):
         return v.decode("utf-8", errors="replace")
     return v
+
+
+def _reformat_prompt_repr(record: dict, col_name: str, col_val: dict) -> None:
+    """Replace Python repr of a dict column inside the prompt text with valid JSON.
+
+    The prompt often contains something like:
+        Trajectory:\n{'key': 'val', ...}\n\nGenerate the final action...
+    We find the repr block and replace it with pretty-printed JSON so that
+    the JS formatTextWithJson renderer can parse and syntax-highlight it.
+    """
+    prompt = record.get("prompt", "")
+    if not prompt:
+        return
+
+    # Look for the column name (capitalized) followed by the repr.
+    # Common patterns: "Trajectory:\n{...}" or "Vignette:\n{...}"
+    for marker in (f"{col_name.capitalize()}:\n", f"{col_name}:\n"):
+        idx = prompt.find(marker)
+        if idx < 0:
+            continue
+        repr_start = idx + len(marker)
+
+        # The repr is a Python dict starting with '{'.  Find its end by
+        # scanning for the matching '}' at the top level, accounting for
+        # nesting and string literals (single- and double-quoted).
+        depth = 0
+        in_str: str | None = None
+        esc = False
+        end = None
+        for j in range(repr_start, len(prompt)):
+            ch = prompt[j]
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if in_str:
+                if ch == in_str:
+                    in_str = None
+                continue
+            if ch in ("'", '"'):
+                in_str = ch
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j + 1
+                    break
+
+        if end is None:
+            return  # couldn't find matching brace
+
+        # Build clean JSON from the structured data we already have
+        clean = json.dumps(_serialize(col_val), indent=2, ensure_ascii=False)
+
+        record["prompt"] = prompt[:repr_start] + clean + prompt[end:]
+        return  # done
 
 
 def _extract_user_prompt(messages: Any) -> str | None:
@@ -274,7 +354,22 @@ def build_stage_data(
         # Context
         for c in col_info["context_cols"]:
             if c in ref.index and ref[c] is not None:
-                record[c] = _serialize(ref[c])
+                val = ref[c]
+                record[c] = _serialize(val)
+                # Extract sub-fields from dict-typed context columns
+                if isinstance(val, dict) and c in _CONTEXT_SUBFIELDS:
+                    for sub_key, _label in _CONTEXT_SUBFIELDS[c]:
+                        sub_val = val.get(sub_key)
+                        if sub_val is not None:
+                            record[f"{c}.{sub_key}"] = _serialize(sub_val)
+
+        # Fix prompt: replace Python repr of dict-typed context cols with JSON
+        # so the JS formatTextWithJson can parse them properly.
+        prompt = record.get("prompt", "")
+        if prompt:
+            for c in col_info["context_cols"]:
+                if c in ref.index and isinstance(ref[c], dict):
+                    _reformat_prompt_repr(record, c, ref[c])
 
         # Ground truth
         for c in col_info["ground_truth_cols"]:
@@ -520,6 +615,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--fg); font-s
 }
 .completion-col {
   border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  display: flex; flex-direction: column;
 }
 .completion-col .col-header {
   padding: 6px 10px; font-weight: 600; font-size: 12px;
@@ -528,7 +624,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--fg); font-s
 .completion-col pre {
   padding: 10px; white-space: pre-wrap; word-break: break-word;
   font-family: var(--mono); font-size: 12px; line-height: 1.5;
-  max-height: 500px; overflow-y: auto; margin: 0;
+  max-height: 500px; overflow-y: auto; margin: 0; flex: 1;
 }
 .diff-add { background: #d4edda; }
 .diff-del { background: #f8d7da; }
@@ -576,6 +672,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--fg); font-s
 .judge-grid.open { display: grid; }
 .judge-card {
   border: 1px solid #e0d6f5; border-radius: 6px; overflow: hidden;
+  display: flex; flex-direction: column;
 }
 .judge-card .judge-header {
   padding: 5px 10px; font-size: 11px; font-weight: 600;
@@ -593,6 +690,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--fg); font-s
   padding: 8px 10px; white-space: pre-wrap; word-break: break-word;
   font-family: var(--mono); font-size: 11px; line-height: 1.4;
   max-height: 300px; overflow-y: auto; margin: 0; background: #faf5ff;
+  flex: 1;
 }
 
 /* ── JSON pretty-print ───────────────────────────────────── */
@@ -613,12 +711,39 @@ mark { background: #fff176; padding: 1px 2px; border-radius: 2px; }
 @media (max-width: 900px) {
   .completions-grid { grid-template-columns: 1fr !important; }
 }
+
+/* ── Export modal */
+.export-overlay { position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center; }
+.export-dialog { background:#fff;border-radius:10px;width:92vw;max-width:1000px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.2); }
+.export-header { padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center; }
+.export-header h3 { margin:0;font-size:15px; }
+.export-controls { padding:10px 16px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;font-size:13px;background:#fafafa; }
+.export-controls label { display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap; }
+.export-controls .eg { display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:4px;padding:1px 2px;background:#fff; }
+.export-controls .eg label { padding:2px 8px;border-radius:3px;font-size:12px; }
+.export-controls .eg label.active { background:var(--accent);color:#fff; }
+.export-preview { flex:1;overflow:auto;padding:16px;background:#f9f9f9; }
+.export-preview [data-export].export-hidden { display:none !important; }
+.export-preview .export-frame { background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px;margin:0 auto;font-size:13px; }
+.export-preview .export-frame .prompt-box details,
+.export-preview .export-frame .field-group { }
+.export-preview .export-frame details[open] > summary { margin-bottom:4px; }
+.export-preview .export-frame .completion-col pre { max-height:none; }
+.export-actions { padding:10px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end; }
+.export-actions button { font-size:13px;padding:6px 16px;border:none;border-radius:4px;cursor:pointer;font-weight:500; }
+.export-actions .btn-pdf { background:#1976d2;color:#fff; }
+.export-actions .btn-html { background:#2e7d32;color:#fff; }
+.export-actions .btn-cancel { background:#757575;color:#fff; }
+.export-actions button:hover { opacity:0.9; }
 </style>
 </head>
 <body>
 
 <div class="topbar" id="topbar">
   <select id="stage-select"></select>
+  <div class="sep"></div>
+  <input type="number" id="jump-input" placeholder="#" min="0" style="width:80px;">
+  <button id="jump-btn" class="secondary">Go</button>
   <div class="sep"></div>
   <input type="text" id="search-input" placeholder="Search (regex)...">
   <button id="search-btn">Search</button>
@@ -627,11 +752,12 @@ mark { background: #fff176; padding: 1px 2px; border-radius: 2px; }
   <div class="filters" id="filter-chips"></div>
   <div class="sep"></div>
   <button id="bookmarks-btn" class="secondary">Bookmarks</button>
-  <button id="export-btn" class="secondary">Export</button>
+  <button id="exportrow-btn" class="secondary">Export Row</button>
+  <button id="export-btn" class="secondary">Export BMs</button>
   <div class="info" id="status-info"></div>
   <div class="info">
     <span class="kbd">j</span>/<span class="kbd">k</span> nav
-    <span class="kbd">Enter</span> expand
+    <span class="kbd">g</span> jump
     <span class="kbd">b</span> bookmark
     <span class="kbd">/</span> search
   </div>
@@ -643,6 +769,19 @@ mark { background: #fff176; padding: 1px 2px; border-radius: 2px; }
 <div class="bookmarks-panel" id="bookmarks-panel">
   <h3>Bookmarks</h3>
   <div id="bookmarks-list"></div>
+</div>
+
+<div id="export-overlay" class="export-overlay" style="display:none">
+  <div class="export-dialog">
+    <div class="export-header"><h3 id="export-title">Export Row</h3></div>
+    <div class="export-controls" id="export-controls"></div>
+    <div class="export-preview"><div class="export-frame" id="export-frame"></div></div>
+    <div class="export-actions">
+      <button class="btn-html" onclick="doExportHTML()">Save HTML</button>
+      <button class="btn-pdf" onclick="doExportPDF()">Save PDF</button>
+      <button class="btn-cancel" onclick="closeExportModal()">Close</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -688,6 +827,10 @@ function init() {
   });
   sel.addEventListener('change', () => { loadStage(sel.value); });
 
+  document.getElementById('jump-btn').addEventListener('click', doJump);
+  document.getElementById('jump-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doJump();
+  });
   document.getElementById('search-btn').addEventListener('click', doSearch);
   document.getElementById('clear-btn').addEventListener('click', clearSearch);
   document.getElementById('search-input').addEventListener('keydown', e => {
@@ -695,6 +838,10 @@ function init() {
   });
   document.getElementById('bookmarks-btn').addEventListener('click', toggleBookmarks);
   document.getElementById('export-btn').addEventListener('click', exportBookmarks);
+  document.getElementById('exportrow-btn').addEventListener('click', showExportModal);
+  document.getElementById('export-overlay').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeExportModal();
+  });
 
   document.addEventListener('keydown', handleKeyboard);
 
@@ -896,7 +1043,7 @@ function refilter() {
     matchesChipFilter(r) && matchesSearch(r) && matchesFieldFilters(r)
   );
   currentIdx = 0;
-  render();
+  render('header');
   updateStatus();
 }
 
@@ -913,6 +1060,35 @@ function updateStatus() {
   document.getElementById('status-info').textContent = parts.join(' | ');
 }
 
+// ── Jump to row ─────────────────────────────────────────────────────
+function doJump() {
+  const input = document.getElementById('jump-input');
+  const target = parseInt(input.value, 10);
+  if (isNaN(target)) return;
+  const fi = filteredRows.findIndex(r => r.idx === target);
+  if (fi >= 0) {
+    currentIdx = fi;
+    render('center');
+  } else {
+    const exists = allRows.some(r => r.idx === target);
+    if (exists) {
+      activeFilter = 'all';
+      fieldFilters = {};
+      searchQuery = '';
+      document.getElementById('search-input').value = '';
+      document.getElementById('field-filters').querySelectorAll('select').forEach(s => {
+        s.value = '';
+        s.classList.remove('active-filter');
+      });
+      filteredRows = allRows.slice();
+      updateStatus();
+      const fi2 = filteredRows.findIndex(r => r.idx === target);
+      if (fi2 >= 0) { currentIdx = fi2; render('center'); }
+    }
+  }
+  input.value = '';
+}
+
 // ── Search ───────────────────────────────────────────────────────────
 function doSearch() {
   searchQuery = document.getElementById('search-input').value.trim();
@@ -926,7 +1102,11 @@ function clearSearch() {
 }
 
 // ── Render ───────────────────────────────────────────────────────────
-function render() {
+// scrollMode: 'header' = pin card header to top of viewport (default)
+//             'center' = scroll card to center (for jump/search)
+//             'none'   = don't scroll
+function render(scrollMode) {
+  if (!scrollMode) scrollMode = 'header';
   const container = document.getElementById('container');
   container.innerHTML = '';
 
@@ -944,10 +1124,20 @@ function render() {
     container.appendChild(buildRowCard(row, fi));
   }
 
-  // Scroll current into view
+  if (scrollMode === 'none') return;
+
   requestAnimationFrame(() => {
     const el = document.querySelector('.row-card.current');
-    if (el) el.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+    if (!el) return;
+    if (scrollMode === 'center') {
+      el.scrollIntoView({block: 'center', behavior: 'smooth'});
+    } else {
+      const topbar = document.getElementById('topbar');
+      const offset = topbar ? topbar.getBoundingClientRect().height + 8 : 50;
+      const rect = el.getBoundingClientRect();
+      const scrollY = window.scrollY + rect.top - offset;
+      window.scrollTo({top: Math.max(0, scrollY), behavior: 'smooth'});
+    }
   });
 }
 
@@ -964,7 +1154,7 @@ function buildRowCard(row, filterIdx) {
   header.addEventListener('click', () => {
     if (currentIdx === filterIdx) return;  // already expanded
     currentIdx = filterIdx;
-    render();
+    render('header');
   });
 
   const num = document.createElement('span');
@@ -1031,7 +1221,7 @@ function buildRowBody(row) {
   if (row.prompt) {
     const promptFormatted = formatTextWithJson(row.prompt);
     const isLong = row.prompt.length > 500;
-    html += `<div class="prompt-box">
+    html += `<div class="prompt-box" data-export="prompt">
       <details${isLong ? '' : ' open'}>
         <summary>Prompt (${row.prompt.length.toLocaleString()} chars)</summary>
         <pre>${highlightSearch(promptFormatted)}</pre>
@@ -1040,14 +1230,29 @@ function buildRowBody(row) {
   }
 
   // Context columns
+  const subfields = colInfo.context_subfields || {};
   (colInfo.context_cols || []).forEach(c => {
     if (row[c]) {
       const raw = stringify(row[c]);
       const formatted = formatTextWithJson(raw);
-      html += `<div class="prompt-box">
-        <details><summary>${esc(c)} (${raw.length.toLocaleString()} chars)</summary>
+      html += `<div class="prompt-box" data-export="context-${c}">
+        <details><summary>${esc(c.charAt(0).toUpperCase() + c.slice(1).replace(/_/g, ' '))} (${raw.length.toLocaleString()} chars)</summary>
         <pre>${formatted}</pre></details>
       </div>`;
+      // Render extracted sub-fields as separate toggleable sections
+      if (subfields[c]) {
+        subfields[c].forEach(([subKey, subLabel]) => {
+          const fullKey = c + '.' + subKey;
+          if (row[fullKey] != null) {
+            const subRaw = stringify(row[fullKey]);
+            const subFormatted = formatTextWithJson(subRaw);
+            html += `<div class="prompt-box" data-export="context-${fullKey}" style="border-left:3px solid #ff9800;margin-left:12px;">
+              <details open><summary>${esc(subLabel)}</summary>
+              <pre>${highlightSearch(subFormatted)}</pre></details>
+            </div>`;
+          }
+        });
+      }
     }
   });
 
@@ -1055,7 +1260,7 @@ function buildRowBody(row) {
   const completions = row.completions || {};
   const stageLabels = getStageLabels();
   const nCols = stageLabels.length;
-  html += `<div class="completions-grid" style="grid-template-columns: repeat(${nCols}, 1fr);">`;
+  html += `<div class="completions-grid" data-export="completions" style="grid-template-columns: repeat(${nCols}, 1fr);">`;
   stageLabels.forEach((label, i) => {
     const p = PALETTE[i % PALETTE.length];
     const text = completions[label];
@@ -1074,7 +1279,7 @@ function buildRowBody(row) {
   // Ground truth
   const gtCols = colInfo.ground_truth_cols || [];
   if (gtCols.length > 0) {
-    html += '<div class="meta-row">';
+    html += '<div class="meta-row" data-export="ground-truth">';
     gtCols.forEach(c => {
       if (row[c] !== undefined && row[c] !== null) {
         html += `<span><span class="label">${esc(c)}:</span> <span class="val">${esc(String(row[c]))}</span></span>`;
@@ -1086,7 +1291,7 @@ function buildRowBody(row) {
   // Predictions
   if (row.predictions) {
     Object.entries(row.predictions).forEach(([predCol, labelVals]) => {
-      html += '<div class="meta-row">';
+      html += '<div class="meta-row" data-export="predictions">';
       html += `<span class="label">${esc(predCol)}:</span> `;
       getStageLabels().forEach((label, i) => {
         const val = labelVals[label];
@@ -1112,7 +1317,7 @@ function buildRowBody(row) {
       const judgeData = row.judges[judgeName];
       if (!judgeData) return;
       const toggleId = `judge-${row.idx}-${judgeName.replace(/\s+/g, '_')}`;
-      html += `<div class="judge-section">`;
+      html += `<div class="judge-section" data-export="judge">`;
       html += `<div class="judge-toggle" onclick="
         this.classList.toggle('open');
         document.getElementById('${toggleId}').classList.toggle('open');
@@ -1146,7 +1351,7 @@ function buildRowBody(row) {
         const textKeys = Object.keys(jEntry).filter(k => k.endsWith('_text'));
         textKeys.forEach(tk => {
           if (jEntry[tk]) {
-            html += `<pre>${highlightSearch(formatTextWithJson(String(jEntry[tk])))}</pre>`;
+            html += `<pre data-export="judge-text">${highlightSearch(formatTextWithJson(String(jEntry[tk])))}</pre>`;
           }
         });
         html += '</div>';
@@ -1280,7 +1485,7 @@ function toggleBookmark(idx) {
 
   // If the bookmarked filter is active, the row set changes — must re-render.
   if (activeFilter === 'bookmarked') {
-    render();
+    render('none');
   } else {
     // Patch the affected card in-place instead of re-rendering everything.
     const isBookmarked = bookmarks.has(idx);
@@ -1322,7 +1527,7 @@ function renderBookmarksPanel() {
     item.addEventListener('click', () => {
       // Find this row in filtered list
       const fi = filteredRows.findIndex(r => r.idx === idx);
-      if (fi >= 0) { currentIdx = fi; render(); }
+      if (fi >= 0) { currentIdx = fi; render('center'); }
       else {
         // Switch to 'all' filter to find it
         activeFilter = 'all';
@@ -1330,7 +1535,7 @@ function renderBookmarksPanel() {
         document.getElementById('search-input').value = '';
         applyFilters();
         const fi2 = filteredRows.findIndex(r => r.idx === idx);
-        if (fi2 >= 0) { currentIdx = fi2; render(); }
+        if (fi2 >= 0) { currentIdx = fi2; render('center'); }
       }
     });
     list.appendChild(item);
@@ -1368,14 +1573,18 @@ function handleKeyboard(e) {
   switch (e.key) {
     case 'j': case 'ArrowDown':
       e.preventDefault();
-      if (currentIdx < filteredRows.length - 1) { currentIdx++; render(); }
+      if (currentIdx < filteredRows.length - 1) { currentIdx++; render('header'); }
       break;
     case 'k': case 'ArrowUp':
       e.preventDefault();
-      if (currentIdx > 0) { currentIdx--; render(); }
+      if (currentIdx > 0) { currentIdx--; render('header'); }
       break;
     case 'Enter':
       // Already expanded via currentIdx, this is a no-op but feels natural
+      break;
+    case 'g':
+      e.preventDefault();
+      document.getElementById('jump-input').focus();
       break;
     case 'b':
       if (filteredRows[currentIdx]) toggleBookmark(filteredRows[currentIdx].idx);
@@ -1385,9 +1594,287 @@ function handleKeyboard(e) {
       document.getElementById('search-input').focus();
       break;
     case 'Escape':
+      if (document.getElementById('export-overlay').style.display !== 'none') { closeExportModal(); break; }
       if (bookmarksPanelOpen) toggleBookmarks();
       break;
   }
+}
+
+// ── Export Row ──────────────────────────────────────────────────────
+let _exportRow = null;
+
+function showExportModal() {
+  const row = filteredRows[currentIdx];
+  if (!row) return;
+  _exportRow = row;
+
+  const stageData = DATA[currentStage];
+  const colInfo = stageData.col_info;
+
+  document.getElementById('export-title').textContent = `Export Row #${row.idx} — ${currentStage}`;
+
+  // Build toggle controls
+  const ctrl = document.getElementById('export-controls');
+  ctrl.innerHTML = '';
+
+  const sections = [];
+
+  // Detect which sections exist in this row
+  const subfields = colInfo.context_subfields || {};
+  if (row.prompt) sections.push({id: 'prompt', label: 'Prompt', on: true});
+  (colInfo.context_cols || []).forEach(c => {
+    if (row[c]) {
+      sections.push({id: `context-${c}`, label: c, on: true});
+      // Sub-field toggles
+      if (subfields[c]) {
+        subfields[c].forEach(([subKey, subLabel]) => {
+          const fullKey = c + '.' + subKey;
+          if (row[fullKey] != null) {
+            sections.push({id: `context-${fullKey}`, label: '  \u2514 ' + subLabel, on: true});
+          }
+        });
+      }
+    }
+  });
+  sections.push({id: 'completions', label: 'Completions', on: true});
+  if ((colInfo.ground_truth_cols || []).some(c => row[c] !== undefined && row[c] !== null))
+    sections.push({id: 'ground-truth', label: 'Ground Truth', on: true});
+  if (row.predictions) sections.push({id: 'predictions', label: 'Predictions', on: true});
+
+  // Checkboxes for each section
+  sections.forEach(s => {
+    const lbl = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = s.on;
+    cb.dataset.section = s.id;
+    cb.addEventListener('change', updateExportPreview);
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(' ' + s.label));
+    ctrl.appendChild(lbl);
+  });
+
+  // Judge detail radio group (if judges exist)
+  if (row.judges && Object.keys(row.judges).length > 0) {
+    const sep = document.createElement('span');
+    sep.style.cssText = 'width:1px;height:18px;background:#ccc;margin:0 4px;';
+    ctrl.appendChild(sep);
+
+    const glbl = document.createElement('span');
+    glbl.style.fontWeight = '600';
+    glbl.textContent = 'Judges:';
+    ctrl.appendChild(glbl);
+
+    const eg = document.createElement('span');
+    eg.className = 'eg';
+    ['none', 'verdict', 'full'].forEach(val => {
+      const lbl = document.createElement('label');
+      lbl.textContent = val === 'none' ? 'None' : val === 'verdict' ? 'Verdict' : 'Full';
+      lbl.dataset.judgeLevel = val;
+      if (val === 'verdict') lbl.classList.add('active');
+      lbl.addEventListener('click', () => {
+        eg.querySelectorAll('label').forEach(l => l.classList.remove('active'));
+        lbl.classList.add('active');
+        updateExportPreview();
+      });
+      eg.appendChild(lbl);
+    });
+    ctrl.appendChild(eg);
+  }
+
+  // Width control
+  const wsep = document.createElement('span');
+  wsep.style.cssText = 'width:1px;height:18px;background:#ccc;margin:0 4px;';
+  ctrl.appendChild(wsep);
+
+  const wlbl = document.createElement('span');
+  wlbl.style.fontWeight = '600';
+  wlbl.textContent = 'Width:';
+  ctrl.appendChild(wlbl);
+
+  const wInput = document.createElement('input');
+  wInput.type = 'number';
+  wInput.id = 'export-width';
+  wInput.value = 1100;
+  wInput.min = 400;
+  wInput.max = 2400;
+  wInput.step = 50;
+  wInput.style.cssText = 'width:70px;font-size:12px;padding:2px 4px;border:1px solid #ccc;border-radius:3px;';
+  wInput.addEventListener('input', updateExportPreview);
+  ctrl.appendChild(wInput);
+
+  const wpx = document.createElement('span');
+  wpx.style.cssText = 'font-size:11px;color:#888;';
+  wpx.textContent = 'px';
+  ctrl.appendChild(wpx);
+
+  // Render initial preview
+  updateExportPreview();
+
+  document.getElementById('export-overlay').style.display = 'flex';
+}
+
+function getExportOptions() {
+  const opts = {sections: {}, judgeLevel: 'verdict'};
+  document.querySelectorAll('#export-controls input[type=checkbox]').forEach(cb => {
+    opts.sections[cb.dataset.section] = cb.checked;
+  });
+  const activeJudge = document.querySelector('#export-controls .eg label.active');
+  if (activeJudge) opts.judgeLevel = activeJudge.dataset.judgeLevel;
+  return opts;
+}
+
+function _getExportWidth() {
+  const el = document.getElementById('export-width');
+  return el ? parseInt(el.value, 10) || 1100 : 1100;
+}
+
+function updateExportPreview() {
+  const frame = document.getElementById('export-frame');
+  frame.style.maxWidth = _getExportWidth() + 'px';
+  // Clone the current row body from the main view
+  const currentBody = document.querySelector('.row-card.current .row-body');
+  if (!currentBody) return;
+
+  // Clone and clean up
+  const clone = currentBody.cloneNode(true);
+  clone.style.display = 'block';
+
+  // Force all <details> open in the export
+  clone.querySelectorAll('details').forEach(d => d.setAttribute('open', ''));
+
+  // Remove search highlights
+  clone.querySelectorAll('mark').forEach(m => {
+    m.replaceWith(document.createTextNode(m.textContent));
+  });
+
+  // Remove max-height constraints on pre elements
+  clone.querySelectorAll('pre').forEach(p => { p.style.maxHeight = 'none'; });
+  clone.querySelectorAll('.prompt-box').forEach(p => { p.style.maxHeight = 'none'; });
+
+  const opts = getExportOptions();
+
+  // Apply section visibility
+  clone.querySelectorAll('[data-export]').forEach(el => {
+    const key = el.getAttribute('data-export');
+    if (key in opts.sections) {
+      el.classList.toggle('export-hidden', !opts.sections[key]);
+    }
+  });
+
+  // Apply judge level
+  clone.querySelectorAll('[data-export="judge"]').forEach(el => {
+    if (opts.judgeLevel === 'none') {
+      el.classList.add('export-hidden');
+    } else {
+      el.classList.remove('export-hidden');
+      // Show/hide judge reasoning text
+      el.querySelectorAll('[data-export="judge-text"]').forEach(t => {
+        t.classList.toggle('export-hidden', opts.judgeLevel !== 'full');
+      });
+      // Also force judge grids open
+      el.querySelectorAll('.judge-grid').forEach(g => g.classList.add('open'));
+      el.querySelectorAll('.judge-toggle').forEach(t => t.classList.add('open'));
+    }
+  });
+
+  frame.innerHTML = '';
+  frame.appendChild(clone);
+}
+
+function closeExportModal() {
+  document.getElementById('export-overlay').style.display = 'none';
+  _exportRow = null;
+}
+
+function _getExportCSS() {
+  // Self-contained export CSS — no extracted page rules, no CSS variables
+  return `
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 13px; color: #1a1a1a; }
+    .row-body { display: block; padding: 0; }
+    details { margin-bottom: 8px; }
+    details > summary { cursor: default; font-weight: 600; font-size: 12px; color: #555; margin-bottom: 4px; text-transform: capitalize; }
+    pre { white-space: pre-wrap; word-break: break-word; font-family: 'SF Mono','Cascadia Code','Fira Code',Consolas,monospace; font-size: 11.5px; line-height: 1.5; margin: 0; }
+    .prompt-box { background: #f5f5f5; border: 1px solid #e8e8e8; border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; }
+    .completions-grid { display: grid; gap: 8px; margin-bottom: 10px; align-items: stretch; }
+    .completion-col { border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; }
+    .completion-col .col-header { padding: 5px 10px; font-weight: 600; font-size: 12px; border-bottom: 1px solid #e0e0e0; }
+    .completion-col pre { padding: 8px 10px; }
+    .meta-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+    .meta-row .label { font-weight: 600; color: #555; }
+    .meta-row .val { font-family: 'SF Mono',Consolas,monospace; }
+    .meta-row .val.correct { color: #2e7d32; font-weight: 600; }
+    .meta-row .val.wrong { color: #c62828; font-weight: 600; }
+    .judge-section { margin-bottom: 10px; }
+    .judge-toggle { display: none; }
+    .judge-grid { display: grid !important; gap: 8px; margin-top: 0; align-items: stretch; }
+    .judge-card { border: 1px solid #e0d6f5; border-radius: 6px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; }
+    .judge-card .judge-header { padding: 5px 10px; font-size: 11px; font-weight: 600; background: #f3e5f5; border-bottom: 1px solid #e0d6f5; display: flex; gap: 8px; flex-wrap: wrap; }
+    .judge-card .judge-header .verdict { padding: 1px 6px; border-radius: 8px; font-weight: 700; font-size: 11px; }
+    .judge-card .judge-header .verdict.leak { background: #ffebee; color: #c62828; }
+    .judge-card .judge-header .verdict.no-leak { background: #e8f5e9; color: #2e7d32; }
+    .judge-card .judge-header .verdict.helpful { background: #e8f5e9; color: #2e7d32; }
+    .judge-card .judge-header .verdict.not-helpful { background: #fff3e0; color: #ef6c00; }
+    .judge-card pre { padding: 6px 10px; font-size: 11px; line-height: 1.4; background: #faf5ff; }
+    .json-block { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; padding: 6px 8px; margin: 4px 0; font-size: 11px; }
+    .json-key { color: #881391; } .json-str { color: #0b7285; } .json-num { color: #d9480f; }
+    .json-bool { color: #5c940d; font-weight: 600; } .json-null { color: #868e96; font-style: italic; }
+    .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500; }
+    .col-header.correct { border-bottom-color: #2e7d32; }
+    .col-header.wrong { border-bottom-color: #c62828; }
+  `;
+}
+
+function _getExportHTML() {
+  const frame = document.getElementById('export-frame');
+  const clone = frame.cloneNode(true);
+  // Remove hidden sections entirely from the DOM
+  clone.querySelectorAll('.export-hidden').forEach(el => el.remove());
+  // Remove data-export attributes (cleanup)
+  clone.querySelectorAll('[data-export]').forEach(el => el.removeAttribute('data-export'));
+  return clone.innerHTML;
+}
+
+function _exportFilename(ext) {
+  const row = _exportRow;
+  if (!row) return `export.${ext}`;
+  const stage = currentStage.replace(/[^a-zA-Z0-9]/g, '_');
+  return `row${row.idx}_${stage}.${ext}`;
+}
+
+function doExportHTML() {
+  const content = _getExportHTML();
+  const css = _getExportCSS();
+  const w = _getExportWidth();
+  const htmlDoc = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${esc(_exportFilename('html'))}</title>
+<style>${css}</style>
+</head><body style="max-width:${w}px;margin:0 auto;padding:16px;">
+${content}
+</body></html>`;
+  const blob = new Blob([htmlDoc], {type: 'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = _exportFilename('html');
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function doExportPDF() {
+  const content = _getExportHTML();
+  const css = _getExportCSS();
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${_exportFilename('pdf')}</title>
+<style>
+${css}
+@media print { @page { margin: 0.5in; size: auto; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style></head><body style="max-width:${w}px;padding:12px;">
+${content}
+<script>window.onload=function(){window.print();}<\\/script>
+</body></html>`);
+  win.document.close();
 }
 
 // ── Start ────────────────────────────────────────────────────────────

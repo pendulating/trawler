@@ -25,6 +25,10 @@ Manuscript: `papers/colm26_normative-simulacra/`. Experiment runbook: `EXPERIMEN
 - [models.md](models.md) — model config conventions, zoo layout
 - [slurm-and-env.md](slurm-and-env.md) — launchers, `server.env`, GPU sanitization
 
+**Integrations**
+- [integrations/batch-judging.md](integrations/batch-judging.md) — OpenAI Batch API judging for PrivacyLens + CIRL-Vignettes, 1:1 upstream prompt parity, offline export, finalize flow
+- [integrations/openai-batch-api.md](integrations/openai-batch-api.md) — upstream OpenAI Batch API reference (mirror)
+
 **How-to (bootstrap extensions)**
 - [howto/add-model.md](howto/add-model.md) — download + yaml + wire into pipelines
 - [howto/add-stage.md](howto/add-stage.md) — new stage in an existing dagspace
