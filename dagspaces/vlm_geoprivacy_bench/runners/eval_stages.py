@@ -11,6 +11,12 @@ from omegaconf import OmegaConf
 
 from dagspaces.common.runners.base import StageRunner
 from dagspaces.common.orchestrator import StageResult
+from dagspaces.common.eval_sanity import compute_parse_health
+from dagspaces.common.runners.sanity import (
+    log_sanity_to_context,
+    sanity_overrides,
+    task_model_name,
+)
 
 
 class LoadDatasetRunner(StageRunner):
@@ -99,6 +105,7 @@ class ParseMCQRunner(StageRunner):
 
         input_path = context.inputs["dataset"]
         df = pd.read_parquet(input_path)
+        input_n = len(df)
 
         result_df = parse_mcq_responses(df)
 
@@ -106,10 +113,22 @@ class ParseMCQRunner(StageRunner):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         result_df.to_parquet(out_path, index=False)
 
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
+        thresholds, patterns = sanity_overrides(context.cfg)
+        report = compute_parse_health(
+            result_df,
+            dagspace="vlm_geoprivacy",
+            stage=self.stage_name,
+            model=task_model_name(context.cfg),
+            status_col="parse_status",
+            completion_col="generated_text",
+            finish_reason_col="finish_reason",
+            expected_input_n=input_n,
+            refusal_patterns=patterns,
+            thresholds=thresholds,
         )
+        metadata: Dict[str, Any] = {"rows": len(result_df)}
+        log_sanity_to_context(context, report, metadata=metadata)
+        return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
 
 class ParseFreeformRunner(StageRunner):
@@ -120,6 +139,7 @@ class ParseFreeformRunner(StageRunner):
 
         input_path = context.inputs["dataset"]
         df = pd.read_parquet(input_path)
+        input_n = len(df)
 
         result_df = parse_freeform_responses(df)
 
@@ -127,10 +147,22 @@ class ParseFreeformRunner(StageRunner):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         result_df.to_parquet(out_path, index=False)
 
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
+        thresholds, patterns = sanity_overrides(context.cfg)
+        report = compute_parse_health(
+            result_df,
+            dagspace="vlm_geoprivacy",
+            stage=self.stage_name,
+            model=task_model_name(context.cfg),
+            status_col="parse_status",
+            completion_col="generated_text",
+            finish_reason_col="finish_reason",
+            expected_input_n=input_n,
+            refusal_patterns=patterns,
+            thresholds=thresholds,
         )
+        metadata: Dict[str, Any] = {"rows": len(result_df)}
+        log_sanity_to_context(context, report, metadata=metadata)
+        return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
 
 class GranularityJudgeRunner(StageRunner):
