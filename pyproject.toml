@@ -304,6 +304,7 @@ dependencies = [
     "flash-attn",
     "causal-conv1d",
     "flash-linear-attention",
+    "marimo>=0.23.3",
 ]
 
 [tool.setuptools.packages.find]
