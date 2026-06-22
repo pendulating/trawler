@@ -21,11 +21,56 @@ Output schema per completion (flat, no nesting):
 """
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List
 
 import pandas as pd
 from omegaconf import OmegaConf
+
+
+# Story-level information transfer between characters. Used to curate SFT
+# negatives (see `negative_selection` below). The gold reasoning ALWAYS contains
+# the boilerplate "...regulates the exchange of information between agents" (the
+# reason a chunk is has_information_exchange=False), so we cannot key on bare
+# "exchange"/"information"; instead we positively detect a described transfer.
+_STORY_INTERACTION_RE = re.compile(
+    r"conversations?\b|dialogues?\b|interact|social\s+interaction|"
+    r"\bdisclos|\bconfid(e|es|ed|ing|ential)|\bconfess|"
+    r"\btell(s|ing|)\b|\btold\b|\breveal|\bshar(e|es|ed|ing)\b|"
+    r"\bwithh(o|e)ld|\bcommunicat|\bgossip|\bconvey|\bimpart|\binform(s|ed|ing)\b|"
+    r"\bletter(s)?\b|\bmessage(s)?\b|\bcorrespondence\b|\bnote(s)?\b|"
+    r"\bask(s|ed|ing)?\b|\binquir|\brequest|\bwarn(s|ed|ing)?\b|"
+    r"\bannounc|\bconsult|\bconverse|\bspeaks?\s+(to|with)|"
+    r"\bquestion(s|ed|ing)?\b|\badvis(e|es|ed|ing)\b|\bnegotiat|"
+    r"\bconceal(s|ed|ing|ment)?\b|\bsecret(s|ly)?\b|\bprivate\s+(matter|affair|information)|"
+    r"information\s+(is|are|being|was|were)\s+(being\s+)?(exchang|transmit|convey|disclos|shar|pass|impart|communicat)|"
+    r"instances?\s+of\s+(information\s+)?(being\s+)?(exchang|communicat|disclos|shar)|"
+    r"exchanged?\s+between|exchange\s+of\s+(pleasantr|news|letters|glances|confidence|gossip|secret|ideas|greetings)|"
+    r"involv(e|es|ed|ing)\b.{0,30}\bexchang|"  # "involves the exchange of information" (≠ "regulates the exchange" boilerplate)
+    r"transmission\s+of\s+information|transmits|passing\s+(on\s+|along\s+)?(of\s+)?information",
+    re.I,
+)
+
+
+def _is_contentless_chunk(reasoning_text: str) -> bool:
+    """Whether a gold has_information_exchange=False chunk is *genuinely* flow-free.
+
+    `has_information_exchange` is a **prescriptive-norm** label: a chunk is False
+    when no norm *commands/prohibits/regulates* an information flow — even when a
+    real (descriptive) disclosure or conversation is present (e.g. a character
+    confiding financial trouble to a spouse). Using those has-exchange-but-no-norm
+    chunks as SFT "abstain" negatives teaches the model to under-extract real flows
+    — the over-abstention seen across the v2-v5 GRPO runs. A chunk is treated as
+    contentless (a clean negative) only when its gold reasoning shows no sign of an
+    inter-agent information transfer. Conservative by construction: borderline
+    chunks are excluded from the negative pool rather than risk teaching abstention
+    on a real flow.
+    """
+    t = (reasoning_text or "").strip()
+    if not t:
+        return True
+    return not _STORY_INTERACTION_RE.search(t)
 
 
 @dataclass(frozen=True)
@@ -325,11 +370,30 @@ def run_sft_data_prep_stage(
             print(f"  Sources: {dict(source_counts.head(10))}")
         return out_df
 
+    # Negative selection mode (2026-06-19): "all" (legacy) samples any
+    # has_information_exchange=False chunk; "contentless" keeps only genuinely
+    # flow-free chunks (see _is_contentless_chunk) — the v6 fix for the
+    # over-abstention prior, which traced to gold=False negatives that actually
+    # describe real disclosures/conversations.
+    negative_selection = "all"
+    try:
+        negative_selection = str(
+            OmegaConf.select(cfg, "training.sft.negative_selection", default="all")
+        ).lower()
+    except Exception:
+        pass
+    if negative_selection not in ("all", "contentless"):
+        raise ValueError(
+            f"[sft_data_prep] unknown training.sft.negative_selection="
+            f"{negative_selection!r} (expected 'all' or 'contentless')"
+        )
+
     consumed_keys = {
         group_key[:len(reasoning_group_cols)]
         for group_key in ci_extraction_df.groupby(group_cols).groups
     }
     negative_candidates = []
+    n_dropped_has_exchange = 0
     for key, info in reasoning_lookup.items():
         if key in consumed_keys:
             continue
@@ -338,7 +402,18 @@ def run_sft_data_prep_stage(
         article_text = info["article_text"]
         if not article_text or (isinstance(article_text, float) and pd.isna(article_text)):
             continue
+        if (negative_selection == "contentless"
+                and not _is_contentless_chunk(info.get("reasoning_text", ""))):
+            n_dropped_has_exchange += 1
+            continue
         negative_candidates.append((key, info))
+
+    if negative_selection == "contentless":
+        print(
+            f"[sft_data_prep] negative_selection=contentless: kept "
+            f"{len(negative_candidates)} contentless negatives, dropped "
+            f"{n_dropped_has_exchange} has-exchange-but-no-norm chunks"
+        )
 
     # Cap negatives so they don't overwhelm positives (at most 1:1 ratio).
     import random as _rng

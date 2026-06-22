@@ -1,0 +1,8 @@
+# @package _global_
+#
+# Canonical 5-shot direct MCQ (Hendrycks et al. 2021 protocol). Pulls 5
+# exemplars per subject from the dev split. Inflates context cost ~6×
+# vs. default zero-shot — use when reproducing pre-instruct numbers.
+prompt:
+  k_shot: 5
+  instruction_response_json: true

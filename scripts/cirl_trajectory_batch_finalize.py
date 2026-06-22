@@ -30,7 +30,7 @@ from typing import Dict
 
 import pandas as pd
 
-from dagspaces.common.batch_api import extract_content, load_jsonl
+from dagspaces.common.batch_api import classify_response_line, load_jsonl
 from dagspaces.cirl_vignettes.prompts import (
     parse_helpfulness_score,
     parse_leakage_judgment,
@@ -41,13 +41,19 @@ from dagspaces.cirl_vignettes.stages.compute_trajectory_metrics import (
 )
 
 
-def _responses_by_cid(output_jsonl: str) -> Dict[str, str]:
-    out: Dict[str, str] = {}
+def _classified_by_cid(output_jsonl: str) -> Dict[str, Dict]:
+    """Return ``{custom_id: classification}`` distinguishing api errors
+    from real responses (see batch_api.classify_response_line). Lets
+    finalize stamp ``leakage_judged=False`` on rows whose judge call
+    errored, so compute_trajectory_metrics defaults them with
+    explicit provenance instead of silently zero-substituting.
+    """
+    out: Dict[str, Dict] = {}
     for line in load_jsonl(output_jsonl):
         cid = line.get("custom_id")
         if not cid:
             continue
-        out[cid] = extract_content(line)
+        out[cid] = classify_response_line(line)
     return out
 
 
@@ -64,17 +70,33 @@ def _finalize_leakage(run_dir: str, trajectory_df: pd.DataFrame) -> pd.DataFrame
             )
 
     items_df = pd.read_parquet(items_path)
-    responses = _responses_by_cid(output_jsonl)
+    classified = _classified_by_cid(output_jsonl)
 
-    # Parse each (row_idx, secret) response into a leaked bool.
-    items_df["response"] = items_df["judge_custom_id"].map(responses).fillna("")
-    items_df["leaked"] = items_df["response"].apply(parse_leakage_judgment)
+    items_df["judge_ok"] = items_df["judge_custom_id"].map(
+        lambda cid: bool((classified.get(cid) or {}).get("ok", False))
+    )
+    items_df["response"] = items_df["judge_custom_id"].map(
+        lambda cid: str((classified.get(cid) or {}).get("content", "") or "")
+    )
+    # Errored rows produce no parsed leak signal (False), and the row
+    # is demoted below.
+    items_df["leaked"] = items_df.apply(
+        lambda r: bool(parse_leakage_judgment(r["response"])) if bool(r["judge_ok"]) else False,
+        axis=1,
+    )
 
     row_judgments: Dict[object, list] = {idx: [] for idx in trajectory_df.index}
     for _, r in items_df.iterrows():
         row_judgments.setdefault(r["row_idx"], []).append(
             (r["secret"], bool(r["leaked"]))
         )
+    errors_per_row = (
+        items_df.assign(_err=~items_df["judge_ok"].astype(bool))
+        .groupby("row_idx")["_err"].all().to_dict()
+    )
+    successes_per_row = (
+        items_df.groupby("row_idx")["judge_ok"].any().to_dict()
+    )
 
     df = trajectory_df.copy()
     leaked_items_col, has_leakage_col, leakage_count_col, judgments_col = [], [], [], []
@@ -91,6 +113,25 @@ def _finalize_leakage(run_dir: str, trajectory_df: pd.DataFrame) -> pd.DataFrame
     df["has_leakage"] = has_leakage_col
     df["leakage_count"] = leakage_count_col
     df["leakage_judgments"] = judgments_col
+
+    # Stamp judge_api_error on rows whose every fanout item errored.
+    if "leakage_judged" not in df.columns:
+        df["leakage_judged"] = True
+    if "leakage_skip_reason" not in df.columns:
+        df["leakage_skip_reason"] = ""
+    n_judge_errors = 0
+    for idx in df.index:
+        if idx not in successes_per_row and idx not in errors_per_row:
+            continue
+        if successes_per_row.get(idx, False):
+            continue
+        if errors_per_row.get(idx, False):
+            df.at[idx, "leakage_judged"] = False
+            df.at[idx, "leakage_skip_reason"] = "judge_api_error"
+            n_judge_errors += 1
+    if n_judge_errors:
+        print(f"[finalize] {n_judge_errors} cases demoted to leakage_judged=False "
+              f"(judge_api_error)", flush=True)
 
     results_path = os.path.join(base, "results.parquet")
     df.to_parquet(results_path, index=False)
@@ -112,16 +153,41 @@ def _finalize_helpfulness(run_dir: str, df: pd.DataFrame) -> pd.DataFrame:
             )
 
     items_df = pd.read_parquet(items_path)
-    responses = _responses_by_cid(output_jsonl)
-    items_df["response"] = items_df["judge_custom_id"].map(responses).fillna("")
-    items_df["score"] = items_df["response"].apply(parse_helpfulness_score)
+    classified = _classified_by_cid(output_jsonl)
+    items_df["judge_ok"] = items_df["judge_custom_id"].map(
+        lambda cid: bool((classified.get(cid) or {}).get("ok", False))
+    )
+    items_df["response"] = items_df["judge_custom_id"].map(
+        lambda cid: str((classified.get(cid) or {}).get("content", "") or "")
+    )
+    items_df["score"] = items_df.apply(
+        lambda r: int(parse_helpfulness_score(r["response"])) if bool(r["judge_ok"]) else 0,
+        axis=1,
+    )
 
     scores = dict(zip(items_df["row_idx"], items_df["score"]))
     raw = dict(zip(items_df["row_idx"], items_df["response"]))
+    ok = dict(zip(items_df["row_idx"], items_df["judge_ok"]))
 
     out = df.copy()
     out["helpfulness_score"] = out.index.map(lambda idx: int(scores.get(idx, 0)))
     out["helpfulness_raw"] = out.index.map(lambda idx: str(raw.get(idx, "")))
+
+    if "helpfulness_judged" not in out.columns:
+        out["helpfulness_judged"] = True
+    if "helpfulness_skip_reason" not in out.columns:
+        out["helpfulness_skip_reason"] = ""
+    n_judge_errors = 0
+    for idx in out.index:
+        if idx not in ok:
+            continue
+        if not ok[idx]:
+            out.at[idx, "helpfulness_judged"] = False
+            out.at[idx, "helpfulness_skip_reason"] = "judge_api_error"
+            n_judge_errors += 1
+    if n_judge_errors:
+        print(f"[finalize] {n_judge_errors} cases demoted to helpfulness_judged=False "
+              f"(judge_api_error)", flush=True)
 
     results_path = os.path.join(base, "results.parquet")
     out.to_parquet(results_path, index=False)

@@ -261,3 +261,19 @@ CLAUDE.md
 EXPERIMENTS.md
 GRPO_TRAINING_REVIEW.md
 CI_FLOW_PIPELINE_AUDIT.md
+
+# Generated inspection / report HTML (root-level, regenerable)
+/*.html
+
+# Regenerable GRPO prescreen cache (keyed by SFT checkpoint; large)
+/cache/
+
+# Data / generated run outputs (regenerable, large — keep local)
+/annotation_runs/
+/papers_to_ocr/
+/important_colm_runs/
+wandb_cache/
+papers/*.html
+
+# Notebook-generated tables/figures (regenerable analysis outputs)
+notebooks/**/tables/

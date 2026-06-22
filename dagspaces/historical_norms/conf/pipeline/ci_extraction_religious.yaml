@@ -25,7 +25,7 @@ runtime:
   sample_n: null
 
 pipeline:
-  output_root: ${hydra:run.dir}/ci_extraction_religious
+  output_root: ${hydra:runtime.output_dir}/ci_extraction_religious
   allow_partial: false
 
   sources:

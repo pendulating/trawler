@@ -38,6 +38,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
+import difflib
+import hashlib
 import html as html_lib
 import json
 import sys
@@ -102,20 +105,53 @@ def discover_stages(root: Path) -> dict[str, Path]:
 
 # Judge stages and which primary stage they attach to.
 # key = judge stage name, value includes the parent stage it should attach to.
+# `annotation` describes how an expert reviews this judge:
+#   verdict_field: judge column to compare expert verdict against (for agree/disagree)
+#   options: [{value, label}] shown as radio choices
+#   true_value / false_value: which option value maps to a True / False judge verdict
 _JUDGE_COLUMNS = {
     "leakage_judge_inference": {
         "text_col": "leak_judge_text",
         "verdict_cols": ["leak_probability", "leak_flag"],
         "display_name": "Leakage Judge",
         "parent_stage": "agent_action_inference",
+        "annotation": {
+            "verdict_field": "leak_flag",
+            "true_value": "leak",
+            "false_value": "no-leak",
+            "options": [
+                {"value": "leak", "label": "Leak"},
+                {"value": "no-leak", "label": "No leak"},
+                {"value": "skip", "label": "Skip"},
+            ],
+        },
     },
     "helpfulness_judge_inference": {
         "text_col": "helpfulness_judge_text",
         "verdict_cols": ["helpfulness_score", "helpfulness_binary"],
         "display_name": "Helpfulness Judge",
         "parent_stage": "agent_action_inference",
+        "annotation": {
+            "verdict_field": "helpfulness_binary",
+            "true_value": "helpful",
+            "false_value": "not-helpful",
+            "options": [
+                {"value": "helpful", "label": "Helpful"},
+                {"value": "not-helpful", "label": "Not helpful"},
+                {"value": "skip", "label": "Skip"},
+            ],
+        },
     },
 }
+
+
+def _judge_annotation_meta() -> dict[str, dict]:
+    """Return {judge_display_name: annotation_meta} for JS consumption."""
+    return {
+        info["display_name"]: info["annotation"]
+        for info in _JUDGE_COLUMNS.values()
+        if "annotation" in info
+    }
 
 
 def discover_judge_stages(root: Path, primary_stages: dict[str, Path]) -> dict[str, list[dict]]:
@@ -150,7 +186,8 @@ def discover_judge_stages(root: Path, primary_stages: dict[str, Path]) -> dict[s
                 judges.append({
                     "path": all_parquets[(benchmark, judge_stage)],
                     "judge_name": judge_stage,
-                    **{k: v for k, v in judge_info.items() if k != "parent_stage"},
+                    **{k: v for k, v in judge_info.items()
+                       if k not in ("parent_stage", "annotation")},
                 })
         if judges:
             result[primary_key] = judges
@@ -725,6 +762,7 @@ mark { background: #fff176; padding: 1px 2px; border-radius: 2px; }
 .export-preview { flex:1;overflow:auto;padding:16px;background:#f9f9f9; }
 .export-preview [data-export].export-hidden { display:none !important; }
 .export-preview .export-frame { background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px;margin:0 auto;font-size:13px; }
+.export-preview .annot-strip, .export-frame .annot-strip { display: none !important; }
 .export-preview .export-frame .prompt-box details,
 .export-preview .export-frame .field-group { }
 .export-preview .export-frame details[open] > summary { margin-bottom:4px; }
@@ -735,6 +773,114 @@ mark { background: #fff176; padding: 1px 2px; border-radius: 2px; }
 .export-actions .btn-html { background:#2e7d32;color:#fff; }
 .export-actions .btn-cancel { background:#757575;color:#fff; }
 .export-actions button:hover { opacity:0.9; }
+
+/* ── Annotation UI ──────────────────────────────────────────────────── */
+.annot-bar { display: none; gap: 8px; align-items: center; }
+body.annotate-on .annot-bar { display: inline-flex; }
+.annot-bar .annot-progress {
+  font-size: 12px; padding: 3px 10px; background: #f5f5f5; border-radius: 4px;
+  border: 1px solid var(--border); color: #333;
+}
+.annot-bar .annot-progress b { color: var(--accent); }
+.annot-bar button.annot-btn {
+  background: #6a1b9a; color: #fff; padding: 5px 10px;
+  font-size: 12px; border: none; border-radius: 4px; cursor: pointer;
+}
+.annot-bar button.annot-btn:hover { opacity: 0.9; }
+.annot-bar button.annot-btn.danger { background: #b71c1c; }
+
+.badge.annot-status { font-family: var(--mono); font-size: 10px; }
+.badge.annot-status.unannot { background: #eee; color: #555; }
+.badge.annot-status.partial { background: var(--orange-bg); color: var(--orange); }
+.badge.annot-status.complete { background: var(--green-bg); color: var(--green); }
+.badge.annot-status.disagree { background: var(--red-bg); color: var(--red); }
+
+/* The annotation strip sits inside each judge-card, below the pre */
+.annot-strip {
+  border-top: 1px solid #e0d6f5; padding: 6px 10px; background: #fff;
+  font-size: 12px; display: flex; flex-direction: column; gap: 5px;
+}
+.annot-strip .annot-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.annot-strip .annot-label {
+  font-size: 11px; font-weight: 600; color: #555; text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.annot-strip .annot-radios {
+  display: inline-flex; gap: 2px; border: 1px solid var(--border); border-radius: 4px;
+  background: #fff; overflow: hidden;
+}
+.annot-strip .annot-radios label {
+  font-size: 11px; padding: 3px 8px; cursor: pointer; user-select: none;
+  border-right: 1px solid var(--border); transition: background 0.1s;
+}
+.annot-strip .annot-radios label:last-child { border-right: none; }
+.annot-strip .annot-radios label:hover { background: #f0f0f0; }
+.annot-strip .annot-radios label.active {
+  background: #6a1b9a; color: #fff; font-weight: 600;
+}
+.annot-strip .annot-agree {
+  font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 600;
+}
+.annot-strip .annot-agree.agree { background: var(--green-bg); color: var(--green); }
+.annot-strip .annot-agree.disagree { background: var(--red-bg); color: var(--red); }
+.annot-strip .annot-agree.empty { background: #f0f0f0; color: #888; }
+.annot-strip input.annot-notes {
+  flex: 1; min-width: 200px; font-size: 12px; padding: 3px 6px;
+  border: 1px solid var(--border); border-radius: 3px; font-family: var(--sans);
+}
+.annot-strip.focused {
+  background: #fff8e1;
+  box-shadow: inset 3px 0 0 #ff9800;
+}
+.annot-strip.focused .annot-label::before { content: "▶ "; color: #ff9800; }
+
+/* ── Ranking strip ───────────────────────────────────────────────────── */
+.rank-strip {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 6px 10px; margin: 4px 0 8px;
+  background: #fff8e1; border: 1px solid #ffe0b2; border-radius: 6px;
+  font-size: 12px;
+}
+.rank-strip .rank-label {
+  font-weight: 600; color: #6d4c00; text-transform: uppercase; font-size: 11px;
+  letter-spacing: 0.04em; margin-right: 2px;
+}
+.rank-strip .rank-dir {
+  font-size: 11px; color: #9c6500; font-style: italic;
+}
+.rank-strip .rank-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.rank-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid #ffcc80; border-radius: 12px;
+  padding: 2px 8px; cursor: pointer; background: #fff; user-select: none;
+  transition: all 0.1s;
+}
+.rank-chip:hover { background: #fff3e0; }
+.rank-chip .rank-model { font-family: var(--mono); font-size: 11px; color: #333; }
+.rank-chip .rank-value {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  background: #ef6c00; color: #fff; border-radius: 9px;
+  font-weight: 700; font-size: 11px;
+}
+.rank-chip .rank-value.empty { background: #e0e0e0; color: #888; font-weight: 500; }
+.rank-strip .rank-clear {
+  margin-left: auto; font-size: 11px; color: #b71c1c; cursor: pointer;
+  text-decoration: underline;
+}
+.rank-strip .rank-clear:hover { color: #7f0000; }
+
+/* Hide ranking strip in export modal */
+.export-preview .rank-strip, .export-frame .rank-strip { display: none !important; }
+
+/* Manifest banner */
+.manifest-banner {
+  display: none; padding: 6px 16px; background: #e8eaf6; border-bottom: 1px solid #c5cae9;
+  font-size: 12px; color: #1a237e;
+}
+body.annotate-on .manifest-banner { display: block; }
+.manifest-banner b { font-family: var(--mono); }
+.manifest-banner .mb-warn { color: var(--red); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -754,6 +900,15 @@ mark { background: #fff176; padding: 1px 2px; border-radius: 2px; }
   <button id="bookmarks-btn" class="secondary">Bookmarks</button>
   <button id="exportrow-btn" class="secondary">Export Row</button>
   <button id="export-btn" class="secondary">Export BMs</button>
+  <div class="annot-bar">
+    <div class="sep"></div>
+    <span class="annot-progress" id="annot-progress" title="Cells annotated">…</span>
+    <button class="annot-btn" id="annot-download-json" title="Download annotations as JSON">Save JSON</button>
+    <button class="annot-btn" id="annot-download-csv" title="Download annotations as CSV (one row per cell)">Save CSV</button>
+    <button class="annot-btn" id="annot-upload" title="Restore annotations from a previously saved JSON file">Upload</button>
+    <input type="file" id="annot-upload-input" accept="application/json,.json" style="display:none">
+    <button class="annot-btn danger" id="annot-clear" title="Clear all annotations for this sample">Clear</button>
+  </div>
   <div class="info" id="status-info"></div>
   <div class="info">
     <span class="kbd">j</span>/<span class="kbd">k</span> nav
@@ -761,8 +916,14 @@ mark { background: #fff176; padding: 1px 2px; border-radius: 2px; }
     <span class="kbd">b</span> bookmark
     <span class="kbd">/</span> search
   </div>
+  <div class="info annot-bar">
+    <span class="kbd">Tab</span> cell
+    <span class="kbd">1</span>/<span class="kbd">2</span>/<span class="kbd">3</span> verdict
+    <span class="kbd">n</span> notes
+  </div>
 </div>
 
+<div class="manifest-banner" id="manifest-banner"></div>
 <div class="field-filters" id="field-filters"></div>
 <div class="container" id="container"></div>
 
@@ -789,6 +950,9 @@ mark { background: #fff176; padding: 1px 2px; border-radius: 2px; }
 const DATA = __DATA_PLACEHOLDER__;
 const ALL_LABELS = __LABELS_PLACEHOLDER__;
 const STAGE_KEYS = Object.keys(DATA);
+const MANIFEST = __MANIFEST_PLACEHOLDER__;
+const ANNOTATE_MODE = __ANNOTATE_MODE_PLACEHOLDER__;
+const JUDGE_META = __JUDGE_META_PLACEHOLDER__;
 
 function getStageLabels() {
   const sd = DATA[currentStage];
@@ -818,6 +982,9 @@ let fieldFilters = {};  // {fieldPath: selectedValue} — empty string means "al
 
 // ── Init ─────────────────────────────────────────────────────────────
 function init() {
+  if (ANNOTATE_MODE) document.body.classList.add('annotate-on');
+  _renderManifestBanner();
+
   const sel = document.getElementById('stage-select');
   STAGE_KEYS.forEach(k => {
     const opt = document.createElement('option');
@@ -843,6 +1010,25 @@ function init() {
     if (e.target === e.currentTarget) closeExportModal();
   });
 
+  // Annotation controls (no-ops when ANNOTATE_MODE is false)
+  if (ANNOTATE_MODE) {
+    document.getElementById('annot-download-json').addEventListener('click', exportAnnotationsJSON);
+    document.getElementById('annot-download-csv').addEventListener('click', exportAnnotationsCSV);
+    document.getElementById('annot-clear').addEventListener('click', clearAllAnnotations);
+    const uploadInput = document.getElementById('annot-upload-input');
+    document.getElementById('annot-upload').addEventListener('click', () => uploadInput.click());
+    uploadInput.addEventListener('change', e => {
+      const file = e.target.files && e.target.files[0];
+      if (file) importAnnotationsFile(file);
+      e.target.value = '';
+    });
+    // Delegated annotation interactions
+    document.getElementById('container').addEventListener('click', _onRankClick);
+    document.getElementById('container').addEventListener('click', _onAnnotClick);
+    document.getElementById('container').addEventListener('input', _onAnnotNotesInput);
+    document.getElementById('container').addEventListener('focusin', _onAnnotFocus);
+  }
+
   document.addEventListener('keydown', handleKeyboard);
 
   loadStage(currentStage);
@@ -856,10 +1042,13 @@ function loadStage(key) {
   activeFilter = 'all';
   searchQuery = '';
   fieldFilters = {};
+  focusedCell = null;
   document.getElementById('search-input').value = '';
+  loadAnnotations();
   buildFilterChips(stageData);
   buildFieldFilters();
   applyFilters();
+  _updateAnnotProgress();
 }
 
 // ── Filters ──────────────────────────────────────────────────────────
@@ -886,6 +1075,12 @@ function buildFilterChips(stageData) {
     }
   }
   filters.push(['bookmarked', 'Bookmarked']);
+  if (ANNOTATE_MODE) {
+    filters.push(['annot:unannot', 'Unannotated']);
+    filters.push(['annot:partial', 'Partial']);
+    filters.push(['annot:complete', 'Complete']);
+    filters.push(['annot:disagree', 'Disagrees w/ judge']);
+  }
 
   filters.forEach(([id, label]) => {
     const chip = document.createElement('span');
@@ -903,6 +1098,10 @@ function buildFilterChips(stageData) {
 function matchesChipFilter(row) {
   if (activeFilter === 'all') return true;
   if (activeFilter === 'bookmarked') return bookmarks.has(row.idx);
+  if (activeFilter.startsWith('annot:')) {
+    const want = activeFilter.slice('annot:'.length);
+    return getRowStatus(row) === want;
+  }
 
   const c = row.correctness;
   if (!c) return false;
@@ -1043,8 +1242,10 @@ function refilter() {
     matchesChipFilter(r) && matchesSearch(r) && matchesFieldFilters(r)
   );
   currentIdx = 0;
+  focusedCell = null;
   render('header');
   updateStatus();
+  _updateAnnotProgress();
 }
 
 function applyFilters() { refilter(); }
@@ -1147,6 +1348,7 @@ function buildRowCard(row, filterIdx) {
     (filterIdx === currentIdx ? ' expanded current' : '') +
     (bookmarks.has(row.idx) ? ' bookmarked' : '');
   card.dataset.filterIdx = filterIdx;
+  card.dataset.rowIdx = row.idx;
 
   // Header
   const header = document.createElement('div');
@@ -1186,6 +1388,16 @@ function buildRowCard(row, filterIdx) {
       }
     });
   }
+  // Annotation status badge
+  if (ANNOTATE_MODE) {
+    const status = getRowStatus(row);
+    const annBadge = document.createElement('span');
+    annBadge.className = 'badge annot-status ' + status;
+    annBadge.textContent = status;
+    annBadge.title = 'Annotation status: ' + status;
+    badges.appendChild(annBadge);
+  }
+
   // Bookmark badge
   const bmBadge = document.createElement('span');
   bmBadge.className = 'badge bookmark-badge';
@@ -1317,14 +1529,17 @@ function buildRowBody(row) {
       const judgeData = row.judges[judgeName];
       if (!judgeData) return;
       const toggleId = `judge-${row.idx}-${judgeName.replace(/\s+/g, '_')}`;
+      const openByDefault = ANNOTATE_MODE ? ' open' : '';
       html += `<div class="judge-section" data-export="judge">`;
-      html += `<div class="judge-toggle" onclick="
+      html += `<div class="judge-toggle${openByDefault}" onclick="
         this.classList.toggle('open');
         document.getElementById('${toggleId}').classList.toggle('open');
       "><span class="arrow">&#9654;</span> ${esc(judgeName)}</div>`;
       const judgeLabels = getStageLabels().filter(l => judgeData[l]);
       const nJCols = judgeLabels.length;
-      html += `<div class="judge-grid" id="${toggleId}" style="grid-template-columns: repeat(${nJCols}, 1fr);">`;
+      // Per-judge ranking strip (only when 2+ models are present)
+      html += buildRankingStrip(row, judgeName, judgeLabels);
+      html += `<div class="judge-grid${openByDefault}" id="${toggleId}" style="grid-template-columns: repeat(${nJCols}, 1fr);">`;
       judgeLabels.forEach((label, i) => {
         const jEntry = judgeData[label];
         if (!jEntry) return;
@@ -1354,6 +1569,8 @@ function buildRowBody(row) {
             html += `<pre data-export="judge-text">${highlightSearch(formatTextWithJson(String(jEntry[tk])))}</pre>`;
           }
         });
+        // Expert annotation strip (visible only when ANNOTATE_MODE)
+        html += buildAnnotationStrip(row, label, judgeName, jEntry);
         html += '</div>';
       });
       html += '</div></div>';
@@ -1478,6 +1695,645 @@ function formatTextWithJson(rawText) {
   return result.join('');
 }
 
+// ── Annotation module ────────────────────────────────────────────────
+// State shape:
+//   annotations[idx][model_label][judge_display_name] = {expert: str, notes: str}
+//   rankings[idx][judge_display_name][model_label] = int  (1 = best on the
+//     judge's dimension — least leaky / most helpful. Ties allowed.)
+let annotations = {};
+let rankings = {};
+let focusedCell = null;  // {idx, model, judge} or null
+let _annotSaveTimer = null;
+
+// Direction labels for ranking (purely cosmetic — shown above the chip row)
+const _RANK_DIRECTION = {
+  'Leakage Judge': '1 = least leaky',
+  'Helpfulness Judge': '1 = most helpful',
+};
+
+function _manifestHash() {
+  if (!MANIFEST) return 'no-manifest';
+  // Canonical key: stage + seed + n_sampled + sampled_indices + models
+  const core = {
+    stage: MANIFEST.stage,
+    seed: MANIFEST.seed,
+    n_sampled: MANIFEST.n_sampled,
+    sampled_indices: MANIFEST.sampled_indices,
+    models: MANIFEST.models,
+  };
+  const s = JSON.stringify(core);
+  // djb2 → unsigned 32-bit hex
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(16).padStart(8, '0');
+}
+
+function _annotStorageKey() {
+  return 'inspector:annot:v1:' + _manifestHash();
+}
+
+function loadAnnotations() {
+  annotations = {};
+  rankings = {};
+  if (!ANNOTATE_MODE) return;
+  try {
+    const raw = localStorage.getItem(_annotStorageKey());
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    // Schema v2: {annotations, rankings}.  v1: raw annotations dict.
+    if (parsed && typeof parsed === 'object' && ('annotations' in parsed || 'rankings' in parsed)) {
+      annotations = parsed.annotations || {};
+      rankings = parsed.rankings || {};
+    } else {
+      annotations = parsed || {};
+    }
+  } catch (e) {
+    console.warn('Failed to restore annotations:', e);
+    annotations = {};
+    rankings = {};
+  }
+}
+
+function _scheduleSave() {
+  if (_annotSaveTimer) clearTimeout(_annotSaveTimer);
+  _annotSaveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(_annotStorageKey(), JSON.stringify({annotations, rankings}));
+    } catch (e) {
+      console.error('Failed to save annotations:', e);
+    }
+  }, 250);
+}
+
+// ── Rankings ─────────────────────────────────────────────────────────
+function getRanking(idx, judge, model) {
+  return (rankings[idx] && rankings[idx][judge] && rankings[idx][judge][model]) || null;
+}
+
+function setRanking(idx, judge, model, rank) {
+  if (!rankings[idx]) rankings[idx] = {};
+  if (!rankings[idx][judge]) rankings[idx][judge] = {};
+  if (rank == null) {
+    delete rankings[idx][judge][model];
+    if (Object.keys(rankings[idx][judge]).length === 0) delete rankings[idx][judge];
+    if (Object.keys(rankings[idx]).length === 0) delete rankings[idx];
+  } else {
+    rankings[idx][judge][model] = rank;
+  }
+  _scheduleSave();
+}
+
+// Click on a chip → cycle: null → 1 → 2 → ... → N → null
+function cycleRanking(idx, judge, model, nModels) {
+  const cur = getRanking(idx, judge, model);
+  let next;
+  if (cur == null) next = 1;
+  else if (cur >= nModels) next = null;
+  else next = cur + 1;
+  setRanking(idx, judge, model, next);
+}
+
+function clearRankingForJudge(idx, judge) {
+  if (rankings[idx] && rankings[idx][judge]) {
+    delete rankings[idx][judge];
+    if (Object.keys(rankings[idx]).length === 0) delete rankings[idx];
+    _scheduleSave();
+  }
+}
+
+function getAnnotation(idx, model, judge) {
+  return (annotations[idx] && annotations[idx][model] && annotations[idx][model][judge]) || null;
+}
+
+function setAnnotation(idx, model, judge, partial) {
+  if (!annotations[idx]) annotations[idx] = {};
+  if (!annotations[idx][model]) annotations[idx][model] = {};
+  const cur = annotations[idx][model][judge] || {expert: null, notes: ''};
+  annotations[idx][model][judge] = {...cur, ...partial};
+  _scheduleSave();
+}
+
+function clearAnnotation(idx, model, judge) {
+  if (annotations[idx] && annotations[idx][model]) {
+    delete annotations[idx][model][judge];
+    if (Object.keys(annotations[idx][model]).length === 0) delete annotations[idx][model];
+    if (Object.keys(annotations[idx]).length === 0) delete annotations[idx];
+    _scheduleSave();
+  }
+}
+
+// Expected expert verdict given the judge's verdict (T/F), or null if undecided.
+function _expectedExpertFor(judgeName, jEntry) {
+  const meta = JUDGE_META[judgeName];
+  if (!meta) return null;
+  const v = jEntry ? jEntry[meta.verdict_field] : undefined;
+  if (v === true) return meta.true_value;
+  if (v === false) return meta.false_value;
+  return null;
+}
+
+// Returns 'agree' | 'disagree' | 'empty'
+function annotAgreement(idx, model, judgeName, jEntry) {
+  const annot = getAnnotation(idx, model, judgeName);
+  if (!annot || !annot.expert) return 'empty';
+  if (annot.expert === 'skip') return 'empty';
+  const expected = _expectedExpertFor(judgeName, jEntry);
+  if (expected === null) return 'empty';
+  return annot.expert === expected ? 'agree' : 'disagree';
+}
+
+// Total cells = N rows * sum over each row of (#models with judge present, per judge).
+// Returns {annotated, total, disagree, perJudge: {judgeName: {annotated, total}}}
+function computeProgress() {
+  let total = 0, annotated = 0, disagree = 0;
+  const perJudge = {};
+  if (!ANNOTATE_MODE) return {annotated, total, disagree, perJudge};
+
+  const stageData = DATA[currentStage];
+  if (!stageData) return {annotated, total, disagree, perJudge};
+  const judgeNames = stageData.judge_names || [];
+
+  for (const row of allRows) {
+    if (!row.judges) continue;
+    for (const jn of judgeNames) {
+      const jData = row.judges[jn];
+      if (!jData) continue;
+      if (!perJudge[jn]) perJudge[jn] = {annotated: 0, total: 0};
+      for (const label of getStageLabels()) {
+        const jEntry = jData[label];
+        if (!jEntry) continue;
+        total += 1;
+        perJudge[jn].total += 1;
+        const annot = getAnnotation(row.idx, label, jn);
+        if (annot && annot.expert) {
+          annotated += 1;
+          perJudge[jn].annotated += 1;
+          if (annot.expert !== 'skip') {
+            const expected = _expectedExpertFor(jn, jEntry);
+            if (expected !== null && annot.expert !== expected) disagree += 1;
+          }
+        }
+      }
+    }
+  }
+  return {annotated, total, disagree, perJudge};
+}
+
+// Returns 'unannot' | 'partial' | 'complete' | 'disagree'
+function getRowStatus(row) {
+  if (!row.judges) return 'unannot';
+  const stageData = DATA[currentStage];
+  const judgeNames = stageData.judge_names || [];
+  let cells = 0, done = 0, anyDisagree = false;
+  for (const jn of judgeNames) {
+    const jData = row.judges[jn];
+    if (!jData) continue;
+    for (const label of getStageLabels()) {
+      const jEntry = jData[label];
+      if (!jEntry) continue;
+      cells += 1;
+      const annot = getAnnotation(row.idx, label, jn);
+      if (annot && annot.expert) {
+        done += 1;
+        if (annot.expert !== 'skip') {
+          const expected = _expectedExpertFor(jn, jEntry);
+          if (expected !== null && annot.expert !== expected) anyDisagree = true;
+        }
+      }
+    }
+  }
+  if (cells === 0) return 'unannot';
+  if (done === 0) return 'unannot';
+  if (anyDisagree && done === cells) return 'disagree';
+  if (anyDisagree) return 'partial';  // partially annotated with at least one disagreement
+  if (done === cells) return 'complete';
+  return 'partial';
+}
+
+function buildRankingStrip(row, judgeName, modelsForJudge) {
+  if (!ANNOTATE_MODE) return '';
+  if (!modelsForJudge || modelsForJudge.length < 2) return '';  // ranking needs >=2 models
+  const direction = _RANK_DIRECTION[judgeName] || '1 = best';
+  const chips = modelsForJudge.map(m => {
+    const r = getRanking(row.idx, judgeName, m);
+    const valHtml = r == null ? '—' : String(r);
+    const cls = r == null ? 'rank-value empty' : 'rank-value';
+    return `<span class="rank-chip" data-model="${esc(m)}">
+      <span class="rank-model">${esc(m)}</span>
+      <span class="${cls}">${valHtml}</span>
+    </span>`;
+  }).join('');
+  return `
+    <div class="rank-strip" data-idx="${row.idx}" data-judge="${esc(judgeName)}"
+         data-nmodels="${modelsForJudge.length}">
+      <span class="rank-label">Rank</span>
+      <span class="rank-dir">(${esc(direction)}; click chips to cycle)</span>
+      <span class="rank-chips">${chips}</span>
+      <span class="rank-clear" data-action="clear">clear</span>
+    </div>
+  `;
+}
+
+function buildAnnotationStrip(row, model, judgeName, jEntry) {
+  if (!ANNOTATE_MODE) return '';
+  const meta = JUDGE_META[judgeName];
+  if (!meta) return '';
+  const annot = getAnnotation(row.idx, model, judgeName) || {expert: null, notes: ''};
+  const agree = annotAgreement(row.idx, model, judgeName, jEntry);
+  const focused = focusedCell &&
+    focusedCell.idx === row.idx &&
+    focusedCell.model === model &&
+    focusedCell.judge === judgeName;
+
+  const optsHtml = meta.options.map(o =>
+    `<label class="${annot.expert === o.value ? 'active' : ''}"
+            data-value="${esc(o.value)}">${esc(o.label)}</label>`
+  ).join('');
+
+  const agreeHtml = `<span class="annot-agree ${agree}">${
+    agree === 'agree' ? '✓ agree with judge'
+    : agree === 'disagree' ? '✗ disagree with judge'
+    : '—'
+  }</span>`;
+
+  return `
+    <div class="annot-strip${focused ? ' focused' : ''}"
+         data-idx="${row.idx}" data-model="${esc(model)}" data-judge="${esc(judgeName)}">
+      <div class="annot-row">
+        <span class="annot-label">Expert</span>
+        <span class="annot-radios">${optsHtml}</span>
+        ${agreeHtml}
+      </div>
+      <div class="annot-row">
+        <input type="text" class="annot-notes" placeholder="Notes (optional)"
+               value="${esc(annot.notes || '')}">
+      </div>
+    </div>
+  `;
+}
+
+// Delegated click handler for ranking chips and clear control.
+function _onRankClick(e) {
+  const strip = e.target.closest('.rank-strip');
+  if (!strip) return;
+  const idx = parseInt(strip.dataset.idx, 10);
+  const judge = strip.dataset.judge;
+  const nModels = parseInt(strip.dataset.nmodels, 10);
+
+  if (e.target.closest('.rank-clear')) {
+    clearRankingForJudge(idx, judge);
+    _patchRankStrip(strip);
+    return;
+  }
+  const chip = e.target.closest('.rank-chip');
+  if (!chip) return;
+  const model = chip.dataset.model;
+  cycleRanking(idx, judge, model, nModels);
+  _patchRankStrip(strip);
+}
+
+function _patchRankStrip(strip) {
+  const idx = parseInt(strip.dataset.idx, 10);
+  const judge = strip.dataset.judge;
+  strip.querySelectorAll('.rank-chip').forEach(chip => {
+    const model = chip.dataset.model;
+    const r = getRanking(idx, judge, model);
+    const valEl = chip.querySelector('.rank-value');
+    if (!valEl) return;
+    if (r == null) {
+      valEl.textContent = '—';
+      valEl.className = 'rank-value empty';
+    } else {
+      valEl.textContent = String(r);
+      valEl.className = 'rank-value';
+    }
+  });
+}
+
+// Delegated handler for annotation interactions.  Attaches once at init().
+function _onAnnotClick(e) {
+  // Ranking strips are handled separately
+  if (e.target.closest('.rank-strip')) return;
+  const strip = e.target.closest('.annot-strip');
+  if (!strip) return;
+  const idx = parseInt(strip.dataset.idx, 10);
+  const model = strip.dataset.model;
+  const judge = strip.dataset.judge;
+  focusedCell = {idx, model, judge};
+
+  // Radio click?
+  const lbl = e.target.closest('.annot-radios label');
+  if (lbl) {
+    const value = lbl.dataset.value;
+    const cur = getAnnotation(idx, model, judge);
+    const newValue = (cur && cur.expert === value) ? null : value;
+    if (newValue === null) {
+      clearAnnotation(idx, model, judge);
+    } else {
+      setAnnotation(idx, model, judge, {expert: newValue});
+    }
+    _patchAnnotStrip(strip);
+    _patchRowStatus(idx);
+    _updateAnnotProgress();
+    _refreshAnnotFocusUI();
+    if (activeFilter !== 'all' && activeFilter.startsWith('annot:')) {
+      refilter();
+    }
+    return;
+  }
+
+  // Clicking elsewhere on the strip just sets focus
+  _refreshAnnotFocusUI();
+}
+
+function _onAnnotNotesInput(e) {
+  if (!e.target.classList.contains('annot-notes')) return;
+  const strip = e.target.closest('.annot-strip');
+  if (!strip) return;
+  const idx = parseInt(strip.dataset.idx, 10);
+  const model = strip.dataset.model;
+  const judge = strip.dataset.judge;
+  setAnnotation(idx, model, judge, {notes: e.target.value});
+  // Don't re-render — input cursor would jump
+}
+
+function _onAnnotFocus(e) {
+  const strip = e.target.closest('.annot-strip');
+  if (!strip) return;
+  focusedCell = {
+    idx: parseInt(strip.dataset.idx, 10),
+    model: strip.dataset.model,
+    judge: strip.dataset.judge,
+  };
+  _refreshAnnotFocusUI();
+}
+
+function _patchAnnotStrip(strip) {
+  // Re-render this strip in place from current state.
+  const idx = parseInt(strip.dataset.idx, 10);
+  const model = strip.dataset.model;
+  const judge = strip.dataset.judge;
+  const row = allRows.find(r => r.idx === idx);
+  if (!row || !row.judges || !row.judges[judge]) return;
+  const jEntry = row.judges[judge][model];
+  if (!jEntry) return;
+
+  const annot = getAnnotation(idx, model, judge) || {expert: null, notes: ''};
+  strip.querySelectorAll('.annot-radios label').forEach(l => {
+    l.classList.toggle('active', l.dataset.value === annot.expert);
+  });
+  const ag = annotAgreement(idx, model, judge, jEntry);
+  const agreeSpan = strip.querySelector('.annot-agree');
+  if (agreeSpan) {
+    agreeSpan.className = 'annot-agree ' + ag;
+    agreeSpan.textContent = ag === 'agree' ? '✓ agree with judge'
+      : ag === 'disagree' ? '✗ disagree with judge' : '—';
+  }
+  // Don't touch notes input (preserve cursor)
+}
+
+function _patchRowStatus(idx) {
+  const card = document.querySelector(`.row-card[data-row-idx="${idx}"]`);
+  if (!card) return;
+  const status = getRowStatus(allRows.find(r => r.idx === idx));
+  const badge = card.querySelector('.badge.annot-status');
+  if (badge) {
+    badge.className = 'badge annot-status ' + status;
+    badge.textContent = status;
+  }
+}
+
+function _refreshAnnotFocusUI() {
+  document.querySelectorAll('.annot-strip').forEach(s => {
+    const idx = parseInt(s.dataset.idx, 10);
+    const isFocus = focusedCell &&
+      focusedCell.idx === idx &&
+      focusedCell.model === s.dataset.model &&
+      focusedCell.judge === s.dataset.judge;
+    s.classList.toggle('focused', isFocus);
+  });
+}
+
+function _updateAnnotProgress() {
+  if (!ANNOTATE_MODE) return;
+  const p = computeProgress();
+  const breakdown = Object.entries(p.perJudge)
+    .map(([jn, c]) => `${jn}: ${c.annotated}/${c.total}`).join(' · ');
+  const el = document.getElementById('annot-progress');
+  if (el) {
+    el.innerHTML = `Annotated <b>${p.annotated}</b>/${p.total}`
+      + (p.disagree > 0 ? ` · <span style="color:#c62828">${p.disagree} disagree</span>` : '');
+    el.title = breakdown || 'No judge cells available';
+  }
+}
+
+function _getRowCellsInDOMOrder(rowIdx) {
+  // Return list of {idx, model, judge} cells visible on the current row card.
+  const card = document.querySelector(`.row-card[data-row-idx="${rowIdx}"]`);
+  if (!card) return [];
+  return [...card.querySelectorAll('.annot-strip')].map(s => ({
+    idx: parseInt(s.dataset.idx, 10),
+    model: s.dataset.model,
+    judge: s.dataset.judge,
+  }));
+}
+
+function annotFocusNext(dir) {
+  const row = filteredRows[currentIdx];
+  if (!row) return;
+  const cells = _getRowCellsInDOMOrder(row.idx);
+  if (cells.length === 0) return;
+  let pos = -1;
+  if (focusedCell) {
+    pos = cells.findIndex(c =>
+      c.idx === focusedCell.idx && c.model === focusedCell.model && c.judge === focusedCell.judge);
+  }
+  if (pos < 0) {
+    focusedCell = dir > 0 ? cells[0] : cells[cells.length - 1];
+  } else {
+    const next = (pos + dir + cells.length) % cells.length;
+    focusedCell = cells[next];
+  }
+  _refreshAnnotFocusUI();
+  // Make sure focused strip is visible
+  const sel = `.annot-strip[data-idx="${focusedCell.idx}"][data-model="${focusedCell.model}"][data-judge="${focusedCell.judge}"]`;
+  const el = document.querySelector(sel);
+  if (el) el.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+}
+
+function annotSetVerdictByIndex(optIdx) {
+  if (!focusedCell) {
+    // Auto-focus first cell of current row
+    annotFocusNext(1);
+    if (!focusedCell) return;
+  }
+  const meta = JUDGE_META[focusedCell.judge];
+  if (!meta || optIdx < 0 || optIdx >= meta.options.length) return;
+  const value = meta.options[optIdx].value;
+  const cur = getAnnotation(focusedCell.idx, focusedCell.model, focusedCell.judge);
+  if (cur && cur.expert === value) {
+    clearAnnotation(focusedCell.idx, focusedCell.model, focusedCell.judge);
+  } else {
+    setAnnotation(focusedCell.idx, focusedCell.model, focusedCell.judge, {expert: value});
+  }
+  const sel = `.annot-strip[data-idx="${focusedCell.idx}"][data-model="${focusedCell.model}"][data-judge="${focusedCell.judge}"]`;
+  const strip = document.querySelector(sel);
+  if (strip) _patchAnnotStrip(strip);
+  _patchRowStatus(focusedCell.idx);
+  _updateAnnotProgress();
+  if (activeFilter.startsWith('annot:')) refilter();
+}
+
+function annotFocusNotes() {
+  if (!focusedCell) return;
+  const sel = `.annot-strip[data-idx="${focusedCell.idx}"][data-model="${focusedCell.model}"][data-judge="${focusedCell.judge}"] input.annot-notes`;
+  const inp = document.querySelector(sel);
+  if (inp) { inp.focus(); inp.select(); }
+}
+
+// ── Export / Import annotations ──────────────────────────────────────
+function exportAnnotationsJSON() {
+  const payload = {manifest: MANIFEST, annotations, rankings};
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = _annotFilenameBase() + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportAnnotationsCSV() {
+  // One row per (row_idx, model, judge) cell — annotated or not.
+  const lines = ['row_idx,model,judge,judge_verdict,expert_verdict,agree,rank,notes'];
+  const stageData = DATA[currentStage];
+  const judgeNames = (stageData && stageData.judge_names) || [];
+  const labels = getStageLabels();
+  for (const row of allRows) {
+    if (!row.judges) continue;
+    for (const jn of judgeNames) {
+      const jData = row.judges[jn];
+      if (!jData) continue;
+      for (const label of labels) {
+        const jEntry = jData[label];
+        if (!jEntry) continue;
+        const annot = getAnnotation(row.idx, label, jn);
+        const meta = JUDGE_META[jn];
+        const jv = (meta && jEntry[meta.verdict_field]);
+        const judgeVerdict = jv === true ? meta.true_value
+          : jv === false ? meta.false_value : '';
+        const expert = (annot && annot.expert) || '';
+        const ag = annotAgreement(row.idx, label, jn, jEntry);
+        const agree = (expert === '' || expert === 'skip' || ag === 'empty') ? ''
+          : (ag === 'agree' ? 'true' : 'false');
+        const rank = getRanking(row.idx, jn, label);
+        const notes = (annot && annot.notes) ? annot.notes : '';
+        lines.push([
+          row.idx, label, jn, judgeVerdict, expert, agree,
+          rank == null ? '' : rank, notes,
+        ].map(_csvEsc).join(','));
+      }
+    }
+  }
+  const blob = new Blob([lines.join('\n')], {type: 'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = _annotFilenameBase() + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function _csvEsc(v) {
+  const s = String(v == null ? '' : v);
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function _annotFilenameBase() {
+  const stage = (MANIFEST && MANIFEST.stage) ? MANIFEST.stage.replace(/[^a-zA-Z0-9]+/g, '_') : 'annotations';
+  const seed = (MANIFEST && MANIFEST.seed != null) ? `_seed${MANIFEST.seed}` : '';
+  const n = (MANIFEST && MANIFEST.n_sampled != null) ? `_n${MANIFEST.n_sampled}` : '';
+  return `annot_${stage}${seed}${n}`;
+}
+
+function importAnnotationsFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const payload = JSON.parse(e.target.result);
+      const incoming = payload.annotations || payload;  // accept raw or wrapped
+      const incomingManifest = payload.manifest;
+
+      // Warn on manifest mismatch
+      let warn = '';
+      if (incomingManifest && MANIFEST) {
+        const issues = [];
+        if (incomingManifest.stage !== MANIFEST.stage)
+          issues.push(`stage (${incomingManifest.stage} != ${MANIFEST.stage})`);
+        if (incomingManifest.seed !== MANIFEST.seed)
+          issues.push(`seed (${incomingManifest.seed} != ${MANIFEST.seed})`);
+        if (incomingManifest.n_sampled !== MANIFEST.n_sampled)
+          issues.push(`n_sampled (${incomingManifest.n_sampled} != ${MANIFEST.n_sampled})`);
+        if (issues.length) warn = 'Manifest differs from this export: ' + issues.join(', ') + '. Continue anyway?';
+      }
+      if (warn && !confirm(warn)) return;
+
+      // Merge annotations (incoming overrides)
+      for (const [idx, byModel] of Object.entries(incoming)) {
+        if (!annotations[idx]) annotations[idx] = {};
+        for (const [model, byJudge] of Object.entries(byModel)) {
+          if (!annotations[idx][model]) annotations[idx][model] = {};
+          for (const [judge, val] of Object.entries(byJudge)) {
+            annotations[idx][model][judge] = val;
+          }
+        }
+      }
+      // Merge rankings if present (incoming overrides)
+      const incomingRankings = payload.rankings || {};
+      for (const [idx, byJudge] of Object.entries(incomingRankings)) {
+        if (!rankings[idx]) rankings[idx] = {};
+        for (const [judge, byModel] of Object.entries(byJudge)) {
+          if (!rankings[idx][judge]) rankings[idx][judge] = {};
+          for (const [model, val] of Object.entries(byModel)) {
+            rankings[idx][judge][model] = val;
+          }
+        }
+      }
+      _scheduleSave();
+      render('header');
+      _updateAnnotProgress();
+      alert('Annotations imported.');
+    } catch (err) {
+      alert('Failed to parse annotations JSON: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function clearAllAnnotations() {
+  if (!confirm('Clear ALL annotations AND rankings for this sample? This cannot be undone.')) return;
+  annotations = {};
+  rankings = {};
+  try { localStorage.removeItem(_annotStorageKey()); } catch (e) {}
+  render('header');
+  _updateAnnotProgress();
+}
+
+// Manifest banner
+function _renderManifestBanner() {
+  const el = document.getElementById('manifest-banner');
+  if (!el || !MANIFEST) return;
+  const parts = [
+    `<b>${esc(MANIFEST.stage)}</b>`,
+    `seed=<b>${MANIFEST.seed != null ? MANIFEST.seed : 'n/a'}</b>`,
+    `sample=<b>${MANIFEST.n_sampled}</b> of ${MANIFEST.n_total}`,
+    `models=<b>${(MANIFEST.models || []).join(', ')}</b>`,
+    `generated <b>${esc(MANIFEST.generated_at || '')}</b>`,
+  ];
+  el.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+}
+
 // ── Bookmarks ────────────────────────────────────────────────────────
 function toggleBookmark(idx) {
   if (bookmarks.has(idx)) bookmarks.delete(idx);
@@ -1592,6 +2448,24 @@ function handleKeyboard(e) {
     case '/':
       e.preventDefault();
       document.getElementById('search-input').focus();
+      break;
+    case 'Tab':
+      if (ANNOTATE_MODE) {
+        e.preventDefault();
+        annotFocusNext(e.shiftKey ? -1 : 1);
+      }
+      break;
+    case '1': case '2': case '3':
+      if (ANNOTATE_MODE) {
+        e.preventDefault();
+        annotSetVerdictByIndex(parseInt(e.key, 10) - 1);
+      }
+      break;
+    case 'n':
+      if (ANNOTATE_MODE) {
+        e.preventDefault();
+        annotFocusNotes();
+      }
       break;
     case 'Escape':
       if (document.getElementById('export-overlay').style.display !== 'none') { closeExportModal(); break; }
@@ -1968,6 +2842,88 @@ def parse_row_slice(spec: str, n: int) -> list[int]:
     return sorted(indices)
 
 
+def _validate_stage_key(requested: str, available: list[str]) -> str:
+    """Resolve a user-supplied --stage value against discovered stage keys.
+
+    Accepts exact matches, whitespace-normalized matches (the canonical key
+    is rendered as ``"benchmark / stage"`` but users naturally type
+    ``"benchmark/stage"``), or unique substring matches. Raises ValueError
+    on miss with up-to-3 close suggestions.
+    """
+    if requested in available:
+        return requested
+
+    # Whitespace-tolerant exact match: collapse all whitespace around slashes
+    def _norm(s: str) -> str:
+        return "/".join(p.strip() for p in s.split("/"))
+    norm_req = _norm(requested)
+    norm_matches = [k for k in available if _norm(k) == norm_req]
+    if len(norm_matches) == 1:
+        return norm_matches[0]
+    if len(norm_matches) > 1:
+        raise ValueError(
+            f"--stage '{requested}' matches {len(norm_matches)} stages (whitespace-normalized): "
+            f"{sorted(norm_matches)}. Be more specific."
+        )
+
+    # Substring match — only if unique
+    subs = [k for k in available if requested in k or norm_req in _norm(k)]
+    if len(subs) == 1:
+        return subs[0]
+    if len(subs) > 1:
+        raise ValueError(
+            f"--stage '{requested}' matches {len(subs)} stages: {sorted(subs)}. "
+            f"Be more specific."
+        )
+
+    # No match — suggest close ones
+    close = difflib.get_close_matches(requested, available, n=3, cutoff=0.4)
+    msg = f"--stage '{requested}' not found among {len(available)} discovered stages."
+    if close:
+        msg += f" Did you mean: {close}?"
+    else:
+        msg += f" Available: {sorted(available)}"
+    raise ValueError(msg)
+
+
+def _select_sample(n_total: int, n_sample: int, seed: int) -> list[int]:
+    """Return a sorted list of sampled row indices, deterministic given seed.
+
+    Raises ValueError if n_sample > n_total.
+    """
+    if n_sample > n_total:
+        raise ValueError(
+            f"--sample {n_sample} exceeds available rows ({n_total})"
+        )
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(n_total, size=n_sample, replace=False)
+    return sorted(int(i) for i in idx)
+
+
+def _build_manifest(
+    stage: str,
+    seed: int | None,
+    sampled_indices: list[int] | None,
+    n_total: int,
+    runs: dict[str, Path],
+    models: list[str],
+    n_sampled: int | None = None,
+) -> dict:
+    """Assemble the per-export manifest embedded in the HTML."""
+    return {
+        "stage": stage,
+        "seed": seed,
+        "n_sampled": n_sampled if n_sampled is not None else (
+            len(sampled_indices) if sampled_indices is not None else n_total
+        ),
+        "n_total": n_total,
+        "sampled_indices": sampled_indices,
+        "models": models,
+        "source_runs": {k: str(v) for k, v in runs.items()},
+        "generated_at": _dt.datetime.now().isoformat(timespec="seconds"),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate a static HTML completion inspector from eval_all runs.",
@@ -1993,13 +2949,48 @@ def main():
             "Examples: '0:100' (first 100), '50:150' (rows 50-149), "
             "'-50:' (last 50), '::10' (every 10th), '0:10,90:100' "
             "(first 10 + rows 90-99), '42' (single row). "
-            "Mutually exclusive with --max-rows."
+            "Mutually exclusive with --max-rows and --sample."
+        ),
+    )
+    parser.add_argument(
+        "--stage", type=str, default=None, metavar="STAGE_KEY",
+        help=(
+            "Restrict output to a single discovered stage (e.g. "
+            "'privacylens/agent_action_inference'). Required by --annotate."
+        ),
+    )
+    parser.add_argument(
+        "--sample", type=int, default=None, metavar="N",
+        help=(
+            "Randomly sample N rows from the (single) stage. Requires --stage. "
+            "Mutually exclusive with --rows / --max-rows."
+        ),
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, metavar="S",
+        help="RNG seed for --sample (default: 0).",
+    )
+    parser.add_argument(
+        "--annotate", action="store_true",
+        help=(
+            "Enable the expert annotation UI for judge audit. Requires --stage. "
+            "Typically combined with --sample."
         ),
     )
     args = parser.parse_args()
 
     if args.rows and args.max_rows:
         parser.error("--rows and --max-rows are mutually exclusive")
+    if args.sample and args.rows:
+        parser.error("--sample and --rows are mutually exclusive")
+    if args.sample and args.max_rows:
+        parser.error("--sample and --max-rows are mutually exclusive")
+    if args.sample is not None and args.sample <= 0:
+        parser.error("--sample must be a positive integer")
+    if args.sample and not args.stage:
+        parser.error("--sample requires --stage (single benchmark only)")
+    if args.annotate and not args.stage:
+        parser.error("--annotate requires --stage (single benchmark only)")
 
     # Parse run specifications
     runs = {}
@@ -2037,6 +3028,18 @@ def main():
         present = [l for l in labels if k in per_run_stages[l]]
         print(f"  {k}  [{', '.join(present)}]")
 
+    # Apply --stage filter (single-benchmark mode)
+    if args.stage:
+        try:
+            resolved_stage = _validate_stage_key(args.stage, sorted(all_stage_keys))
+        except ValueError as e:
+            print(f"\nERROR: {e}", file=sys.stderr)
+            sys.exit(1)
+        if resolved_stage != args.stage:
+            print(f"\n--stage '{args.stage}' resolved to '{resolved_stage}'")
+        all_stage_keys = {resolved_stage}
+        print(f"\nRestricted to single stage: {resolved_stage}")
+
     # Discover judge stages for each run
     per_run_judges = {}
     for label, root in runs.items():
@@ -2067,14 +3070,22 @@ def main():
                     judge_names_found.append(jname)
                 judge_dfs[jname][label] = pd.read_parquet(jinfo["path"])
 
-        # Apply --rows slice if specified
+        # Apply --rows slice or --sample subset if specified
         n_total = min(len(df) for df in label_to_df.values())
+        row_indices: list[int] | None = None
         if args.rows:
             try:
                 row_indices = parse_row_slice(args.rows, n_total)
             except ValueError as e:
                 print(f"\nERROR in stage '{stage_key}': {e}", file=sys.stderr)
                 sys.exit(1)
+        elif args.sample:
+            try:
+                row_indices = _select_sample(n_total, args.sample, args.seed)
+            except ValueError as e:
+                print(f"\nERROR in stage '{stage_key}': {e}", file=sys.stderr)
+                sys.exit(1)
+        if row_indices is not None:
             label_to_df = {l: df.iloc[row_indices].reset_index(drop=True)
                            for l, df in label_to_df.items()}
             if judge_dfs:
@@ -2096,6 +3107,7 @@ def main():
             "col_info": col_info,
             "labels": stage_labels,
             "n_total": n_total,
+            "sampled_indices": row_indices,  # None unless --sample/--rows applied
         }
         if judge_names_found:
             stage_data["judge_names"] = list(dict.fromkeys(judge_names_found))
@@ -2104,18 +3116,44 @@ def main():
         judge_str = f" + {', '.join(judge_names_found)}" if judge_names_found else ""
         print(f"{len(rows)} rows{judge_str}")
 
+    # Build manifest (only meaningful in single-stage mode; null otherwise)
+    manifest: dict | None = None
+    if args.stage:
+        single_stage = next(iter(data))
+        sd = data[single_stage]
+        manifest = _build_manifest(
+            stage=single_stage,
+            seed=args.seed if args.sample else None,
+            sampled_indices=sd.get("sampled_indices"),
+            n_total=sd["n_total"],
+            runs=runs,
+            models=sd["labels"],
+            n_sampled=len(sd["rows"]),
+        )
+
     # Generate HTML
     print(f"\nGenerating HTML ...", end=" ", flush=True)
     data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     labels_json = json.dumps(labels)
+    manifest_json = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")) if manifest else "null"
+    judge_meta_json = json.dumps(_judge_annotation_meta(), ensure_ascii=False)
+    annotate_mode_js = "true" if args.annotate else "false"
 
     html = HTML_TEMPLATE.replace("__DATA_PLACEHOLDER__", data_json)
     html = html.replace("__LABELS_PLACEHOLDER__", labels_json)
+    html = html.replace("__MANIFEST_PLACEHOLDER__", manifest_json)
+    html = html.replace("__ANNOTATE_MODE_PLACEHOLDER__", annotate_mode_js)
+    html = html.replace("__JUDGE_META_PLACEHOLDER__", judge_meta_json)
 
     out_path = Path(args.output)
     out_path.write_text(html, encoding="utf-8")
     size_mb = out_path.stat().st_size / (1024 * 1024)
     print(f"done ({size_mb:.1f} MB)")
+    if args.annotate:
+        print("Annotation mode: ON")
+        if manifest:
+            print(f"  Sample: {manifest['n_sampled']} / {manifest['n_total']} rows"
+                  f" (seed={manifest['seed']})")
     print(f"\nOutput: {out_path.resolve()}")
     print(f"Open in browser: file://{out_path.resolve()}")
 

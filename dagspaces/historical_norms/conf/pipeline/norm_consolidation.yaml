@@ -46,7 +46,7 @@ consolidation:
   group_by: gutenberg_id
 
 pipeline:
-  output_root: ${hydra:run.dir}/norm_consolidation
+  output_root: ${hydra:runtime.output_dir}/norm_consolidation
   allow_partial: false
 
   sources:

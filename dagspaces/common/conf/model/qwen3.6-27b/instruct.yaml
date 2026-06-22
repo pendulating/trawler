@@ -1,0 +1,31 @@
+# @package _global_
+# Qwen3.6-27B instruct — for inference / eval pipelines via
+# `model=qwen3.6-27b/instruct`. Configured for 4 A6000s with
+# data_parallel_size=2 × tensor_parallel_size=2 (two replicas, each
+# sharded across 2 GPUs).
+#
+# Pair with `launcher: slurm_gpu_4x` in pipeline node overrides.
+#
+# Architecture: hybrid mamba + attention (`Qwen3_5ForConditionalGeneration`),
+# 64 layers (linear/full attention interleaved 3:1), multimodal-capable
+# (text-only used here), max_position_embeddings=262144. Requires
+# `trust_remote_code` for the custom arch.
+#
+# max_model_len=24576 matches the proven judge_server.sub config on klara
+# A6000s. The judge server itself runs TP=2 / DP=1 (single replica) and
+# reads its config from env vars, not this YAML — bumping DP here does not
+# affect that serving path.
+model:
+  model_source: /share/pierson/matt/zoo/models/Qwen3.6-27B
+  model_family: qwen3.6
+  thinking_mode: off
+  chat_template_kwargs:
+    enable_thinking: false
+  engine_kwargs:
+    max_model_len: 24576
+    max_num_seqs: 16
+    tensor_parallel_size: 2
+    data_parallel_size: 2
+    trust_remote_code: true
+  batch_size: 0
+  concurrency: 1

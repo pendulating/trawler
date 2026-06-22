@@ -148,6 +148,62 @@ def _detect_reasoning_parser(model_source: str) -> Optional[str]:
     return None
 
 
+def model_needs_reasoning_budget(model_cfg: Any) -> bool:
+    """True if the model reasons before its final answer and therefore needs a
+    generous ``max_tokens`` budget on short-answer benchmarks.
+
+    Short-answer eval stages (confaide ratings, cirl_vignettes A/B, mmlu
+    letters) default to a tiny ``max_tokens`` (16-64). A reasoning model spends
+    that budget on hidden chain-of-thought and never emits the parseable answer,
+    yielding ``parseable_rate=0`` and a sanity failure. Two independent triggers
+    flag such models so callers can bump the budget:
+
+      1. ``chat_template_kwargs.enable_thinking`` is explicitly ``False`` — vLLM
+         strips ``<think>`` blocks from the output, but the model still *spends*
+         tokens reasoning first.
+      2. The model family ships a dedicated reasoning parser (gpt-oss harmony,
+         qwen3, deepseek-r1). These reason regardless of ``enable_thinking`` —
+         e.g. gpt-oss always emits an ``analysis`` channel before ``final``,
+         which is why a bare ``chat_template_kwargs: {}`` config (no
+         ``enable_thinking`` key) still needs the larger budget.
+    """
+    # Trigger 1: enable_thinking explicitly false.
+    try:
+        ctk = getattr(model_cfg, "chat_template_kwargs", None)
+        if ctk is None and isinstance(model_cfg, dict):
+            ctk = model_cfg.get("chat_template_kwargs")
+        ctk = ctk or {}
+        if hasattr(ctk, "enable_thinking"):
+            if not bool(ctk.enable_thinking):
+                return True
+        elif isinstance(ctk, dict) and "enable_thinking" in ctk:
+            if not bool(ctk.get("enable_thinking")):
+                return True
+    except Exception:
+        pass
+
+    # Trigger 2: family ships a reasoning parser → always reasons.
+    # Check both the model_source path AND the declared model_family: some
+    # reasoning models carry a custom checkpoint name whose path hides the
+    # base family (e.g. OpenThinker3-7B is a qwen3 model, but "qwen3" never
+    # appears in its path — only in model_family). Sniffing the path alone
+    # missed it, so it truncated its CoT inside a too-small budget.
+    try:
+        src = getattr(model_cfg, "model_source", None)
+        if src is None and isinstance(model_cfg, dict):
+            src = model_cfg.get("model_source")
+        fam = getattr(model_cfg, "model_family", None)
+        if fam is None and isinstance(model_cfg, dict):
+            fam = model_cfg.get("model_family")
+        for ident in (src, fam):
+            if ident and _detect_reasoning_parser(str(ident)) is not None:
+                return True
+    except Exception:
+        pass
+
+    return False
+
+
 def _split_reasoning(
     text: str,
     model_source: str,
@@ -493,7 +549,7 @@ def _sp_to_openai_kwargs(sp_dict: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[
 
     Returns ``(kwargs, extra_body)`` where ``kwargs`` are fields accepted
     by ``openai.chat.completions.create`` directly and ``extra_body`` are
-    vLLM-specific extensions (``guided_json``, ``top_k``, etc.).
+    vLLM-specific extensions (``structured_outputs``, ``top_k``, etc.).
     """
     sp = dict(sp_dict or {})
     kwargs: Dict[str, Any] = {}
@@ -511,17 +567,15 @@ def _sp_to_openai_kwargs(sp_dict: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[
         if k in sp and sp[k] is not None:
             extra_body[k] = sp[k]
 
-    # Guided/structured decoding
+    # Guided/structured decoding. vLLM >= 0.19 silently ignores the legacy
+    # guided_* extra-body params — the server-side field is now
+    # ``structured_outputs`` (mirrors StructuredOutputsParams).
     guided = sp.get("guided_decoding") or sp.get("structured_output")
     if guided and isinstance(guided, dict):
-        if "json" in guided:
-            extra_body["guided_json"] = guided["json"]
-        if "regex" in guided:
-            extra_body["guided_regex"] = guided["regex"]
-        if "choice" in guided:
-            extra_body["guided_choice"] = guided["choice"]
-        if "grammar" in guided:
-            extra_body["guided_grammar"] = guided["grammar"]
+        so = {k: guided[k] for k in ("json", "regex", "choice", "grammar")
+              if k in guided}
+        if so:
+            extra_body["structured_outputs"] = so
 
     return kwargs, extra_body
 
@@ -668,6 +722,55 @@ def _run_server_inference(
     return pd.DataFrame(out_rows)
 
 
+def _resolve_streaming_dir(cfg, stage_name: str) -> Optional[str]:
+    """Return a per-stage directory for incremental shard writes, or ``None``.
+
+    Why this exists: a single ``llm.generate(all_prompts, sp)`` call can run
+    for hours/days. Without intermediate persistence, any SLURM walltime hit
+    or crash discards everything. We instead chunk generation and write a
+    parquet shard per chunk. On re-run (same Hydra output dir), the worker
+    skips rows that already have shards — so progress survives interruptions.
+
+    Resolution order:
+      1. ``UAIR_VLLM_STREAMING_DISABLE=1`` → disabled (returns None).
+      2. ``UAIR_VLLM_STREAMING_DIR_OVERRIDE`` → use this absolute path
+         (stage_name still appended as a subdir).
+      3. ``cfg.runtime.output_dir`` → ``<output_dir>/_streaming/<stage_name>``.
+      4. Otherwise → disabled.
+    """
+    if os.environ.get("UAIR_VLLM_STREAMING_DISABLE", "").lower() in ("1", "true", "yes"):
+        return None
+
+    override = os.environ.get("UAIR_VLLM_STREAMING_DIR_OVERRIDE", "").strip()
+    if override:
+        return os.path.join(override, stage_name)
+
+    try:
+        output_dir = OmegaConf.select(cfg, "runtime.output_dir")
+    except Exception:
+        output_dir = None
+    if not output_dir:
+        return None
+    return os.path.join(str(output_dir), "_streaming", stage_name)
+
+
+def _streaming_chunk_size(cfg, default: int = 32) -> int:
+    """Resolve the chunk size for streaming writes (prompts per shard)."""
+    try:
+        val = OmegaConf.select(cfg, "runtime.streaming_chunk_size")
+        if val:
+            return max(1, int(val))
+    except Exception:
+        pass
+    env = os.environ.get("UAIR_VLLM_STREAMING_CHUNK_SIZE", "").strip()
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            pass
+    return default
+
+
 def _shutdown_llm(llm: Any, stage_name: str = "vllm") -> None:
     """Explicitly shut down a vLLM ``LLM``'s engine workers.
 
@@ -758,8 +861,21 @@ _DP_WORKER_SCRIPT = r'''
 Reads task from a pickle file, runs vLLM inference, writes results to a
 pickle file.  Completely isolated from the parent process (no shared CUDA
 context, no inherited NCCL state).
+
+Streaming-write contract (when ``task["streaming_dir"]`` is set):
+  * Each rank writes parquet shards into ``<streaming_dir>/dp{rank}/`` as
+    generation progresses, one shard per chunk of ``chunk_size`` prompts.
+  * Shards are named ``chunk_NNNNNN.parquet`` and contain a row per prompt
+    with columns: ``__row_idx`` (position within this rank's shard,
+    0..len(prompts)-1), ``generated_text``, ``prompt_tokens``,
+    ``completion_tokens``, ``finish_reason``.
+  * On startup the worker re-reads existing shards and skips prompts whose
+    ``__row_idx`` is already covered — so a re-run of the same Hydra
+    output dir resumes from the last shard boundary instead of restarting.
+  * Each shard is written ``.tmp`` then atomically renamed, so a kill
+    during write never leaves a torn shard.
 """
-import json, os, pickle, sys, time, traceback
+import glob, json, os, pickle, sys, time, traceback
 
 def main():
     task_path = sys.argv[1]
@@ -776,6 +892,8 @@ def main():
     stage_name  = task["stage_name"]
     pcie_env    = task["pcie_env"]
     runtime_env = task["runtime_env"]
+    streaming_dir = task.get("streaming_dir")
+    chunk_size  = int(task.get("streaming_chunk_size", 32) or 32)
 
     # Apply env vars (set before any CUDA/torch import)
     for k, v in {**pcie_env, **runtime_env}.items():
@@ -791,64 +909,170 @@ def main():
           f"{os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}, "
           f"prompts={len(prompts)})", flush=True)
 
+    # ------------------------------------------------------------------
+    # Streaming-dir setup + shard recovery
+    # ------------------------------------------------------------------
+    import pandas as pd
+    rank_streaming_dir = None
+    completed_outputs = {}  # row_idx -> dict
+    if streaming_dir:
+        rank_streaming_dir = os.path.join(streaming_dir, f"dp{rank}")
+        os.makedirs(rank_streaming_dir, exist_ok=True)
+        existing_shards = sorted(
+            glob.glob(os.path.join(rank_streaming_dir, "chunk_*.parquet"))
+        )
+        for shard_path in existing_shards:
+            try:
+                shard_df = pd.read_parquet(shard_path)
+                for record in shard_df.to_dict("records"):
+                    idx = int(record.pop("__row_idx"))
+                    completed_outputs[idx] = record
+            except Exception as e:
+                print(f"[{stage_name}] DP rank {rank}: skipping unreadable "
+                      f"shard {shard_path}: {e}", flush=True)
+        if completed_outputs:
+            print(f"[{stage_name}] DP rank {rank}: recovered "
+                  f"{len(completed_outputs)} prompts from {len(existing_shards)} "
+                  f"existing shards in {rank_streaming_dir}", flush=True)
+
+    remaining_indices = [
+        i for i in range(len(prompts)) if i not in completed_outputs
+    ]
+    remaining_prompts = [prompts[i] for i in remaining_indices]
+    print(f"[{stage_name}] DP rank {rank}/{dp_size}: "
+          f"{len(remaining_prompts)} prompts to generate "
+          f"(skipping {len(completed_outputs)} already-streamed)", flush=True)
+
+    llm = None
     try:
         t0 = time.time()
-        from vllm import LLM, SamplingParams
 
-        print(f"[{stage_name}] DP rank {rank}/{dp_size}: vLLM imported in "
-              f"{time.time() - t0:.1f}s, creating LLM engine...", flush=True)
+        # Skip the heavy vLLM init if everything is already on disk.
+        if remaining_prompts:
+            from vllm import LLM, SamplingParams
 
-        t1 = time.time()
-        llm = LLM(**engine_kwargs)
-        print(f"[{stage_name}] DP rank {rank}/{dp_size}: LLM created in "
-              f"{time.time() - t1:.1f}s, starting generation...", flush=True)
+            print(f"[{stage_name}] DP rank {rank}/{dp_size}: vLLM imported in "
+                  f"{time.time() - t0:.1f}s, creating LLM engine...", flush=True)
 
-        # Build SamplingParams (inline to avoid import from parent package)
-        sp = dict(sp_dict or {})
-        guided = sp.pop("guided_decoding", None) or sp.pop("structured_output", None)
-        for k in ("early_stopping", "length_penalty", "response_format", "detokenize"):
-            sp.pop(k, None)
-        if guided and isinstance(guided, dict):
-            try:
-                from vllm.sampling_params import StructuredOutputsParams
-                sp["structured_outputs"] = StructuredOutputsParams(**guided)
-            except ImportError:
+            t1 = time.time()
+            llm = LLM(**engine_kwargs)
+            print(f"[{stage_name}] DP rank {rank}/{dp_size}: LLM created in "
+                  f"{time.time() - t1:.1f}s, starting generation...", flush=True)
+
+            # Build SamplingParams (inline to avoid import from parent package)
+            sp = dict(sp_dict or {})
+            guided = sp.pop("guided_decoding", None) or sp.pop("structured_output", None)
+            for k in ("early_stopping", "length_penalty", "response_format", "detokenize"):
+                sp.pop(k, None)
+            if guided and isinstance(guided, dict):
                 try:
-                    from vllm.sampling_params import GuidedDecodingParams
-                    sp["guided_decoding"] = GuidedDecodingParams(**guided)
+                    from vllm.sampling_params import StructuredOutputsParams
+                    sp["structured_outputs"] = StructuredOutputsParams(**guided)
                 except ImportError:
-                    pass
-        sampling_params = SamplingParams(**sp)
+                    try:
+                        from vllm.sampling_params import GuidedDecodingParams
+                        sp["guided_decoding"] = GuidedDecodingParams(**guided)
+                    except ImportError:
+                        pass
+            sampling_params = SamplingParams(**sp)
 
-        t2 = time.time()
-        outputs = llm.generate(prompts, sampling_params)
-        print(f"[{stage_name}] DP rank {rank}/{dp_size}: generation done in "
-              f"{time.time() - t2:.1f}s ({len(outputs)} outputs)", flush=True)
+            # Decide chunking: if streaming is off, fall back to one giant
+            # call (preserves prior behaviour for tests / non-streaming use).
+            if rank_streaming_dir:
+                effective_chunk = max(1, chunk_size)
+                next_shard_id = len(
+                    glob.glob(os.path.join(rank_streaming_dir, "chunk_*.parquet"))
+                )
+            else:
+                effective_chunk = len(remaining_prompts)
+                next_shard_id = 0
 
+            t2 = time.time()
+            generated_so_far = 0
+            for chunk_start in range(0, len(remaining_prompts), effective_chunk):
+                chunk_end = min(chunk_start + effective_chunk, len(remaining_prompts))
+                chunk_prompts = remaining_prompts[chunk_start:chunk_end]
+                chunk_indices = remaining_indices[chunk_start:chunk_end]
+
+                t_chunk = time.time()
+                outputs = llm.generate(chunk_prompts, sampling_params)
+                generated_so_far += len(outputs)
+
+                shard_records = []
+                for idx, out in zip(chunk_indices, outputs):
+                    text = out.outputs[0].text if out.outputs else ""
+                    prompt_tokens = len(out.prompt_token_ids) if out.prompt_token_ids else 0
+                    completion_tokens = (
+                        len(out.outputs[0].token_ids)
+                        if out.outputs and out.outputs[0].token_ids else 0
+                    )
+                    # finish_reason ∈ {"stop", "length", "abort", None}; vLLM
+                    # populates "length" when the completion hit max_tokens.
+                    # eval_sanity uses this to compute truncated_rate so models
+                    # silently capped at max_tokens get flagged instead of
+                    # having their truncated outputs baked into metrics.
+                    finish_reason = (
+                        out.outputs[0].finish_reason
+                        if out.outputs and getattr(out.outputs[0], "finish_reason", None)
+                        else None
+                    )
+                    record = {
+                        "generated_text": text,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "finish_reason": finish_reason,
+                    }
+                    completed_outputs[idx] = record
+                    shard_records.append({"__row_idx": idx, **record})
+
+                if rank_streaming_dir and shard_records:
+                    shard_path = os.path.join(
+                        rank_streaming_dir, f"chunk_{next_shard_id:06d}.parquet"
+                    )
+                    tmp_path = shard_path + ".tmp"
+                    pd.DataFrame(shard_records).to_parquet(tmp_path, index=False)
+                    os.replace(tmp_path, shard_path)
+                    next_shard_id += 1
+                    print(f"[{stage_name}] DP rank {rank}/{dp_size}: "
+                          f"streamed chunk {next_shard_id} "
+                          f"({generated_so_far}/{len(remaining_prompts)} new "
+                          f"prompts done in {time.time() - t_chunk:.1f}s)",
+                          flush=True)
+
+            print(f"[{stage_name}] DP rank {rank}/{dp_size}: generation done in "
+                  f"{time.time() - t2:.1f}s ({generated_so_far} new outputs)",
+                  flush=True)
+        else:
+            print(f"[{stage_name}] DP rank {rank}/{dp_size}: all prompts "
+                  f"already streamed — skipping vLLM init", flush=True)
+
+        # Assemble serialised outputs in original prompt order. Any prompt
+        # missing from completed_outputs would indicate a logic bug — fail
+        # loudly rather than silently emitting blanks.
         serialised = []
-        for out in outputs:
-            text = out.outputs[0].text if out.outputs else ""
-            prompt_tokens = len(out.prompt_token_ids) if out.prompt_token_ids else 0
-            completion_tokens = (
-                len(out.outputs[0].token_ids)
-                if out.outputs and out.outputs[0].token_ids else 0
+        missing = []
+        for i in range(len(prompts)):
+            record = completed_outputs.get(i)
+            if record is None:
+                missing.append(i)
+                serialised.append({
+                    "generated_text": "",
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "finish_reason": None,
+                })
+            else:
+                serialised.append({
+                    "generated_text": record.get("generated_text", ""),
+                    "prompt_tokens": int(record.get("prompt_tokens", 0) or 0),
+                    "completion_tokens": int(record.get("completion_tokens", 0) or 0),
+                    "finish_reason": record.get("finish_reason"),
+                })
+        if missing:
+            raise RuntimeError(
+                f"[{stage_name}] DP rank {rank}: {len(missing)} prompts have no "
+                f"output after generation (indices: {missing[:10]}...)"
             )
-            # finish_reason ∈ {"stop", "length", "abort", None}; vLLM populates
-            # "length" when the completion hit max_tokens. eval_sanity uses
-            # this to compute truncated_rate so models silently capped at
-            # max_tokens get flagged instead of having their truncated
-            # outputs baked into metrics.
-            finish_reason = (
-                out.outputs[0].finish_reason
-                if out.outputs and getattr(out.outputs[0], "finish_reason", None)
-                else None
-            )
-            serialised.append({
-                "generated_text": text,
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "finish_reason": finish_reason,
-            })
 
         with open(result_path, "wb") as f:
             pickle.dump({"rank": rank, "outputs": serialised, "error": None}, f)
@@ -886,7 +1110,9 @@ def _run_data_parallel(
     prompts: List[str],
     sp_dict: Dict[str, Any],
     stage_name: str,
-    timeout: int = 86400,
+    timeout: int = 864000,  # 10 days; matches slurm_gpu_4x walltime
+    streaming_dir: Optional[str] = None,
+    streaming_chunk_size: int = 32,
 ) -> List[Dict[str, Any]]:
     """Spawn dp_size fully-isolated subprocess workers for vLLM inference.
 
@@ -963,6 +1189,8 @@ def _run_data_parallel(
             "stage_name": stage_name,
             "pcie_env": pcie_env,
             "runtime_env": runtime_env,
+            "streaming_dir": streaming_dir,
+            "streaming_chunk_size": streaming_chunk_size,
         }
 
         task_path = os.path.join(tmpdir, f"{stage_name}_dp{rank}_task.pkl")
@@ -1311,6 +1539,17 @@ def run_vllm_inference(
     # Check for data parallelism
     dp_size = int(engine_kwargs.pop("data_parallel_size", 1) or 1)
 
+    # Streaming-write config. See _resolve_streaming_dir for the why —
+    # without this, a SLURM walltime kill discards hours of generated text.
+    streaming_dir = _resolve_streaming_dir(cfg, stage_name)
+    streaming_chunk_size = _streaming_chunk_size(cfg, default=64)
+    if streaming_dir:
+        os.makedirs(streaming_dir, exist_ok=True)
+        print(f"[{stage_name}] Streaming writes ON: shards →  {streaming_dir} "
+              f"(chunk_size={streaming_chunk_size})")
+    else:
+        print(f"[{stage_name}] Streaming writes OFF (no runtime.output_dir or disabled)")
+
     print(
         f"[{stage_name}] Initializing vLLM with: "
         f"{ {k: v for k, v in engine_kwargs.items() if k != 'model'} }"
@@ -1375,6 +1614,10 @@ def run_vllm_inference(
         sp_dicts: List[Dict[str, Any]] = []
         valid_indices: List[int] = []
         _oversized_count = 0
+        _clamped_count = 0
+        # Need at least this many generation tokens for a usable answer; if the
+        # prompt leaves less room than this, the row is genuinely unservable.
+        _MIN_GEN_TOKENS = 16
 
         for i in preliminary_valid:
             row = preprocessed_rows[i]
@@ -1399,19 +1642,34 @@ def run_vllm_inference(
             else:
                 prompt = str(row.get("article_text", ""))
 
-            # Validate prompt length against model context window
+            # Validate prompt length against model context window.
             if _max_model_len is not None:
                 sp = row.get("sampling_params", {})
                 max_new = int(sp.get("max_tokens", 0) or 0)
                 prompt_tokens = len(tokenizer.encode(prompt, add_special_tokens=False))
-                if prompt_tokens + max(max_new, 1) > _max_model_len:
+                room = _max_model_len - prompt_tokens
+                if room < _MIN_GEN_TOKENS:
+                    # The prompt itself (nearly) fills the window — there is no
+                    # room to generate a usable answer. Genuinely unservable.
                     row["__preprocess_error__"] = (
-                        f"Prompt too long: {prompt_tokens} tokens + "
-                        f"{max_new} max_tokens > {_max_model_len} context limit"
+                        f"Prompt too long: {prompt_tokens} tokens leave {room} of "
+                        f"{_max_model_len} context for generation "
+                        f"(< {_MIN_GEN_TOKENS} min)"
                     )
                     failed_set.add(i)
                     _oversized_count += 1
                     continue
+                if max_new > room:
+                    # Generation budget overflows the window but the prompt fits
+                    # with room to spare — clamp max_tokens rather than dropping
+                    # the row. This keeps an over-aggressive max_tokens (e.g. the
+                    # reasoning-budget bump to 4096 on a small-context model)
+                    # from silently zeroing out an entire benchmark; the answer
+                    # is simply shorter. Copy sp so we don't mutate shared state.
+                    sp = dict(sp)
+                    sp["max_tokens"] = room
+                    row["sampling_params"] = sp
+                    _clamped_count += 1
 
             prompts.append(prompt)
             sp_dicts.append(row.get("sampling_params", {}))
@@ -1422,13 +1680,31 @@ def run_vllm_inference(
                 f"[{stage_name}] WARNING: {_oversized_count} prompts exceed model "
                 f"context length ({_max_model_len}) and will be skipped"
             )
+        if _clamped_count:
+            print(
+                f"[{stage_name}] WARNING: {_clamped_count} prompts had max_tokens "
+                f"clamped to fit the {_max_model_len}-token context window — "
+                f"check the model's max_model_len vs. the stage's max_tokens"
+            )
 
         # -----------------------------------------------------------------------
         # Inference: data-parallel or single-process
         # -----------------------------------------------------------------------
         if dp_size > 1:
-            # All rows share the same sampling_params in our pipeline stages
-            sp_dict = sp_dicts[0] if sp_dicts else {}
+            # All rows share the same sampling_params in our pipeline stages.
+            # If any row was clamped above, the data-parallel path can only use
+            # one shared budget, so take the *minimum* max_tokens across rows —
+            # otherwise a longer prompt's clamped budget would be ignored and
+            # could overflow the window at the vLLM level.
+            sp_dict = dict(sp_dicts[0]) if sp_dicts else {}
+            if _clamped_count and sp_dicts:
+                _budgets = [
+                    int(d.get("max_tokens", 0) or 0)
+                    for d in sp_dicts
+                    if int(d.get("max_tokens", 0) or 0) > 0
+                ]
+                if _budgets:
+                    sp_dict["max_tokens"] = min(_budgets)
             print(f"[{stage_name}] Running data-parallel inference: "
                   f"{len(prompts)} prompts across {dp_size} replicas...")
             dp_outputs = _run_data_parallel(
@@ -1437,6 +1713,8 @@ def run_vllm_inference(
                 prompts=prompts,
                 sp_dict=sp_dict,
                 stage_name=stage_name,
+                streaming_dir=streaming_dir,
+                streaming_chunk_size=streaming_chunk_size,
             )
 
             # Verify output count
@@ -1482,7 +1760,12 @@ def run_vllm_inference(
                 results.append(result)
 
         else:
-            # Single-process path (original behaviour)
+            # Single-process path. Mirrors the DP-worker contract — generate
+            # in chunks and persist a parquet shard after each chunk so a
+            # walltime kill leaves recoverable progress on disk. On re-run
+            # with the same runtime.output_dir, completed rows are skipped.
+            import glob as _glob_mod
+
             # Build SamplingParams objects with dedup optimization
             sp_objects: List[Any] = []
             _sp_cache: Dict[int, Any] = {}  # id(dict) -> SamplingParams
@@ -1505,35 +1788,125 @@ def run_vllm_inference(
             if batch_size <= 0:
                 batch_size = max(len(prompts), 1)
 
-            # Run inference in batches
-            print(
-                f"[{stage_name}] Running inference on {len(prompts)} prompts "
-                f"(batch_size={batch_size})..."
-            )
-            outputs = []
             shared_sp = sampling_params_list if not isinstance(sampling_params_list, list) else None
-            for start in range(0, len(prompts), batch_size):
-                end = min(start + batch_size, len(prompts))
-                prompt_batch = prompts[start:end]
-                sampling_batch = shared_sp if shared_sp else sampling_params_list[start:end]
-                print(
-                    f"[{stage_name}] Generating batch {start // batch_size + 1}: "
-                    f"rows {start}-{end - 1}",
-                )
-                outputs.extend(llm.generate(prompt_batch, sampling_batch, lora_request=lora_request))
 
-            # Verify output count matches input count
-            if len(outputs) != len(prompts):
+            # Streaming-shard setup — recover completed rows from prior runs.
+            sp_streaming_dir = None
+            completed_outputs: Dict[int, Dict[str, Any]] = {}
+            next_shard_id = 0
+            if streaming_dir:
+                sp_streaming_dir = os.path.join(streaming_dir, "sp")
+                os.makedirs(sp_streaming_dir, exist_ok=True)
+                existing_shards = sorted(
+                    _glob_mod.glob(os.path.join(sp_streaming_dir, "chunk_*.parquet"))
+                )
+                for shard_path in existing_shards:
+                    try:
+                        shard_df = pd.read_parquet(shard_path)
+                        for record in shard_df.to_dict("records"):
+                            idx = int(record.pop("__row_idx"))
+                            completed_outputs[idx] = record
+                    except Exception as e:
+                        print(f"[{stage_name}] SP: skipping unreadable shard "
+                              f"{shard_path}: {e}", flush=True)
+                next_shard_id = len(existing_shards)
+                if completed_outputs:
+                    print(f"[{stage_name}] SP: recovered {len(completed_outputs)} "
+                          f"prompts from {next_shard_id} existing shards")
+
+            # Determine remaining work
+            remaining_local_indices = [
+                i for i in range(len(prompts)) if i not in completed_outputs
+            ]
+
+            # Per-call chunk size: cap by streaming_chunk_size when streaming
+            # is on so shards are written frequently; otherwise use batch_size.
+            if sp_streaming_dir:
+                effective_chunk = max(1, min(batch_size, streaming_chunk_size))
+            else:
+                effective_chunk = batch_size
+
+            print(
+                f"[{stage_name}] Running inference on {len(remaining_local_indices)} "
+                f"remaining prompts of {len(prompts)} total "
+                f"(batch_size={batch_size}, effective_chunk={effective_chunk})"
+            )
+
+            for start in range(0, len(remaining_local_indices), effective_chunk):
+                end = min(start + effective_chunk, len(remaining_local_indices))
+                batch_indices = remaining_local_indices[start:end]
+                prompt_batch = [prompts[i] for i in batch_indices]
+                if shared_sp is not None:
+                    sampling_batch = shared_sp
+                else:
+                    sampling_batch = [sampling_params_list[i] for i in batch_indices]
+
+                print(
+                    f"[{stage_name}] Generating chunk {start // effective_chunk + 1}: "
+                    f"prompts {start}-{end - 1} of {len(remaining_local_indices)}",
+                )
+                chunk_outputs = llm.generate(
+                    prompt_batch, sampling_batch, lora_request=lora_request,
+                )
+
+                if len(chunk_outputs) != len(batch_indices):
+                    raise RuntimeError(
+                        f"[{stage_name}] vLLM output count mismatch in chunk: "
+                        f"expected {len(batch_indices)}, got {len(chunk_outputs)}. "
+                        "This indicates silent data loss."
+                    )
+
+                shard_records: List[Dict[str, Any]] = []
+                for idx, output in zip(batch_indices, chunk_outputs):
+                    text = output.outputs[0].text if output.outputs else ""
+                    prompt_tokens = (
+                        len(output.prompt_token_ids) if output.prompt_token_ids else 0
+                    )
+                    completion_tokens = (
+                        len(output.outputs[0].token_ids)
+                        if output.outputs and output.outputs[0].token_ids else 0
+                    )
+                    finish_reason = (
+                        output.outputs[0].finish_reason
+                        if output.outputs
+                        and getattr(output.outputs[0], "finish_reason", None)
+                        else None
+                    )
+                    record = {
+                        "generated_text": text,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "finish_reason": finish_reason,
+                    }
+                    completed_outputs[idx] = record
+                    shard_records.append({"__row_idx": idx, **record})
+
+                if sp_streaming_dir and shard_records:
+                    shard_path = os.path.join(
+                        sp_streaming_dir, f"chunk_{next_shard_id:06d}.parquet"
+                    )
+                    tmp_path = shard_path + ".tmp"
+                    pd.DataFrame(shard_records).to_parquet(tmp_path, index=False)
+                    os.replace(tmp_path, shard_path)
+                    next_shard_id += 1
+
+            # Verify every prompt has an output before postprocess
+            missing_indices = [i for i in range(len(prompts)) if i not in completed_outputs]
+            if missing_indices:
                 raise RuntimeError(
                     f"[{stage_name}] vLLM output count mismatch: "
-                    f"expected {len(prompts)} outputs for {len(prompts)} prompts, "
-                    f"got {len(outputs)}. This indicates silent data loss."
+                    f"{len(missing_indices)} of {len(prompts)} prompts have no "
+                    f"generated output (indices: {missing_indices[:10]}...). "
+                    "This indicates silent data loss."
                 )
 
-            # Postprocess — merge inference outputs back with failed rows
-            print(f"[{stage_name}] Postprocessing {len(outputs)} outputs...")
+            # Postprocess — merge inference outputs back with failed rows.
+            # Non-failed preprocessed rows align 1:1 with prompts[k] in order,
+            # so we walk a fresh prompt counter k=0,1,2,... for each row
+            # that wasn't filtered out by preprocess/oversize checks.
+            print(f"[{stage_name}] Postprocessing {len(completed_outputs)} outputs...")
             results: List[Dict[str, Any]] = []
-            output_iter = iter(outputs)
+            prompt_idx_iter = iter(range(len(prompts)))
             for idx, row in enumerate(preprocessed_rows):
                 if idx in failed_set:
                     row["generated_text"] = ""
@@ -1546,30 +1919,24 @@ def run_vllm_inference(
                     results.append(result)
                     continue
 
-                output = next(output_iter)
-                if output.outputs:
-                    raw_text = output.outputs[0].text
-                    reasoning, content = _split_reasoning(
-                        raw_text, _model_source, _thinking_enabled, tokenizer,
-                    )
-                    row["generated_text"] = content
-                    row["generated_reasoning"] = reasoning
-                else:
-                    row["generated_text"] = ""
-                    row["generated_reasoning"] = ""
-
-                try:
-                    prompt_tokens = len(output.prompt_token_ids) if output.prompt_token_ids else 0
-                    completion_tokens = (
-                        len(output.outputs[0].token_ids) if output.outputs and output.outputs[0].token_ids else 0
-                    )
-                    row["usage"] = {
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                        "total_tokens": prompt_tokens + completion_tokens,
-                    }
-                except Exception:
-                    row["usage"] = None
+                prompt_idx = next(prompt_idx_iter)
+                record = completed_outputs[prompt_idx]
+                raw_text = record.get("generated_text", "")
+                reasoning, content = _split_reasoning(
+                    raw_text, _model_source, _thinking_enabled, tokenizer,
+                )
+                row["generated_text"] = content
+                row["generated_reasoning"] = reasoning
+                prompt_tokens = int(record.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(record.get("completion_tokens", 0) or 0)
+                row["usage"] = {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
+                }
+                fr = record.get("finish_reason")
+                if fr is not None:
+                    row["finish_reason"] = fr
 
                 try:
                     result = postprocess(row)

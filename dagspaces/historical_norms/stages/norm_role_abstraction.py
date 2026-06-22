@@ -197,4 +197,51 @@ def run_norm_role_abstraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
         print(f"[role_abstraction] Re-attached {len(skip_df)} skipped rows, "
               f"total: {len(result_df)}")
 
+    result_df = revalidate_norm_quality(result_df, cfg)
+    return result_df
+
+
+def revalidate_norm_quality(result_df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
+    """Recompute norm quality on the ABSTRACTED fields (2026-06-09).
+
+    The ``norm_quality_*`` columns set at extraction time describe the
+    pre-abstraction norm; on the fiction10 corpus 61% of abstracted rows
+    carried stale failures for names abstraction had already removed —
+    and residual leaks the abstraction missed (e.g. "Martin Verga") went
+    unflagged. After this pass, ``norm_quality_passed`` measures the final
+    artifact (i.e. abstraction success); the extraction-time values are
+    preserved in ``pre_abstraction_norm_quality_*``.
+    """
+    if result_df.empty:
+        return result_df
+
+    from ..name_detection import PersonNameDetector
+    from .norm_extraction import _get_character_blocklist, _validate_norm_quality
+
+    _use_ner = OmegaConf.select(cfg, "norm_quality.use_ner", default=True)
+    detector = PersonNameDetector(
+        blocklist=_get_character_blocklist(cfg),
+        use_ner=bool(_use_ner) if _use_ner is not None else True,
+    )
+
+    for col in ("norm_quality_flags", "norm_quality_passed"):
+        if col in result_df.columns:
+            result_df[f"pre_abstraction_{col}"] = result_df[col]
+
+    flags_out, passed_out = [], []
+    for _, row in result_df.iterrows():
+        if not (row.get("raz_norm_articulation") or row.get("raz_norm_subject")):
+            flags_out.append(None)
+            passed_out.append(None)
+            continue
+        validated = _validate_norm_quality(row.to_dict(), detector)
+        flags_out.append(validated["norm_quality_flags"])
+        passed_out.append(validated["norm_quality_passed"])
+    result_df["norm_quality_flags"] = flags_out
+    result_df["norm_quality_passed"] = passed_out
+
+    n_checked = sum(1 for p in passed_out if p is not None)
+    n_flagged = sum(1 for p in passed_out if p is False)
+    print(f"[role_abstraction] Post-abstraction quality: {n_flagged}/{n_checked} "
+          f"norms still reference named persons")
     return result_df

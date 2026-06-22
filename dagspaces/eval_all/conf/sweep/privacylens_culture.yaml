@@ -1,0 +1,50 @@
+# @package _global_
+# Model axis for the PrivacyLens cultural-perturbation experiment. Pair with
+# `pipeline=privacylens_culture` (which supplies the 6 culture benchmarks) so
+# the full sweep is models x cultures.
+#
+# Usage:
+#   sbatch scripts/judge_server.sub                 # judge service
+#   export JUDGE_SERVER_URL=http://<host>:<port>
+#   python -m dagspaces.eval_all.cli --multirun \
+#     pipeline=privacylens_culture +sweep=privacylens_culture
+#
+# Off-the-shelf instruct baselines spanning a size range (9B / 4B / small
+# Gemma-4) so the culture effect is measured on stock models, not our
+# fine-tunes. Override `model` on the CLI to widen it. 3 models x 6 cultures =
+# 18 runs, all under one WANDB group.
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # One orchestrator per model; each fans out its 6 culture benchmarks +
+    # GPU child stages. Keep concurrency modest so the shared judge server
+    # isn't swamped.
+    array_parallelism: 2
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      # Bake one shared group across the whole models x cultures matrix
+      # (each model is a separate sweep job, so relying on per-job
+      # SUBMITIT_JOB_ID would split the group). Resolved at compose time on
+      # the launching host so it survives the ssh-hopping sbatch shim.
+      - export WANDB_GROUP=${oc.env:WANDB_GROUP,pl_culture_sweep}
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      # Pin the judge endpoint for this sweep (baked from the launching env at
+      # compose time so it survives the ssh-hopping sbatch shim).
+      - export JUDGE_SERVER_URL=${oc.env:JUDGE_SERVER_URL,http://klara:8002}
+  sweeper:
+    params:
+      model: >-
+        qwen3.5-9b/instruct,
+        qwen3.5-4b/instruct,
+        gemma-4-e4b/instruct

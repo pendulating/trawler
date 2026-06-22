@@ -1,7 +1,7 @@
 # Lightweight Submitit Slurm launcher for the Trawler orchestrator parent (monitor)
 _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
 submitit_folder: ${hydra.sweep.dir}/.submitit/%j
-timeout_min: 4320
+timeout_min: 14400  # 10 days; matches slurm_gpu_4x stage timeout
 nodes: 1
 tasks_per_node: 1
 cpus_per_task: 1

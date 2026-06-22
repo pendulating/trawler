@@ -46,6 +46,7 @@ __all__ = [
     "merge_batch_output",
     "load_jsonl",
     "extract_content",
+    "classify_response_line",
 ]
 
 
@@ -214,7 +215,13 @@ def fetch_batch_output(
 # ---------------------------------------------------------------------------
 
 def extract_content(response_line: Dict[str, Any]) -> str:
-    """Pull the assistant message content out of a Batch API output line."""
+    """Pull the assistant message content out of a Batch API output line.
+
+    Backwards-compatible: error and empty-choices lines still return a
+    JSON-encoded error string. Callers that need to distinguish errors
+    from real responses without grepping the JSON should use
+    :func:`classify_response_line` instead.
+    """
     err = response_line.get("error")
     if err:
         return json.dumps({"error": err})
@@ -225,6 +232,62 @@ def extract_content(response_line: Dict[str, Any]) -> str:
         return json.dumps({"error": "empty_choices", "status": resp.get("status_code")})
     msg = (choices[0] or {}).get("message") or {}
     return msg.get("content") or ""
+
+
+def classify_response_line(response_line: Dict[str, Any]) -> Dict[str, Any]:
+    """Classify one ``output.jsonl`` line into ``{ok, content, error_kind, error_preview}``.
+
+    Returns:
+        ``ok`` — True iff the line carries a real assistant message.
+        ``content`` — the assistant text on success, or "" on failure.
+        ``error_kind`` — one of ``judge_api_error`` (top-level ``error``
+            key, e.g. sidecar HTTP non-2xx), ``empty_choices`` (HTTP 2xx
+            but the body had no ``choices``), ``http_error`` (response
+            present but ``status_code`` >= 400), or ``None`` on success.
+        ``error_preview`` — short truncated error message for logs.
+
+    Used by every async-mode finalize stage to demote error rows to
+    ``_judged=False`` instead of silently passing the JSON-encoded
+    error string through the row-level parser (which would default
+    leak→False / score→0 and stamp ``_judged=True``).
+    """
+    err = response_line.get("error")
+    if err:
+        prev = str(err)
+        return {
+            "ok": False,
+            "content": "",
+            "error_kind": "judge_api_error",
+            "error_preview": prev[:500],
+        }
+    resp = response_line.get("response") or {}
+    status = resp.get("status_code")
+    if isinstance(status, int) and status >= 400:
+        body = resp.get("body") or {}
+        prev = json.dumps(body)[:500] if body else f"HTTP {status}"
+        return {
+            "ok": False,
+            "content": "",
+            "error_kind": "http_error",
+            "error_preview": f"HTTP {status}: {prev}",
+        }
+    body = resp.get("body") or {}
+    choices = body.get("choices") or []
+    if not choices:
+        return {
+            "ok": False,
+            "content": "",
+            "error_kind": "empty_choices",
+            "error_preview": json.dumps(body)[:500],
+        }
+    msg = (choices[0] or {}).get("message") or {}
+    content = msg.get("content") or ""
+    return {
+        "ok": True,
+        "content": content,
+        "error_kind": None,
+        "error_preview": "",
+    }
 
 
 def merge_batch_output(

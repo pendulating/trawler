@@ -1,0 +1,168 @@
+#!/bin/bash
+#SBATCH --job-name=reranker-server
+#SBATCH --partition=pierson
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --time=480:00:00
+#SBATCH --output=.slurm_jobs/reranker-server/%j.out
+#SBATCH --error=.slurm_jobs/reranker-server/%j.err
+
+# Standalone vLLM reranker server for the fast R_ground judge ablation.
+#
+# Serves Qwen3-Reranker-8B (a Qwen3ForCausalLM scored via yes/no-token
+# logits) through vLLM's /rerank endpoint. Used by RerankerJudgeClient when
+# training.grpo.rground_judge_backend=reranker — a ~3x cheaper, single-GPU
+# stand-in for the Qwen3.6-27B generative judge.
+#
+# Default model: Qwen3-Reranker-8B (fits on 1 GPU, no TP needed).
+# Override with RERANKER_MODEL= / RERANKER_TP= / RERANKER_PORT= env vars.
+#
+# Usage:
+#   sbatch scripts/reranker_server.sub [--port PORT]
+#   sbatch scripts/reranker_server.sub --port 8003
+#
+# Then point training at it:
+#   export RERANKER_SERVER_URL=http://<host>:8003
+#   python -m dagspaces.grpo_training.cli \
+#     pipeline=grpo_only_online_external \
+#     training/grpo=online_rground_reranker_external \
+#     model=qwen3.5-9b/sft-ci
+
+set -euo pipefail
+
+# ----------------------------- CLI ARGUMENTS ----------------------------- #
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --port) RERANKER_PORT="$2"; shift 2 ;;
+        --port=*) RERANKER_PORT="${1#*=}"; shift ;;
+        *) echo "Unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
+
+echo "=== Reranker Server ==="
+echo "HOST=$(hostname) DATE=$(date)"
+echo "SLURM_JOB_ID=${SLURM_JOB_ID:-<none>}"
+echo ""
+
+# ----------------------------- CONFIGURATION ----------------------------- #
+REPO_DIR="/share/pierson/matt/UAIR"
+RERANKER_MODEL="${RERANKER_MODEL:-/share/pierson/matt/zoo/models/Qwen3-Reranker-8B}"
+RERANKER_PORT="${RERANKER_PORT:-8003}"
+RERANKER_TP="${RERANKER_TP:-1}"
+RERANKER_MAX_MODEL_LEN="${RERANKER_MAX_MODEL_LEN:-8192}"
+HF_HOME="${HF_HOME:-/share/pierson/matt/.cache/huggingface}"
+
+# ------------------------------ ENVIRONMENT ------------------------------ #
+cd "$REPO_DIR"
+
+if [ ! -d ".venv" ]; then
+    echo "ERROR: .venv not found." >&2
+    exit 1
+fi
+
+source .venv/bin/activate
+echo "Python: $(which python) ($(python --version))"
+
+export HF_HOME
+export WANDB_MODE=disabled
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ENABLE_V1_MULTIPROCESSING=0
+export TOKENIZERS_PARALLELISM=false
+
+# ------------------------------ GPU SANITY ------------------------------- #
+echo "--- All machine GPUs ---"
+nvidia-smi --query-gpu=index,name,pci.bus_id --format=csv,noheader || true
+echo ""
+
+if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    if [ -n "${SLURM_STEP_GPUS:-}" ]; then
+        export CUDA_VISIBLE_DEVICES="${SLURM_STEP_GPUS}"
+    elif [ -n "${SLURM_JOB_GPUS:-}" ]; then
+        if [[ "${SLURM_JOB_GPUS}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+            export CUDA_VISIBLE_DEVICES="${SLURM_JOB_GPUS}"
+        fi
+    fi
+fi
+echo "SLURM-allocated CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+
+if [ "$RERANKER_TP" -gt 1 ]; then
+    # PCIe-only (no NVLink) safe NCCL config, mirrors judge_server.sub.
+    export NCCL_P2P_DISABLE=1
+    export NCCL_SHM_DISABLE=1
+    export NCCL_CUMEM_HOST_ENABLE=0
+    export NCCL_IB_DISABLE=1
+    export NCCL_DEBUG=WARN
+else
+    echo "TP=1: single-GPU mode"
+fi
+
+echo ""
+echo "Model: $RERANKER_MODEL"
+echo "Port:  $RERANKER_PORT"
+echo "TP:    $RERANKER_TP"
+echo "Max model len: $RERANKER_MAX_MODEL_LEN"
+echo ""
+
+mkdir -p "$REPO_DIR/.slurm_jobs/reranker-server"
+
+# ----------------------------- LAUNCH SERVER ----------------------------- #
+# Qwen3-Reranker is a CausalLM; vLLM serves it as a scorer by converting the
+# architecture and reading the yes/no token logits. The hf-overrides below are
+# the canonical Qwen3-Reranker recipe (classifier_from_token=[no,yes]); vLLM
+# then exposes /rerank, which applies the <Instruct>/<Query>/<Document> chat
+# template internally.
+echo "[$(date)] Launching reranker server..."
+
+HF_OVERRIDES='{"architectures":["Qwen3ForSequenceClassification"],"classifier_from_token":["no","yes"],"is_original_qwen3_reranker":true}'
+
+# vLLM 0.19 replaced --task with --runner/--convert. A reranker is a pooling
+# (sequence-classification) model; the hf-overrides above convert the CausalLM
+# to Qwen3ForSequenceClassification, and --runner pooling exposes /rerank + /score.
+SERVE_ARGS=(
+    vllm serve "$RERANKER_MODEL"
+    --runner pooling
+    --hf-overrides "$HF_OVERRIDES"
+    --port "$RERANKER_PORT"
+    --host 0.0.0.0
+    --tensor-parallel-size "$RERANKER_TP"
+    --max-model-len "$RERANKER_MAX_MODEL_LEN"
+)
+if [ "$RERANKER_TP" -gt 1 ]; then
+    SERVE_ARGS+=(--disable-custom-all-reduce)
+fi
+
+echo "Command: ${SERVE_ARGS[*]}"
+"${SERVE_ARGS[@]}" &
+SERVER_PID=$!
+
+# Wait for health check
+for i in $(seq 1 240); do
+    if curl -sf "http://localhost:${RERANKER_PORT}/health" > /dev/null 2>&1; then
+        echo "[$(date)] Reranker server ready on port ${RERANKER_PORT}"
+        break
+    fi
+    # Fast-fail: if vLLM died (bad args, OOM, load error) don't poll for 1200s.
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "[$(date)] ERROR: server process ${SERVER_PID} exited before becoming ready" >&2
+        exit 1
+    fi
+    if [ "$i" -eq 240 ]; then
+        echo "[$(date)] ERROR: server not ready after 1200s" >&2
+        kill $SERVER_PID 2>/dev/null || true
+        exit 1
+    fi
+    sleep 5
+done
+
+HOSTNAME=$(hostname)
+echo ""
+echo "============================================"
+echo "  Reranker server ready. Export for training:"
+echo ""
+echo "  export RERANKER_SERVER_URL=http://${HOSTNAME}:${RERANKER_PORT}"
+echo ""
+echo "  PID: ${SERVER_PID}   Kill: kill ${SERVER_PID}"
+echo "============================================"
+
+wait $SERVER_PID

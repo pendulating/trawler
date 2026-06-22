@@ -137,8 +137,20 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
             stage_start = time.time()
 
             result = runner.run(context)
-
             duration_s = time.time() - stage_start
+
+            # Log a sampled output table for stages that produce a parquet
+            # dataset (sft_data_prep / reward_prep are configured for
+            # full-column logging in wandb_logger.py — this is the call
+            # that config was waiting for).
+            _ds = (result.outputs or {}).get("dataset")
+            if isinstance(_ds, str) and _ds.endswith(".parquet"):
+                try:
+                    import pandas as pd
+                    from dagspaces.common.orchestrator import _safe_log_table
+                    _safe_log_table(logger, pd.read_parquet(_ds), f"{node.stage}/results")
+                except Exception as te:
+                    print(f"Warning: failed to log output table for {node.key}: {te}", flush=True)
             try:
                 logger.set_summary(f"{node.stage}/status", "completed")
             except Exception:
@@ -163,6 +175,19 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
 
 def run_experiment(cfg: DictConfig) -> None:
     """Execute the GRPO training pipeline."""
+    # One human-readable W&B group per pipeline invocation; stage jobs
+    # inherit it via the WANDB_GROUP export below. Without this, each
+    # SLURM job falls back to its own opaque slurm-<jobid> group and the
+    # pipeline's runs never cluster in the UI.
+    try:
+        from omegaconf import OmegaConf, open_dict
+        if not str(OmegaConf.select(cfg, "wandb.group", default="") or "").strip() \
+                and not os.environ.get("WANDB_GROUP"):
+            _exp = str(OmegaConf.select(cfg, "experiment.name", default="") or "pipeline")
+            with open_dict(cfg):
+                cfg.wandb.group = f"{_exp}-{time.strftime('%Y%m%d-%H%M%S')}"
+    except Exception:
+        pass
     with _get_wandb_logger(cfg, stage="orchestrator", run_id="monitor", run_config={"type": "pipeline"}) as logger:
         try:
             parent_group = logger.wb_config.group if logger.wb_config else None

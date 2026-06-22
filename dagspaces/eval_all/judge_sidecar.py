@@ -949,7 +949,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--run-dir", required=True, help="Eval root to scan for manifests")
-    common.add_argument("--base-url", default=os.environ.get("JUDGE_BASE_URL", "http://localhost:8002"))
+    common.add_argument(
+        "--base-url",
+        default=os.environ.get("JUDGE_SERVER_URL") or os.environ.get("JUDGE_BASE_URL", "http://localhost:8002"),
+    )
     common.add_argument("--api-key-env", default=None, help="Env var holding bearer token (commercial endpoints)")
     common.add_argument("--model", default="", help="Judge model name (telemetry only)")
     common.add_argument("--concurrency", type=int, default=DEFAULT_PER_MANIFEST_CONCURRENCY)

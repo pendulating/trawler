@@ -1,0 +1,85 @@
+# @package _global_
+# CI Information Flow Extraction from prefetched fiction chunks (scaled).
+#
+# Variant of COLM_flows_fiction_prefetched that pins the model to
+# qwen3.6-27b/instruct and runs both stages on 4 GPUs with
+# data_parallel_size=2 × tensor_parallel_size=2. The flows baseline
+# already ran ci_reasoning at DP=2/TP=2; this variant carries the same
+# parallelism into ci_extraction and unifies the model with the norms
+# pipeline (so both artefacts come from the same judge).
+#
+# Pipeline: CI Reasoning → CI Extraction.
+#
+# Usage:
+#   FICTION_CHUNKS_PATH=/path/to/chunks.parquet \
+#     python -m dagspaces.historical_norms.cli \
+#       pipeline=COLM_flows_fiction_prefetched_qwen36
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# NOTE: this pipeline assumes `model=qwen3.6-27b/instruct` is passed on the
+# CLI (see comment in COLM_norms_fiction_prefetched_qwen36.yaml).
+
+# Override prompts to use fiction variants
+prompt_ci_reasoning: ${prompt_ci_reasoning_fiction}
+prompt_ci_extraction: ${prompt_ci_extraction_fiction}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/COLM_flows_fiction_qwen36
+  allow_partial: false
+
+  sources:
+    prefetched_chunks:
+      path: ${oc.env:FICTION_CHUNKS_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      # ============================================================
+      # Stage 1: CI Reasoning
+      # Identifies information flows in fiction and reasons about
+      # context, actors, direction, and appropriateness.
+      # ============================================================
+      ci_reasoning:
+        stage: ci_reasoning
+        depends_on: []
+        inputs:
+          dataset: prefetched_chunks
+        outputs:
+          dataset: outputs/ci_reasoning/reasoning.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 4096
+          model.engine_kwargs.data_parallel_size: 2
+          model.engine_kwargs.tensor_parallel_size: 2
+        launcher: slurm_gpu_4x
+        wandb_suffix: ci_reasoning
+
+      # ============================================================
+      # Stage 2: CI Extraction
+      # Converts reasoning traces to structured 5-component
+      # CI information flow tuples.
+      # ============================================================
+      ci_extraction:
+        stage: ci_extraction
+        depends_on: [ci_reasoning]
+        inputs:
+          dataset: ci_reasoning.dataset
+        outputs:
+          dataset: outputs/ci_extraction/ci_flows.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 2048
+          model.engine_kwargs.data_parallel_size: 2
+          model.engine_kwargs.tensor_parallel_size: 2
+        launcher: slurm_gpu_4x
+        wandb_suffix: ci_extraction

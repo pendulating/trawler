@@ -6,7 +6,7 @@
 import pandas as pd
 import json
 from omegaconf import OmegaConf
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import CIExtractionResult
@@ -181,5 +181,77 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     )
 
     print(f"[ci_extraction] Completed inference, {len(result_df)} results")
+    result_df = _validate_flow_quality(result_df, cfg)
     result_df = clean_for_parquet(result_df, extra_cols=["ci_reasoning_data", "ci_norms_invoked"], stage_name="ci_extraction")
+    return result_df
+
+
+# Flow tuple fields that must be role-abstracted (the extraction prompt
+# instructs "NEVER use character names" — see ci_schema.py).
+_FLOW_QA_FIELDS = [
+    ("subject", "ci_subject"),
+    ("sender", "ci_sender"),
+    ("recipient", "ci_recipient"),
+    ("information_type", "ci_information_type"),
+    ("transmission_principle", "ci_transmission_principle"),
+    ("context", "ci_context"),
+]
+
+
+def _validate_flow_quality(result_df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
+    """Flag flows whose components reference named characters.
+
+    Mirrors the norms-track ``norm_quality_*`` check (2026-06-09: layered
+    blocklist + title pattern + spaCy PERSON NER via
+    ``..name_detection.PersonNameDetector``). The flows track previously
+    had NO quality validation even though its prompt forbids character
+    names. Adds ``flow_quality_flags`` / ``flow_quality_passed``; rows are
+    flagged, never dropped.
+    """
+    if result_df.empty:
+        result_df["flow_quality_flags"] = None
+        result_df["flow_quality_passed"] = None
+        return result_df
+
+    from ..name_detection import PersonNameDetector
+
+    blocklist = None
+    try:
+        custom = OmegaConf.select(cfg, "norm_quality.character_blocklist")
+        if custom:
+            blocklist = {str(n).lower() for n in custom}
+    except Exception:
+        pass
+    _use_ner = OmegaConf.select(cfg, "norm_quality.use_ner", default=True)
+    detector = PersonNameDetector(
+        blocklist=blocklist,
+        use_ner=bool(_use_ner) if _use_ner is not None else True,
+    )
+
+    all_flags: List[Any] = []
+    all_passed: List[Any] = []
+    for _, row in result_df.iterrows():
+        # Rows without an extracted flow (parse errors, no-flow chunks)
+        # get null quality columns, matching the norms-track convention.
+        if not any(isinstance(row.get(col), str) and row.get(col)
+                   for _, col in _FLOW_QA_FIELDS):
+            all_flags.append(None)
+            all_passed.append(None)
+            continue
+        flags: List[str] = []
+        for field_name, col in _FLOW_QA_FIELDS:
+            val = row.get(col)
+            if isinstance(val, str) and val:
+                flags.extend(detector.field_flags(field_name, val))
+        seen: set = set()
+        unique = [f for f in flags if not (f in seen or seen.add(f))]
+        all_flags.append("; ".join(unique) if unique else None)
+        all_passed.append(len(unique) == 0)
+
+    result_df["flow_quality_flags"] = all_flags
+    result_df["flow_quality_passed"] = all_passed
+    n_flagged = sum(1 for p in all_passed if p is False)
+    n_checked = sum(1 for p in all_passed if p is not None)
+    print(f"[ci_extraction] Flow quality: {n_flagged}/{n_checked} flows "
+          f"flagged for named-person references")
     return result_df

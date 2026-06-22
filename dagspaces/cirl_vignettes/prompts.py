@@ -97,14 +97,14 @@ def build_prompt_for_row(row: Dict[str, Any], think: bool = False) -> str:
 # full agent system prompt with tool specifications via toolemu/procoder,
 # then appends the execution block with the trajectory.
 
-from .toolemu.prompts.agent import (
+from dagspaces.common.toolemu.prompts.agent import (
     AGENT_DUMMY_VARS,
     AGENT_NAIVE_PROMPT,
     AGENT_NAIVE_SYSTEM_INFO,
     AGENT_PRIVACY_ENHANCED_PROMPT,
     AGENT_PRIVACY_ENHANCED_SYSTEM_INFO,
 )
-from .toolemu.tools import get_toolkits_by_names
+from dagspaces.common.toolemu.tools import get_toolkits_by_names
 from procoder.functional import add_refnames, format_multiple_prompts
 
 # Think-format task suffix (from get_final_action.py)

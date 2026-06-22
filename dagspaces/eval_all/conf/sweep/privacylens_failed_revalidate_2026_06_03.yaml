@@ -1,0 +1,89 @@
+# @package _global_
+# Hydra sweep: PrivacyLens ONLY, over the task models that failed at least one
+# benchmark in the two eval_all passes we audited on 2026-05-27
+# (multirun/2026-05-27_eval_all/{22-22-15, 22-23-00}).
+#
+# Purpose — revalidate the fixes from that audit:
+#   1. cirl/base was the only model that *failed PrivacyLens itself* — every row
+#      hit "Prompt too long" because max_model_len=4096 collided with the 4096
+#      max_tokens bump (100% empty → SanityFailure). Fixed by raising
+#      cirl/base max_model_len to 32768. This sweep confirms PrivacyLens now
+#      passes for cirl/base.
+#   2. The other 7 models PASSED PrivacyLens before but failed other benchmarks
+#      (confaide / cirl_vignettes / mmlu / vlm_geoprivacy). Several of those
+#      fixes change *generation* config that also affects PrivacyLens output:
+#        - gpt-oss-20b/instruct  → temperature=1.0 (was temp=0 degenerate loops)
+#        - context-reasoner/ppo  → temperature=0.6
+#        - openthinker3-7b/sft-ci → enable_thinking=true (was </think> loops)
+#        - phi-4/{instruct,sft-ci} → confaide-only nudge (PrivacyLens unaffected)
+#      Re-running PrivacyLens on them is a regression check: confirm none of the
+#      generation-config changes broke their (previously passing) PrivacyLens.
+#
+# PrivacyLens ONLY: it is the sole judge-dependent benchmark, and the only one
+# that any of these models failed at the QA-probe/judge level. The gold-scored
+# benchmarks are revalidated separately by re-running the full suite on the
+# affected models (their parse fixes are validated offline + by unit tests).
+#
+# Judge: defaults to the canonical Qwen3.6-27B server (klara:8002, the single
+# source of truth per CONGRUENCE.md). Override at launch if the live judge moved:
+#   JUDGE_SERVER_URL=http://<host>:<port> python -m dagspaces.eval_all.cli \
+#       --multirun +sweep=privacylens_failed_revalidate_2026_06_03
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun \
+#       +sweep=privacylens_failed_revalidate_2026_06_03
+#
+# Sampled smoke test first (local, no SLURM):
+#   python -m dagspaces.eval_all.cli \
+#       +sweep=privacylens_failed_revalidate_2026_06_03 \
+#       model=cirl/base runtime.debug=true runtime.sample_n=20 hydra/launcher=null
+
+# PrivacyLens-only whitelist (mirrors conf/benchmark_filter/privacylens_only.yaml).
+# include is a whitelist: when non-empty, only these benchmarks run and every
+# other still-enabled benchmark (mmlu, etc.) is suppressed.
+benchmark_filter:
+  include:
+    - privacylens
+  exclude: []
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # Single shared judge server — keep concurrent jobs modest.
+    array_parallelism: 3
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      # Canonical Qwen3.6-27B judge; override via JUDGE_SERVER_URL env if moved.
+      - export JUDGE_SERVER_URL=${oc.env:JUDGE_SERVER_URL,http://klara.tech.cornell.edu:8002}
+  sweeper:
+    params:
+      # 8 task models that failed >=1 benchmark in the 2026-05-27 audit:
+      #   cirl/base                 — failed ALL (context overflow); incl. PrivacyLens
+      #   context-reasoner/ppo      — cirl_vignettes, confaide
+      #   gemma-3-12b/it            — confaide
+      #   gpt-oss-20b/instruct      — cirl_vignettes, confaide, mmlu
+      #   gpt-oss-20b/sft-ci        — cirl_vignettes, confaide
+      #   openthinker3-7b/sft-ci    — confaide
+      #   phi-4/instruct            — confaide, vlm_geoprivacy
+      #   phi-4/sft-ci              — vlm_geoprivacy
+      model: >-
+        cirl/base,
+        context-reasoner/ppo,
+        gemma-3-12b/it,
+        gpt-oss-20b/instruct,
+        gpt-oss-20b/sft-ci,
+        openthinker3-7b/sft-ci,
+        phi-4/instruct,
+        phi-4/sft-ci

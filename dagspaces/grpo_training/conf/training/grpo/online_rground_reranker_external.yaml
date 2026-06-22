@@ -1,0 +1,49 @@
+# @package training.grpo
+# Online R_ground with the FAST cross-encoder reranker judge (ablation).
+#
+# Identical to online_rground_external (inherited below) except the dominant
+# R_ground signal is scored by Qwen3-Reranker-8B via vLLM's /rerank endpoint
+# instead of the Qwen3.6-27B generative judge — a ~3x smaller, single-GPU,
+# decode-free judge. Camera-ready efficiency ablation: does a relevance
+# reranker reproduce the GRPO effect at a fraction of the judge cost?
+#
+# Servers: launch the embedding server (scripts/launch_auxiliary_servers.sh or
+# embedding_server.sub) AND the reranker server (scripts/reranker_server.sub);
+# the LLM judge server is NOT needed in this mode.
+#
+# Usage:
+#   EMBEDDING_SERVER_URL=http://gpu1:8001 RERANKER_SERVER_URL=http://gpu2:8003 \
+#   SFT_CHECKPOINT_PATH=... NORM_UNIVERSES_PATH=... CI_REASONING_PATH=... \
+#   python -m dagspaces.grpo_training.cli \
+#     pipeline=grpo_only_online_external \
+#     training/grpo=online_rground_reranker_external \
+#     model=qwen3.5-9b/sft-ci
+
+defaults:
+  - online_rground_external
+  - _self_
+
+# ── Fast judge backend ──
+rground_judge_backend: reranker
+
+# Reranker server (vLLM /rerank). The LLM judge server is unused in this mode,
+# so judge_server_url is nulled to avoid requiring JUDGE_SERVER_URL in the env.
+reranker_server_url: ${oc.env:RERANKER_SERVER_URL}
+reranker_server_port: 8003
+reranker_model_name: /share/pierson/matt/zoo/models/Qwen3-Reranker-8B
+judge_server_url: null
+
+# Custom grounding instruction for the reranker (empty → client default).
+# Frames the relevance query as a normative-grounding question so the yes-token
+# probability approximates the LLM judge's norm_match/governance criteria.
+reranker_instruction: >-
+  Given a set of social norms governing information flow, judge how well the
+  candidate's extracted information flow is grounded in and consistent with
+  those norms (norm awareness, flow governance, and appropriateness).
+
+# Blend weight of the deterministic deontic appropriateness-consistency term
+# (governing norm's normative_force vs the flow's appropriateness label) against
+# the reranker relevance. 0.2 mirrors the LLM judge's 0.4/0.4/0.2 split; the
+# reranker covers norm_match+governance (0.8), the deontic table covers the rest.
+# Set 0.0 for a pure-relevance ablation.
+reranker_app_weight: 0.2

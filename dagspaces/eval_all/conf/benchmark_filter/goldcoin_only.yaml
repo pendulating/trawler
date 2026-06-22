@@ -1,0 +1,7 @@
+# @package _global_
+# Single-benchmark whitelist for goldcoin_hipaa, used for quick smoke
+# sweeps of the dispatcher itself.
+benchmark_filter:
+  include:
+    - goldcoin
+  exclude: []

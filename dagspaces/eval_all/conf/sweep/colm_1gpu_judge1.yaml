@@ -9,6 +9,7 @@ hydra:
   launcher:
     array_parallelism: 2
     setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
       - export HYDRA_FULL_ERROR=1
       - source ~/.bashrc
       - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
@@ -25,13 +26,15 @@ hydra:
       - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:9015
   sweeper:
     params:
+      # NOTE: grpo-v3-* yamls were dropped from this sweep on the
+      # Qwen3.6-27B-judge cutover (CONGRUENCE.md issue #1). The new
+      # contrastive sweep lives at conf/sweep/contrastive_lambda_ratio.yaml.
       model: >-
         qwen3.5-2b/base,
         qwen3.5-4b/base,
-        qwen3.5-9b/base, 
+        qwen3.5-9b/base,
         qwen3.5-9b/sft-ci,
-        qwen3.5-9b/grpo-v3-vr05-lambda05,
-        qwen3.5-9b/grpo-v3-vr05-lambda10,
-        qwen3.5-9b/grpo-v3-vr10-lambda10,
         cirl/base,
-        context-reasoner/ppo
+        context-reasoner/ppo,
+        qwen3.5-2b/sft-ci,
+        qwen3.5-4b/sft-ci

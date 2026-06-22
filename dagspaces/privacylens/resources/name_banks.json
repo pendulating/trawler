@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "comment": "Culture name/location banks for the PrivacyLens cultural-perturbation eval. Each culture provides gendered first-name pools, a surname pool, and a culture-congruent location pool. The 'western' culture is null: a sentinel meaning identity passthrough (the control variant traverses the same code path with a no-op map). When a culture lacks an explicit 'u' (unknown-gender) first-name pool, the loader falls back to m+f combined. See PROVENANCE.md for sources and the ethical note on the african_american set.",
+  "cultures": {
+    "western": null,
+    "east_asian": {
+      "first_names": {
+        "m": ["Wei", "Jian", "Hao", "Cheng", "Ming", "Lei", "Tao", "Feng", "Jun", "Bo", "Hiroshi", "Takeshi", "Kenji", "Haruto", "Ren", "Daiki", "Min-jun", "Ji-ho", "Seo-jun", "Do-yun", "Yong", "Sho", "Riku", "Yuto", "Zhi"],
+        "f": ["Mei", "Ling", "Xia", "Hui", "Yan", "Fang", "Jing", "Na", "Yuki", "Hana", "Sakura", "Aoi", "Yui", "Rin", "Ji-woo", "Seo-yeon", "Min-seo", "Ha-eun", "Soo-jin", "Mai", "Emi", "Akari", "Yumi", "Xiu"]
+      },
+      "surnames": ["Chen", "Wang", "Li", "Zhang", "Liu", "Yang", "Huang", "Zhao", "Wu", "Zhou", "Tanaka", "Suzuki", "Sato", "Watanabe", "Yamamoto", "Nakamura", "Kim", "Lee", "Park", "Choi", "Jung", "Kang", "Cho"],
+      "locations": ["Shanghai", "Beijing", "Tokyo", "Osaka", "Seoul", "Busan", "Kyoto", "Shenzhen", "Guangzhou", "Taipei", "Nagoya", "Incheon", "Hangzhou", "Chengdu", "Sapporo"]
+    },
+    "south_asian": {
+      "first_names": {
+        "m": ["Aarav", "Rohan", "Arjun", "Vikram", "Rahul", "Sanjay", "Amit", "Karan", "Aditya", "Nikhil", "Imran", "Faisal", "Bilal", "Hamza", "Zaid", "Ravi", "Suresh", "Anil", "Deepak", "Tariq"],
+        "f": ["Priya", "Ananya", "Aishwarya", "Kavya", "Neha", "Pooja", "Divya", "Sneha", "Meera", "Anjali", "Fatima", "Ayesha", "Sana", "Zara", "Hina", "Lakshmi", "Riya", "Nisha", "Sunita", "Reshma"]
+      },
+      "surnames": ["Sharma", "Patel", "Singh", "Kumar", "Gupta", "Reddy", "Nair", "Rao", "Mehta", "Iyer", "Khan", "Ahmed", "Hussain", "Malik", "Chowdhury", "Das", "Banerjee", "Desai"],
+      "locations": ["Mumbai", "Delhi", "Bangalore", "Karachi", "Lahore", "Dhaka", "Chennai", "Kolkata", "Hyderabad", "Pune", "Ahmedabad", "Islamabad", "Colombo", "Jaipur"]
+    },
+    "arabic_me": {
+      "first_names": {
+        "m": ["Ahmed", "Mohammed", "Ali", "Omar", "Khaled", "Hassan", "Youssef", "Ibrahim", "Tariq", "Karim", "Samir", "Mahmoud", "Bilal", "Nasser", "Faisal", "Rami", "Ziad", "Walid"],
+        "f": ["Layla", "Fatima", "Aisha", "Mariam", "Noor", "Huda", "Salma", "Yasmin", "Rania", "Dalia", "Amira", "Hana", "Zainab", "Leila", "Nadia", "Sara", "Farah"]
+      },
+      "surnames": ["Al-Sayed", "Hassan", "Khalil", "Mansour", "Haddad", "Nasser", "Saleh", "Ibrahim", "Al-Farsi", "Rahman", "Aziz", "Karim", "Najjar", "Darwish", "Hamdan"],
+      "locations": ["Cairo", "Dubai", "Riyadh", "Amman", "Beirut", "Doha", "Abu Dhabi", "Kuwait City", "Baghdad", "Casablanca", "Tunis", "Manama", "Muscat", "Jeddah"]
+    },
+    "african": {
+      "first_names": {
+        "m": ["Chidi", "Kwame", "Kofi", "Emeka", "Tunde", "Obi", "Sefu", "Jabari", "Kato", "Tendai", "Babatunde", "Olu", "Femi", "Chika", "Mandla", "Thabo", "Sipho", "Kwesi"],
+        "f": ["Amara", "Nia", "Zola", "Ama", "Folake", "Ngozi", "Thandiwe", "Nneka", "Adaeze", "Yaa", "Efua", "Zuri", "Imani", "Sade", "Chioma", "Nala", "Abena", "Makena"]
+      },
+      "surnames": ["Okafor", "Mensah", "Adeyemi", "Okonkwo", "Mwangi", "Diallo", "Achebe", "Balogun", "Dube", "Ndlovu", "Owusu", "Boateng", "Mutua", "Adebayo", "Nkosi", "Osei"],
+      "locations": ["Lagos", "Nairobi", "Accra", "Addis Ababa", "Kampala", "Dar es Salaam", "Abuja", "Kumasi", "Mombasa", "Kigali", "Dakar", "Ibadan", "Johannesburg", "Kinshasa"]
+    },
+    "african_american": {
+      "first_names": {
+        "m": ["Jamal", "DeShawn", "DeAndre", "Marquis", "Terrell", "Tyrone", "Darnell", "Jermaine", "Lamar", "Malik", "Rasheed", "Kareem", "Hakim", "Jamel", "Leroy", "Tremayne"],
+        "f": ["Lakisha", "Latoya", "Tanisha", "Latonya", "Kenya", "Ebony", "Keisha", "Tamika", "Imani", "Aaliyah", "Janelle", "Shanice", "Precious", "Latanya", "Nia", "Aisha"]
+      },
+      "surnames": ["Washington", "Jefferson", "Jackson", "Booker", "Banks", "Charles", "Joseph", "Mosley", "Rivers", "Dorsey", "Gaines", "Hampton", "Coleman", "Mays"],
+      "locations": ["Atlanta", "Detroit", "Baltimore", "Memphis", "New Orleans", "Birmingham", "Jackson", "Charlotte", "Houston", "Oakland", "Philadelphia", "Richmond"]
+    }
+  }
+}

@@ -26,7 +26,11 @@ EMB_PORT="${3:-8001}"
 JUDGE_PORT="${4:-8002}"
 
 EMB_MODEL="${EMBEDDING_MODEL:-/share/pierson/matt/zoo/models/Qwen3-Embedding-8B}"
-JUDGE_MODEL="${JUDGE_MODEL:-/share/pierson/matt/zoo/models/Qwen2.5-72B-Instruct-AWQ}"
+# Judge model: Qwen3.6-27B is the canonical COLM-paper judge
+# (matches scripts/judge_server.sub). Bf16 native, no quantization.
+# Override with JUDGE_MODEL= and JUDGE_QUANTIZATION= if needed.
+JUDGE_MODEL="${JUDGE_MODEL:-/share/pierson/matt/zoo/models/Qwen3.6-27B}"
+JUDGE_QUANTIZATION="${JUDGE_QUANTIZATION:-}"
 JUDGE_MAX_MODEL_LEN="${JUDGE_MAX_MODEL_LEN:-8192}"
 
 # Count judge GPUs for tensor parallelism
@@ -52,12 +56,18 @@ CUDA_VISIBLE_DEVICES="$EMB_GPU" vllm serve "$EMB_MODEL" \
 EMB_PID=$!
 
 # Launch judge server
+# Quantization is optional (empty default = bf16 native, which Qwen3.6-27B uses).
+# Pass --quantization explicitly only when JUDGE_QUANTIZATION is set.
+JUDGE_QUANT_ARGS=()
+if [ -n "$JUDGE_QUANTIZATION" ]; then
+    JUDGE_QUANT_ARGS=(--quantization "$JUDGE_QUANTIZATION")
+fi
 echo "[$(date)] Launching judge server on GPUs ${JUDGE_GPUS}..."
 CUDA_VISIBLE_DEVICES="$JUDGE_GPUS" vllm serve "$JUDGE_MODEL" \
     --port "$JUDGE_PORT" \
     --host 0.0.0.0 \
     --tensor-parallel-size "$JUDGE_TP" \
-    --quantization awq \
+    "${JUDGE_QUANT_ARGS[@]}" \
     --max-model-len "$JUDGE_MAX_MODEL_LEN" \
     --disable-custom-all-reduce \
     2>&1 | sed 's/^/[judge] /' &

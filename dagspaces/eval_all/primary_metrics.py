@@ -145,6 +145,39 @@ PRIMARY_METRICS: Dict[str, List[PrimaryMetric]] = {
             path="per_question.Q7.accuracy",
         ),
     ],
+    "simpleqa_verified": [
+        # SimpleQA's published harmonic-mean composite. Higher = better
+        # factual recall *and* attempted-rate; replaces accuracy as the
+        # headline because the dataset penalizes both wrong answers AND
+        # over-hedging that lets the model dodge.
+        PrimaryMetric(
+            name="f1",
+            subdir="compute_metrics",
+            path="f1",
+            higher_is_better=True,
+        ),
+        # Lower = better: high not_attempted_rate signals the model
+        # routinely dodges questions to avoid penalty. Both columns
+        # surface together so reviewers can spot dodge-heavy strategies.
+        PrimaryMetric(
+            name="not_attempted_rate",
+            subdir="compute_metrics",
+            path="not_attempted_rate",
+            higher_is_better=False,
+        ),
+    ],
+    "mmlu": [
+        # Overall 57-subject accuracy is the headline. The 4 category
+        # subscores are useful but secondary — surface them via
+        # eval/by_category/* in W&B rather than blowing up the summary
+        # table with 4 + 57 columns.
+        PrimaryMetric(
+            name="overall_accuracy",
+            subdir="compute_metrics",
+            path="overall_accuracy",
+            higher_is_better=True,
+        ),
+    ],
 }
 
 

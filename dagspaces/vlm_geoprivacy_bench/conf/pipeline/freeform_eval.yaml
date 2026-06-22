@@ -15,7 +15,7 @@ judge:
     max_num_seqs: 16
 
 pipeline:
-  output_root: ${hydra:run.dir}/vlm_geoprivacy_bench
+  output_root: ${hydra:runtime.output_dir}/vlm_geoprivacy_bench
   allow_partial: false
   sources: {}
   graph:

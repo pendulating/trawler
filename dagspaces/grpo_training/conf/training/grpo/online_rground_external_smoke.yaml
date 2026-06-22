@@ -1,0 +1,103 @@
+# @package training.grpo
+# SMOKE TEST for the June 2026 GRPO redesign (Phases 1–5) with EXTERNAL
+# embedding + judge servers. Exercises every new code path end-to-end in
+# ~6 optimizer steps:
+#
+#   - Phase 1: G=8, KL anchor (beta), scale_rewards=none, mask_truncated
+#   - Phase 2: SFT-policy variance pre-screening (4 samples/prompt)
+#   - Phase 3: listwise ranking judge (rground_scoring=ranked) + gated
+#              composition + gold-aware no-flow r_context
+#   - Phase 4: judgment-vignette mix (vignette_ratio=0.3)
+#   - Phase 5: dev split + held-out reward eval at step 3; checkpoint-3 and
+#              checkpoint-6 carry trainer_state.json for the promotion-gates
+#              checker (logging_steps=1 so the trend gate has 6 points)
+#
+# Run via scripts/smoke_grpo_redesign.sh, or manually:
+#   ./scripts/launch_auxiliary_servers.sh   # embedding :8001 + judge :8002
+#   python -m dagspaces.grpo_training.cli \
+#     pipeline=grpo_only_online_external \
+#     training/grpo=online_rground_external_smoke \
+#     model=qwen3.5-9b/sft-ci \
+#     runtime.sample_n=200 wandb.enabled=false
+#
+# This is a PLUMBING test (does every stage run and produce its artifacts),
+# not a learning test — 6 steps say nothing about reward trends.
+
+seed: 42
+
+online_rground: true
+embedding_server_url: ${oc.env:EMBEDDING_SERVER_URL}
+judge_server_url: ${oc.env:JUDGE_SERVER_URL}
+
+# Phase-1 optimizer settings (production values except step count/accum)
+num_generations: 8
+learning_rate: 1.0e-5
+per_device_batch_size: 1
+gradient_accumulation_steps: 8   # 1 prompt-group per optimizer step
+num_epochs: 1
+max_steps: 6
+warmup_steps: 1
+max_completion_length: 3072
+gradient_checkpointing: true
+bf16: true
+logging_steps: 1                 # 6 reward points → trend gate computable
+save_strategy: steps
+save_steps: 3                    # checkpoint-3/-6 carry trainer_state.json
+
+beta: 0.01
+scale_rewards: "none"
+mask_truncated_completions: true
+
+# vLLM colocate (same as production)
+use_vllm: true
+vllm_mode: colocate
+vllm_tensor_parallel_size: 1
+vllm_gpu_memory_utilization: 0.45
+vllm_enable_sleep_mode: true
+vllm_max_model_length: 16384
+
+enable_thinking_grpo: false
+contrastive_ratio: 0.0
+contrastive_lambda: 1.0  # mirror online_rground_external.yaml (paper-primary λ)
+no_flow_scoring: independent
+
+# Phase 3: ranked R_ground + gated composition
+rground_scoring: ranked
+rank_top_k: 5
+rank_weight: 0.5
+judge_max_workers: 16
+reward_composition: gated
+# Over-abstention fixes (2026-06-12): exercise both new paths in the smoke.
+abstention_penalty: 0.2
+
+# Phase 2: pre-screening, shrunk (4 samples/prompt) and uncached so the
+# sampling path itself is exercised
+prescreen:
+  enabled: true
+  num_samples: 4
+  reward_std_min: 0.05
+  min_keep: 8
+  temperature: 1.0
+  cache_path: ""
+  require_flow_variance: true
+
+# Phase 5a: dev split — eval fires at steps 3 and 6
+dev_fraction: 0.1
+eval_steps: 3
+
+# Phase 4: vignette mix
+vignette_ratio: 0.3
+judgment_reward_weights:
+  - 0.50
+  - 0.25
+  - 0.25
+
+reward_weights:
+  - 0.10   # r_uncert
+  - 0.05   # r_complete
+  - 0.05   # r_consist
+  - 0.20   # r_context
+  - 0.10   # r_cohere
+  - 0.50   # r_ground
+
+context_embedding_model: all-MiniLM-L6-v2

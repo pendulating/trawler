@@ -1,0 +1,17 @@
+# @package _global_
+#
+# google/simpleqa-verified data source.
+#
+# Split note: the dataset card lists `eval` as the canonical split. If
+# HF schema drifts to `test` or `validation`, override here or at the CLI
+# (`data.split=test`). The loader auto-detects question/answer column
+# aliases (problem/question, answer/gold_target), so a minor rename
+# upstream does not require code changes — but a missing split does.
+#
+# Gating: if HF requires accepting the dataset agreement, export
+# HF_TOKEN in server.env (or pass at the CLI via data.hf_token=...).
+data:
+  hf_dataset: google/simpleqa-verified
+  hf_config: null
+  split: eval
+  hf_token: ${oc.env:HF_TOKEN,null}

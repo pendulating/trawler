@@ -1,0 +1,41 @@
+# @package _global_
+# 2-GPU variant of simpleqa_verified_async — only the inference launcher
+# changes. The judge_grade export stage is CPU-only either way.
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+judge:
+  mode: async
+
+wandb:
+  phase: export
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/simpleqa_verified
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+
+      llm_inference:
+        stage: llm_inference
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/llm_inference/dataset.parquet
+        launcher: slurm_gpu_2x
+
+      judge_grade:
+        stage: judge_grade_batch_export
+        depends_on: [llm_inference]
+        inputs:
+          dataset: llm_inference.dataset
+        outputs:
+          dataset: outputs/judge_grade/pending.parquet

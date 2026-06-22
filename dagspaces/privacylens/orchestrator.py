@@ -55,13 +55,27 @@ _CONF_DIR = os.path.join(os.path.dirname(__file__), "conf")
 _STAGE_REGISTRY: Dict[str, Any] = get_stage_registry()
 
 
+def _perturb_qualified_dagspace(cfg: DictConfig) -> str:
+    """Dagspace key for W&B run-id derivation, qualified by perturb culture.
+
+    A cultural sweep's per-culture runs share (model, group), so without
+    qualification their resumable run ids would collide into one run. Folding
+    ``perturb.culture`` into the dagspace gives each (model, culture) its own
+    run id, while export and finalize for a culture share it (both receive
+    ``+perturb.culture=<c>``). Absent perturb.culture this is exactly
+    ``"privacylens"`` — no change for existing runs.
+    """
+    culture = OmegaConf.select(cfg, "perturb.culture")
+    return f"privacylens:{culture}" if culture else "privacylens"
+
+
 def _get_wandb_logger(cfg: DictConfig, stage: str, run_id: Optional[str] = None, run_config: Optional[Dict[str, Any]] = None):
     wb_config = WandbConfig.from_hydra_config(cfg)
     # Cross-stage resume: when cfg.wandb.single_run is true, derive a
     # stable id from (WANDB_GROUP, dagspace, model) so every stage
     # (and the finalize pipeline that runs later, in async mode)
     # reattaches to one resumed run instead of forking N runs.
-    pipeline_id = pipeline_run_id(cfg, dagspace="privacylens")
+    pipeline_id = pipeline_run_id(cfg, dagspace=_perturb_qualified_dagspace(cfg))
     if wb_config.enabled:
         return WandbLogger(
             cfg, stage=stage, run_id=run_id, run_config=run_config,

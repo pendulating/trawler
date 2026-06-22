@@ -9,6 +9,7 @@ hydra:
   launcher:
     array_parallelism: 2
     setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
       - export HYDRA_FULL_ERROR=1
       - source ~/.bashrc
       - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
@@ -28,13 +29,12 @@ hydra:
       model: >-
         gemma-3-12b/it,
         gemma-3-12b/it-sft-ci,
-        gpt-oss-20b/base,
+        gpt-oss-20b/instruct,
         gpt-oss-20b/sft-ci,
         llama3.1-8b/instruct,
-        openthinker3-7b/base,
+        openthinker3-7b/instruct,
         openthinker3-7b/sft-ci,
-        phi-4/base,
-        phi-4/sft-ci,
-        qwen3.5-2b/sft-ci,
-        qwen3.5-4b/sft-ci
+        phi-4/instruct,
+        phi-4/sft-ci
+        
 

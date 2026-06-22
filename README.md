@@ -232,4 +232,4 @@ $R_\text{ground}$ uses **per-completion contrastive scoring**: each completion i
 
 ## License
 
-MIT. Vendored `toolemu` code (in `dagspaces/cirl_vignettes/toolemu/`) is Apache 2.0, from [CI-RL](https://github.com/EricGLan/CI-RL).
+MIT. Vendored `toolemu` code (in `dagspaces/common/toolemu/`) is Apache 2.0, from [CI-RL](https://github.com/EricGLan/CI-RL).

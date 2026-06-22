@@ -3,7 +3,12 @@ model:
   model_source: /share/pierson/matt/zoo/models/OpenThinker3-7B
   model_family: qwen3
   chat_template_kwargs:
-    enable_thinking: false
+    # OpenThinker3 is a Qwen3 reasoning model. Suppressing its think phase
+    # (enable_thinking=false) made it degenerate into `</think></think>...`
+    # loops on confaide (2026-05-27 sweep: 86/270 rows looped). Let it think
+    # normally — the qwen3 reasoning parser strips the <think> block and the
+    # answer survives in generated_text.
+    enable_thinking: true
   engine_kwargs:
     max_model_len: 8192
     max_num_seqs: 32

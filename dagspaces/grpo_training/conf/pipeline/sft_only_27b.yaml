@@ -13,7 +13,7 @@ defaults:
   - override /hydra/launcher: slurm_monitor
 
 pipeline:
-  output_root: ${hydra:run.dir}/sft_only_27b
+  output_root: ${hydra:runtime.output_dir}/sft_only_27b
 
   sources:
     ci_reasoning:

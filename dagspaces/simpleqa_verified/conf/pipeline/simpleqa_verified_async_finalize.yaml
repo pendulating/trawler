@@ -1,0 +1,32 @@
+# @package _global_
+#
+# Async finalize half: reads pending.parquet + items.parquet +
+# output.jsonl from the export pipeline's output dir, joins on
+# custom_id, parses each grade (A/B/C), runs compute_metrics, and emits
+# metrics.{json,parquet} + verdicts.parquet.
+#
+# Invoke against the SAME hydra.run.dir the async export wrote to so
+# the output_root resolves to <run_dir>/simpleqa_verified.
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+judge:
+  mode: async
+
+wandb:
+  phase: finalize
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/simpleqa_verified
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      finalize:
+        stage: finalize_async
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/compute_metrics/metrics.parquet
+          metrics_json: outputs/compute_metrics/metrics.json

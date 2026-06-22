@@ -389,7 +389,11 @@ def r_context(
     context from the source's normative universe (max cosine similarity).
     Return the mean of per-flow best-match similarities.
 
-    For no-flow completions: 0.0 (no contexts extracted = nothing to score).
+    For no-flow completions: gold-aware, mirroring r_complete's convention
+    (0.9 if gold agrees there are no flows — no context to identify; 0.0 if
+    gold says flows exist; 0.4 if unknown). An unconditional 0.0 punished
+    correct no-flow declarations on a discriminative component, contradicting
+    the other components' treatment of the same completion.
 
     Args:
         completion: Model completion text.
@@ -398,8 +402,7 @@ def r_context(
         source_context_strings: List of norm-level context strings for
             token-overlap fallback.
         embedding_model: SentenceTransformer for encoding model contexts.
-        gold_has_exchange: Gold label for this prompt (used by other
-            components; not used here — no contexts means no score).
+        gold_has_exchange: Gold label for this prompt.
         is_no_flow: Whether this completion declared no information flows.
     """
     parsed = _parse_completion(completion)
@@ -408,7 +411,15 @@ def r_context(
 
     extractions = parsed.get("extraction", [])
     if not isinstance(extractions, list) or len(extractions) == 0:
-        # No-flow or empty extraction: nothing to score.
+        reasoning = parsed.get("reasoning", {})
+        has_exchange = reasoning.get("has_information_exchange") if isinstance(reasoning, dict) else None
+        if is_no_flow or has_exchange is False:
+            if gold_has_exchange is True:
+                return 0.0   # Missed all flows — missed their contexts too
+            elif gold_has_exchange is False:
+                return 0.9   # Nothing to identify — near-perfect
+            else:
+                return 0.4   # Unknown
         return 0.0
 
     model_contexts = []
@@ -679,13 +690,35 @@ class CompositeRewardFunction:
         prompt_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
         trace_log_path: Optional[str] = None,
         trace_every_n_calls: int = 50,
+        trace_max_bytes: int = 256 * 1024 * 1024,
         online_rground: Optional[Any] = None,
         no_flow_scoring: str = "independent",
         judgment_weights: Optional[Sequence[float]] = None,
+        composition: str = "additive",
+        abstention_penalty: float = 0.0,
     ):
         if len(weights) != 6:
             raise ValueError(f"Expected 6 reward weights, got {len(weights)}")
+        if composition not in ("additive", "gated"):
+            raise ValueError(f"Unknown reward composition: {composition!r}")
+        if abstention_penalty < 0.0:
+            raise ValueError(
+                f"abstention_penalty must be >= 0, got {abstention_penalty}")
         self.weights = list(weights)
+        self.composition = composition
+        # Flat post-composition penalty subtracted from a completion that
+        # declares no information flow when the gold label says one exists
+        # (is_no_flow and gold_has_exchange is True). The 2026-06-10 full run
+        # over-abstained (no-flow rate 0.67 vs gold-implied 0.40) and GRPO did
+        # not correct it: abstention-on-gold-flow already scored a low ~0.026,
+        # but with scale_rewards="none" (Dr. GRPO, no group-std division) the
+        # absolute advantage gap is the learning signal, and ~0.026-vs-extract
+        # was too shallow. Pushing abstention below zero deepens the gap in the
+        # ~90% of gold-flow groups that are mixed (some abstain, some extract);
+        # it cannot help the ~9% all-abstain groups (centering cancels a
+        # constant). Penalty NEVER fires on correct abstention (gold_has_exchange
+        # False/None). Default 0.0 = disabled (legacy behavior).
+        self.abstention_penalty = float(abstention_penalty)
         self.no_flow_scoring = no_flow_scoring
         self.judgment_weights = list(judgment_weights) if judgment_weights else [0.5, 0.25, 0.25]
         self.norm_universes = norm_universes or {}
@@ -701,6 +734,8 @@ class CompositeRewardFunction:
         self._call_count = 0
         self._trace_every = trace_every_n_calls
         self._trace_path = trace_log_path
+        self._trace_max_bytes = trace_max_bytes
+        self._trace_writes = 0
         self._component_names = [
             "r_uncert", "r_complete", "r_consist",
             "r_context", "r_cohere", "r_ground",
@@ -729,6 +764,44 @@ class CompositeRewardFunction:
             print(f"[rewards] Pre-computed context embeddings: "
                   f"{len(self._source_context_embeddings)} sources, "
                   f"{n_cached} total contexts")
+
+    def _is_unjustified_abstention(
+        self, is_no_flow: bool, gold_has_exchange: Optional[bool]
+    ) -> bool:
+        """Whether the abstention penalty applies to this completion.
+
+        Fires only when the penalty is enabled, the completion declared no
+        flow, AND the gold label says a flow exists. Correct abstention
+        (gold_has_exchange False) and unknown gold (None) are never penalized.
+        """
+        return (
+            self.abstention_penalty > 0.0
+            and bool(is_no_flow)
+            and gold_has_exchange is True
+        )
+
+    def _combine(self, components: List[float]) -> float:
+        """Combine the 6 component scores into the composite reward.
+
+        "additive": R = sum(w_i * R_i) — the original formulation. The
+        gating components (saturated post-SFT) contribute a near-constant
+        offset that dilutes the discriminative signal.
+
+        "gated": R = gate * disc, where gate is the weight-normalized mean
+        of the gating components (r_uncert, r_complete, r_consist) and disc
+        the weight-normalized mean of the discriminative components
+        (r_context, r_cohere, r_ground). Format compliance scales the
+        discriminative signal instead of adding to it, so a malformed
+        completion can't bank partial credit and a well-formed one is
+        ranked purely by the discriminative components.
+        """
+        if self.composition == "gated":
+            gate_w = self.weights[:3]
+            disc_w = self.weights[3:]
+            gate = sum(w * c for w, c in zip(gate_w, components[:3])) / (sum(gate_w) or 1.0)
+            disc = sum(w * c for w, c in zip(disc_w, components[3:])) / (sum(disc_w) or 1.0)
+            return gate * disc
+        return sum(w * c for w, c in zip(self.weights, components))
 
     @staticmethod
     def _extract_text(completion) -> str:
@@ -771,6 +844,34 @@ class CompositeRewardFunction:
             with open(self._trace_path, "a", encoding="utf-8") as f:
                 for entry in entries:
                     f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+            self._maybe_truncate_trace()
+        except Exception:
+            pass
+
+    def _maybe_truncate_trace(self) -> None:
+        """Keep reward_traces.jsonl bounded (2026-06-09 logging review).
+
+        The promotion gates only read the most recent calls; with
+        trace_every=1 a long run grows the file without bound. When the
+        file exceeds ``_trace_max_bytes``, keep the newest half (whole
+        lines). Size is checked every 100 writes so the cost stays
+        negligible.
+        """
+        self._trace_writes += 1
+        if self._trace_writes % 100:
+            return
+        try:
+            if os.path.getsize(self._trace_path) <= self._trace_max_bytes:
+                return
+            keep = self._trace_max_bytes // 2
+            with open(self._trace_path, "rb") as f:
+                f.seek(-keep, os.SEEK_END)
+                tail = f.read()
+            tail = tail[tail.index(b"\n") + 1:]  # drop the partial first line
+            with open(self._trace_path, "wb") as f:
+                f.write(tail)
+            print(f"[rewards] reward_traces.jsonl exceeded "
+                  f"{self._trace_max_bytes} bytes — truncated to newest half")
         except Exception:
             pass
 
@@ -942,7 +1043,14 @@ class CompositeRewardFunction:
                 continue
 
             components = partial_components[i] + [rground_scores[i]]
-            r = sum(w * c for w, c in zip(self.weights, components))
+            r = self._combine(components)
+            # Unjustified-abstention penalty: the model declared no flow but
+            # gold says one exists. Subtract a flat amount post-composition so
+            # the advantage gap toward extraction deepens (see __init__ note).
+            _abstained_wrongly = self._is_unjustified_abstention(
+                is_no_flow[i], meta.get("gold_has_exchange"))
+            if _abstained_wrongly:
+                r -= self.abstention_penalty
             scores.append(r)
 
             if do_trace and i < 8:
@@ -968,6 +1076,8 @@ class CompositeRewardFunction:
                         for name, w, val in zip(self._component_names, self.weights, components)
                     },
                     "composite": round(r, 4),
+                    "abstention_penalized": bool(_abstained_wrongly),
+                    "composition": self.composition,
                     "enable_thinking_grpo": self.enable_thinking_grpo,
                     "rground_mode": "online" if self.online_rground is not None else "cached",
                 }

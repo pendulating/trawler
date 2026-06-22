@@ -15,6 +15,16 @@ runtime:
 prompt:
   tier: "2a"
 
+# Per-benchmark sanity calibration. ConfAIde tier3_control is
+# single-class by design (all answers are "No"); tier2 Likert ratings
+# are legitimately skewed when the model peaks on one value; tier3_free
+# / 3_info / 3_sharing have privacy-preserving classes that can be
+# ~0%. Without these overrides the default class_balance_min:lt=0.05
+# fires on every tier and drowns real signal.
+sanity:
+  thresholds:
+    class_balance_min:lt: 0.001
+
 sampling_params:
   seed: 42
   temperature: 0.0

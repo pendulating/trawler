@@ -28,6 +28,14 @@ sample_fraction: null
 # Include has_information_exchange=False chunks as negative SFT examples
 include_negative_examples: true
 
+# Which gold=False chunks to use as negatives:
+#   all         — any has_information_exchange=False chunk (legacy)
+#   contentless — only genuinely flow-free chunks (drop has-exchange-but-no-norm
+#                 chunks, which taught the v2-v5 over-abstention prior). See
+#                 sft_data_prep._is_contentless_chunk and
+#                 scripts/proto_contentless_classifier.py.
+negative_selection: all
+
 # Per-flow field ablation toggles (SFT instruction-format ablation).
 # Each toggle drops the corresponding fields from BOTH the assistant JSON and
 # the user-side instruction prose. Base 5-tuple (sender, recipient, subject,

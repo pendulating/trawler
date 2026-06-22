@@ -377,24 +377,28 @@ class JudgeClient:
             Manifest dict with ``path``, ``count``, ``model``, ``provider``,
             ``endpoint``, ``schema_name`` (if applicable), and ``bytes``.
         """
-        if self.provider == "vllm":
-            raise ValueError(
-                "export_batch_jsonl() is incompatible with provider='vllm'. "
-                "The OpenAI Batch API is a commercial-only feature. "
-                "Set judge.mode=live for vLLM judging, or point judge.base_url "
-                "at an OpenAI-compatible commercial endpoint."
-            )
-        if self.provider != "openai":
+        # The JSONL shape is OpenAI-compat, which both vLLM (consumed by
+        # the async-mode judge sidecar) and OpenAI's Batch API speak. We
+        # used to refuse provider=vllm here, which forced async-mode
+        # exports to fake provider=openai and put OpenAI-only model
+        # names like ``gpt-5.2`` into ``body.model`` — vLLM then 404'd
+        # every line. Now we allow vllm explicitly; the only thing we
+        # still refuse is non-vllm/non-openai providers (anthropic /
+        # gemini) which would need their own batch endpoints.
+        if self.provider not in ("openai", "vllm"):
             print(
                 f"[judge_client] WARN: export_batch_jsonl called with provider="
                 f"{self.provider!r}; the emitted JSONL follows the OpenAI Batch "
-                f"shape and is only directly consumable by OpenAI's /v1/batches.",
+                f"shape. Make sure your downstream consumer (Batch API or "
+                f"async-judge sidecar) speaks it.",
                 flush=True,
             )
         if not self.model_name or self.model_name == "default":
             raise ValueError(
-                "export_batch_jsonl() requires an explicit judge.model_name "
-                "(e.g. 'gpt-4o-mini'). 'default' auto-detection is vLLM-only."
+                "export_batch_jsonl() requires an explicit model_name. "
+                "For vLLM async mode, resolve via dagspaces.common.judge_export "
+                "(probes /v1/models). For OpenAI batch_export mode, set "
+                "judge.batch.target_model explicitly (e.g. 'gpt-4o-mini')."
             )
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)

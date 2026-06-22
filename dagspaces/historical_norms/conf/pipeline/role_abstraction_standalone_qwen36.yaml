@@ -1,0 +1,68 @@
+# @package _global_
+# Standalone Role Abstraction Pipeline (scaled, qwen3.6).
+#
+# Variant of role_abstraction_standalone that pins the model to
+# qwen3.6-27b/instruct and runs on 4 GPUs with DP=2/TP=2. Reads the
+# extraction parquet produced by COLM_norms_fiction_prefetched_qwen36
+# (or the 2-GPU sibling). Rewrites character-specific norms into
+# functional social roles.
+#
+# Note: this stage is small (~2k max_tokens, filtered input) and
+# completes in ~2h on 100 novels — 4 GPUs is overprovisioning. The
+# 2-GPU sibling `role_abstraction_standalone` runs fine if GPU budget
+# is tight; this variant exists for model consistency across the
+# norms/flows/role_abstraction stack.
+#
+# Usage:
+#   EXTRACTION_PARQUET=/path/to/structured_norms.parquet \
+#     python -m dagspaces.historical_norms.cli \
+#       pipeline=role_abstraction_standalone_qwen36
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# NOTE: this pipeline assumes `model=qwen3.6-27b/instruct` is passed on the
+# CLI (see comment in COLM_norms_fiction_prefetched_qwen36.yaml).
+
+# Prompt for the role abstraction stage
+prompt_role_abstraction: ${prompt_role_abstraction}
+
+# Path to the extraction parquet to abstract. EXTRACTION_PARQUET is required —
+# OmegaConf eagerly resolves resolver-default interpolations, so a `${data.parquet_path}`
+# fallback would crash when the default data config (pride_and_prejudice) lacks that key.
+extraction_input: ${oc.env:EXTRACTION_PARQUET}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/role_abstraction_standalone_qwen36
+  allow_partial: false
+
+  sources:
+    extraction_output:
+      path: ${extraction_input}
+      type: parquet
+
+  graph:
+    nodes:
+      # ============================================================
+      # Stage 1 (only): Role Abstraction
+      # ============================================================
+      role_abstraction:
+        stage: norm_role_abstraction
+        depends_on: []
+        inputs:
+          dataset: extraction_output
+        outputs:
+          dataset: outputs/role_abstraction/abstracted_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 2048
+          model.engine_kwargs.data_parallel_size: 2
+          model.engine_kwargs.tensor_parallel_size: 2
+        launcher: slurm_gpu_4x
+        wandb_suffix: role_abstraction

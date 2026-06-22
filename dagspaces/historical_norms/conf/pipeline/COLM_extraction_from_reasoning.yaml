@@ -17,7 +17,7 @@ runtime:
   sample_n: null
 
 pipeline:
-  output_root: ${hydra:run.dir}/COLM_norms_fiction
+  output_root: ${hydra:runtime.output_dir}/COLM_norms_fiction
   allow_partial: false
 
   sources:

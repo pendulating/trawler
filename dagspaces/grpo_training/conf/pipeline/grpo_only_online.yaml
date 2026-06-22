@@ -13,7 +13,7 @@ defaults:
   - override /hydra/launcher: slurm_monitor
 
 pipeline:
-  output_root: ${hydra:run.dir}/grpo_only_online
+  output_root: ${hydra:runtime.output_dir}/grpo_only_online
 
   sources:
     sft_checkpoint:

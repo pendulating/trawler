@@ -1,0 +1,10 @@
+# @package _global_
+#
+# Run BOTH capability controls (SimpleQA-Verified + MMLU) and nothing
+# else. Useful for the "did fine-tuning break baseline capability?"
+# sanity sweep that runs alongside (but separately from) the CI sweep.
+benchmark_filter:
+  include:
+    - simpleqa_verified
+    - mmlu
+  exclude: []

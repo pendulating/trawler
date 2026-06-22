@@ -29,7 +29,7 @@ runtime:
   sample_n: null
 
 pipeline:
-  output_root: ${hydra:run.dir}/role_abstraction_standalone
+  output_root: ${hydra:runtime.output_dir}/role_abstraction_standalone
   allow_partial: false
 
   sources:

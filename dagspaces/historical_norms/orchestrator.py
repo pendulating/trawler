@@ -194,6 +194,17 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
                                 prefer_cols.append(extra)
                     
                     _safe_log_table(logger, df_out, f"{node.stage}/results", prefer_cols=prefer_cols)
+
+                    # Quality scalars (data_quality/*): parse-error rates,
+                    # label distributions, chunk-length stats — auditable
+                    # from the W&B run page without opening the table.
+                    try:
+                        from .stage_metrics import compute_stage_quality_metrics
+                        quality = compute_stage_quality_metrics(node.stage, df_out)
+                        if quality:
+                            logger.log_metrics(quality)
+                    except Exception as qe:
+                        print(f"Warning: failed to log quality metrics for {node.key}: {qe}", flush=True)
                 except Exception as e:
                     print(f"Warning: Failed to log output table for {node.key}: {e}", flush=True)
 
@@ -223,6 +234,19 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def run_experiment(cfg: DictConfig) -> None:
+    # One human-readable W&B group per pipeline invocation; stage jobs
+    # inherit it via the WANDB_GROUP export below. Without this, each
+    # SLURM job falls back to its own opaque slurm-<jobid> group and the
+    # pipeline's runs never cluster in the UI.
+    try:
+        from omegaconf import OmegaConf, open_dict
+        if not str(OmegaConf.select(cfg, "wandb.group", default="") or "").strip() \
+                and not os.environ.get("WANDB_GROUP"):
+            _exp = str(OmegaConf.select(cfg, "experiment.name", default="") or "pipeline")
+            with open_dict(cfg):
+                cfg.wandb.group = f"{_exp}-{time.strftime('%Y%m%d-%H%M%S')}"
+    except Exception:
+        pass
     # Execute entire pipeline with wandb logging context
     with _get_wandb_logger(cfg, stage="orchestrator", run_id="monitor", run_config={"type": "pipeline"}) as logger:
         try:

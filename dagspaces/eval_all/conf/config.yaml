@@ -11,6 +11,19 @@ runtime:
   skip_vlm: false
   job_memory_gb: 64    # used by GPU launchers (via ${runtime.job_memory_gb})
 
+# Meta whitelist/blacklist for benchmarks. Empty lists = no filter (every
+# enabled benchmark runs). When `include` is non-empty it acts as a
+# whitelist and `exclude` is ignored. `enabled=false` on a benchmark
+# always wins, so a Hydra config group like
+# `+benchmark_filter=factuality_only` can't accidentally turn on a
+# benchmark the operator has explicitly disabled at the CLI.
+#
+# Named reusable filters live in conf/benchmark_filter/; invoke via
+# `+benchmark_filter=<name>` (e.g. factuality_only, ci_only).
+benchmark_filter:
+  include: []
+  exclude: []
+
 # Shared vLLM server across all benchmarks. When enabled, eval_all launches
 # one long-lived SLURM GPU job that hosts the model via vllm's
 # OpenAI-compatible server; each benchmark subprocess inherits

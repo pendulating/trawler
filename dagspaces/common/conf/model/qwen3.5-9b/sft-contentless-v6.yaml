@@ -1,0 +1,24 @@
+# @package _global_
+# v6 SFT: same recipe as sft-ci (qwen3.5-9b/instruct base, lr2e-5/3ep/LoRA r64a128,
+# all flow_* on) but with negatives curated to genuinely-contentless chunks
+# (training.sft.negative_selection=contentless) — softens the over-abstention
+# prior that gold=False (prescriptive-norm) negatives installed. This is the
+# base v6 GRPO trains on top of (model=qwen3.5-9b/sft-contentless-v6).
+# Source run: multirun/2026-06-19_sft_contentless_v6/17-40-37/
+model:
+  model_source: /share/pierson/matt/zoo/models/Qwen3.5-9B
+  model_family: qwen3.5
+  lora_path: /share/pierson/matt/UAIR/multirun/2026-06-19_sft_contentless_v6/17-40-37/sft_only/outputs/sft/checkpoint
+  thinking_mode: off
+  chat_template_kwargs:
+    enable_thinking: false
+  engine_kwargs:
+    max_model_len: 16384
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    enforce_eager: true
+    enable_lora: true
+    max_lora_rank: 64
+  batch_size: 0
+  concurrency: 1

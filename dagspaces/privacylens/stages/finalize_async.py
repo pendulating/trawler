@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from dagspaces.common.batch_api import extract_content, load_jsonl
+from dagspaces.common.batch_api import classify_response_line, load_jsonl
 
 
 # ---------------------------------------------------------------------------
@@ -36,14 +36,22 @@ QA_RESULTS_PATH = "outputs/qa_probe_inference/results.parquet"
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _load_responses(output_jsonl: str) -> Dict[str, str]:
-    """Return ``{custom_id: assistant_content}`` for every JSONL line."""
-    out: Dict[str, str] = {}
+def _load_classified_responses(output_jsonl: str) -> Dict[str, Dict[str, Any]]:
+    """Return ``{custom_id: classification}`` for every JSONL line.
+
+    Each classification is the dict returned by
+    :func:`dagspaces.common.batch_api.classify_response_line`. Callers
+    inspect the ``ok`` flag to demote error rows to ``_judged=False``
+    rather than handing the JSON-encoded error string to the row-level
+    parser (which would silently default leakage→False / score→0 with
+    ``_judged=True`` and corrupt the resulting metric).
+    """
+    out: Dict[str, Dict[str, Any]] = {}
     for line in load_jsonl(output_jsonl):
         cid = line.get("custom_id")
         if not cid:
             continue
-        out[cid] = extract_content(line)
+        out[cid] = classify_response_line(line)
     return out
 
 
@@ -65,9 +73,14 @@ def _finalize_leakage(
     """OR-aggregate per-secret judge responses into a row-level parquet.
 
     Mirrors ``scripts/privacylens_batch_finalize.py::_finalize_leakage``.
-    Returns the parsed DataFrame (with ``leak_judge_text`` filled and
-    ``parse_responses.parse_leakage_responses`` applied) plus a metadata
-    dict describing the merge.
+    Returns the parsed DataFrame plus a metadata dict.
+
+    Error-handling: per-secret judge responses with a non-2xx HTTP error
+    or a top-level ``error`` field (sidecar exhausted-retries, server
+    404, etc.) are classified and the affected rows have
+    ``leakage_judged=False`` + ``leakage_skip_reason="judge_api_error"``
+    stamped, so downstream metrics treat them as *defaulted* with
+    explicit provenance instead of silently as non-leaking-with-judge=True.
     """
     from .parse_responses import parse_leakage_responses
 
@@ -85,12 +98,37 @@ def _finalize_leakage(
 
     df = pd.read_parquet(pending_path)
     items_df = pd.read_parquet(items_path)
-    responses = _load_responses(output_jsonl)
+    classified = _load_classified_responses(output_jsonl)
 
-    items_df["yes"] = (
-        items_df["judge_custom_id"].map(responses).fillna("").apply(_row_yes)
+    items_df["judge_ok"] = items_df["judge_custom_id"].map(
+        lambda cid: bool((classified.get(cid) or {}).get("ok", False))
+    )
+    items_df["judge_content"] = items_df["judge_custom_id"].map(
+        lambda cid: str((classified.get(cid) or {}).get("content", "") or "")
+    )
+    items_df["judge_error_kind"] = items_df["judge_custom_id"].map(
+        lambda cid: (classified.get(cid) or {}).get("error_kind")
+    )
+    items_df["yes"] = items_df.apply(
+        lambda r: _row_yes(r["judge_content"]) if bool(r["judge_ok"]) else False,
+        axis=1,
     )
     per_row_any = items_df.groupby("row_idx")["yes"].any().to_dict()
+
+    # A row is considered judge-errored iff every fanout item for that
+    # row failed. Mixed-success rows still yield a defensible OR result
+    # (one successful "Yes" still flags leakage).
+    errors_per_row = (
+        items_df.assign(_err=~items_df["judge_ok"].astype(bool))
+        .groupby("row_idx")["_err"]
+        .all()
+        .to_dict()
+    )
+    successes_per_row = (
+        items_df.groupby("row_idx")["judge_ok"]
+        .any()
+        .to_dict()
+    )
 
     leak_judge_text = [
         "Answer: Yes." if per_row_any.get(idx, False) else "Answer: No."
@@ -98,14 +136,40 @@ def _finalize_leakage(
     ]
     df = df.copy()
     df["leak_judge_text"] = leak_judge_text
+
+    # Demote rows where every per-secret call errored. We respect
+    # *upstream* skips (no Action: format) too: an upstream-skipped row
+    # has no items in items_df, and its leakage_judged is already False
+    # from the export stage; we don't want to flip its skip_reason.
+    if "leakage_judged" not in df.columns:
+        df["leakage_judged"] = True
+    if "leakage_skip_reason" not in df.columns:
+        df["leakage_skip_reason"] = ""
+    n_judge_errors = 0
+    for idx in df.index:
+        # Untouched rows (no fanout) → leave the upstream stamp alone.
+        if idx not in successes_per_row and idx not in errors_per_row:
+            continue
+        # Mixed or full success → judged.
+        if successes_per_row.get(idx, False):
+            continue
+        # Every fanout item errored → demote.
+        if errors_per_row.get(idx, False):
+            df.at[idx, "leakage_judged"] = False
+            df.at[idx, "leakage_skip_reason"] = "judge_api_error"
+            n_judge_errors += 1
+
     parsed = parse_leakage_responses(df)
 
     n_leak = int(sum(per_row_any.values()))
+    n_response_errors = int((~items_df["judge_ok"].astype(bool)).sum())
     metadata = {
         "rows": len(parsed),
-        "responses": len(responses),
+        "responses": len(classified),
         "items": len(items_df),
         "leaking_rows": n_leak,
+        "n_response_errors": n_response_errors,
+        "n_rows_judge_api_error": n_judge_errors,
     }
     return parsed, metadata
 
@@ -113,7 +177,16 @@ def _finalize_leakage(
 def _finalize_helpfulness(
     base_dir: str,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
-    """One judge response per row; substring-parsed by parse_helpfulness."""
+    """One judge response per row; substring-parsed by parse_helpfulness.
+
+    Error-handling: rows whose response line carries an error (sidecar
+    HTTP failure, vLLM 404, etc.) are demoted to ``helpfulness_judged=False``
+    with ``helpfulness_skip_reason="judge_api_error"``. Those rows pass
+    through ``parse_helpfulness_responses`` with an empty
+    ``helpfulness_judge_text`` so the parser produces score=0 — but
+    because ``helpfulness_judged=False``, downstream metrics treat them
+    as defaulted instead of judged-zero.
+    """
     from .parse_responses import parse_helpfulness_responses
 
     pending_path = os.path.join(base_dir, "pending.parquet")
@@ -127,32 +200,59 @@ def _finalize_helpfulness(
             )
 
     df = pd.read_parquet(pending_path)
-    responses = _load_responses(output_jsonl)
+    classified = _load_classified_responses(output_jsonl)
 
     cid_to_row: Dict[str, int] = {}
     if os.path.exists(items_path):
         items_df = pd.read_parquet(items_path)
         cid_to_row = dict(zip(items_df["judge_custom_id"], items_df["row_idx"]))
 
-    per_row: Dict[int, str] = {}
-    for cid, content in responses.items():
+    per_row_content: Dict[int, str] = {}
+    per_row_ok: Dict[int, bool] = {}
+    n_response_errors = 0
+    for cid, info in classified.items():
         row_idx = cid_to_row.get(cid)
         if row_idx is None and cid.startswith("privacylens:helpfulness_judge:"):
             try:
                 row_idx = int(cid.rsplit(":", 1)[-1])
             except ValueError:
                 continue
-        if row_idx is not None:
-            per_row[row_idx] = content
+        if row_idx is None:
+            continue
+        if not info.get("ok", False):
+            n_response_errors += 1
+            per_row_content[row_idx] = ""
+            per_row_ok[row_idx] = False
+        else:
+            per_row_content[row_idx] = str(info.get("content", "") or "")
+            per_row_ok[row_idx] = True
 
     df = df.copy()
     df["helpfulness_judge_text"] = [
-        per_row.get(idx, "Answer: Poor (0).") for idx in df.index
+        per_row_content.get(idx, "Answer: Poor (0).") for idx in df.index
     ]
+
+    if "helpfulness_judged" not in df.columns:
+        df["helpfulness_judged"] = True
+    if "helpfulness_skip_reason" not in df.columns:
+        df["helpfulness_skip_reason"] = ""
+    n_judge_errors = 0
+    for idx in df.index:
+        # Skip upstream-skipped rows (no entry in per_row_ok and the
+        # export stage already stamped helpfulness_judged=False).
+        if idx not in per_row_ok:
+            continue
+        if not per_row_ok[idx]:
+            df.at[idx, "helpfulness_judged"] = False
+            df.at[idx, "helpfulness_skip_reason"] = "judge_api_error"
+            n_judge_errors += 1
+
     parsed = parse_helpfulness_responses(df)
     metadata = {
         "rows": len(parsed),
-        "responses": len(responses),
+        "responses": len(classified),
+        "n_response_errors": n_response_errors,
+        "n_rows_judge_api_error": n_judge_errors,
     }
     return parsed, metadata
 

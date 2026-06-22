@@ -22,10 +22,14 @@ runtime:
 judge_server_url: ${oc.env:JUDGE_SERVER_URL,""}   # legacy alias; prefer judge.base_url below
 
 judge:
-  mode: live                       # live | batch_export (use pipeline=privacylens_clean_batch)
-  # Live-mode config (ignored when mode=batch_export — the export stage
-  # does not contact any API at all and only needs judge.batch.* below).
-  base_url: ${judge_server_url}    # overridable independently
+  mode: live                       # live | async | batch_export
+  # Live/async-mode config: read from $JUDGE_SERVER_URL. Async mode
+  # also routes through this URL (the sidecar forwards requests.jsonl
+  # to it). The previous interpolation `${judge_server_url}` only
+  # worked when this top-level alias was defined and resolvable; the
+  # explicit oc.env fallback below means the URL is always either a
+  # real URL or empty (which fails fast in judge_export).
+  base_url: ${oc.env:JUDGE_SERVER_URL,""}
   model_name: default              # vLLM: auto-detects; commercial: set explicitly
   provider: null                   # null = auto-detect | vllm | openai | anthropic | gemini | openai_compatible
   api_key: null                    # or use api_key_env
@@ -35,7 +39,11 @@ judge:
   max_tokens: 1024                 # shared with batch-export (body.max_tokens)
   batch:
     # Batch-export-mode config. Only consulted when mode=batch_export.
-    target_model: gpt-5.2           # model name written into each JSONL body.model
+    # Async mode IGNORES this — body.model is resolved from the live
+    # judge server's /v1/models via dagspaces.common.judge_export.
+    # Required (no default) so a typo can't silently corrupt a billable
+    # batch run; spell out the OpenAI model you want billed.
+    target_model: null             # e.g. gpt-5, gpt-4o-mini
     target_endpoint: /v1/chat/completions
     output_jsonl: null             # ingest override; default picks up output.jsonl next to pending.parquet
 
@@ -45,6 +53,16 @@ sampling_params:
   top_p: 1.0
   top_k: -1
   max_tokens: 2048
+
+# Per-benchmark sanity calibration. PrivacyLens QA seeds are
+# 98.6% "no" by design (every seed is a privacy violation). The
+# default class_balance_min:lt=0.05 fires on every run; lower it to
+# silence noise on the by-design skew while still flagging total
+# degeneracy. Format-adherence (the trust gate) keeps its strict
+# default of FAIL <0.9.
+sanity:
+  thresholds:
+    class_balance_min:lt: 0.005
 
 wandb:
   enabled: true

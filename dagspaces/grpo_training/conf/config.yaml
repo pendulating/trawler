@@ -5,6 +5,7 @@ defaults:
   - training/sft: default
   - training/grpo: colocate_1gpu_prod
   - prompt@prompt_reward_judge: reward_judge
+  - prompt@prompt_reward_judge_ranking: reward_judge_ranking
   - prompt@prompt_no_flow_judge: no_flow_judge
   - prompt@prompt_norm_judgment: norm_judgment
   - prompt@prompt_ci_extraction: ci_extraction
@@ -23,12 +24,14 @@ runtime:
 embedding_model:
   model_source: ${oc.env:EMBEDDING_MODEL_PATH,/share/pierson/matt/zoo/models/Qwen3-Embedding-8B}
 
-# Judge model for R_ground reward prep
+# Judge model for R_ground reward prep.
+# model_source doubles as the `model` field in OpenAI-style API calls to
+# the external judge server (klara:8002), so it MUST match the served name.
+# Qwen3.6-27B is the COLM-paper canonical judge — see CONGRUENCE.md #1.
 judge_model:
-  model_source: ${oc.env:JUDGE_MODEL_PATH,/share/pierson/matt/zoo/models/Qwen3-32B-AWQ}
+  model_source: ${oc.env:JUDGE_MODEL_PATH,/share/pierson/matt/zoo/models/Qwen3.6-27B}
   engine_kwargs:
-    tensor_parallel_size: 1
-    quantization: awq
+    tensor_parallel_size: 2
     max_model_len: 16384
     max_num_batched_tokens: 16384
     max_num_seqs: 64

@@ -1,0 +1,14 @@
+# @package _global_
+#
+# Run ONLY the MMLU multitask knowledge probe. Use to spot-check that
+# CI fine-tuning hasn't crater'd baseline subject knowledge without
+# spending the full CI sweep budget.
+#
+# Note: per-benchmark `enabled: false` still wins. Pair with explicit
+# `benchmarks.mmlu.enabled=true` at the CLI, or flip it in
+# all_benchmarks.yaml first. For factuality+knowledge together, list
+# both in include= at the CLI.
+benchmark_filter:
+  include:
+    - mmlu
+  exclude: []

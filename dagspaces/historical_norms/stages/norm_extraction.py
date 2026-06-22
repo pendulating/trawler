@@ -23,13 +23,8 @@ _RAZ_COLUMNS = [
 
 # ---------------------------------------------------------------------------
 # Post-hoc norm quality validation
+# (title-pattern + NER detection lives in ..name_detection)
 # ---------------------------------------------------------------------------
-
-# Pattern: "Mr./Mrs./Miss/Lady/Sir/Lord/Colonel/Rev. + ProperNoun"
-_TITLE_PATTERN = re.compile(
-    r"\b(?:Mr\.|Mrs\.|Miss|Ms\.|Lady|Lord|Sir|Reverend|Rev\.|Colonel|Col\.)"
-    r"\s+[A-Z][a-z]+",
-)
 
 
 def _get_character_blocklist(cfg: Any) -> set[str]:
@@ -102,47 +97,29 @@ def _get_character_blocklist(cfg: Any) -> set[str]:
     }
 
 
-def _validate_norm_quality(flat: Dict[str, Any],
-                           blocklist: set[str]) -> Dict[str, Any]:
+def _validate_norm_quality(flat: Dict[str, Any], detector) -> Dict[str, Any]:
     """Flag norms that contain named characters or plot-specific details.
+
+    Detection is layered (see ``..name_detection.PersonNameDetector``):
+    blocklist (word-boundary matched, so "pearl" never fires inside
+    "a pearl of great price"), titled-name regex, and spaCy PERSON NER —
+    the NER layer is what scales QA beyond the hand-listed 10-novel corpus.
 
     Adds two columns:
       - norm_quality_flags: semicolon-separated list of issues (or None)
       - norm_quality_passed: bool
     Does NOT drop any rows — downstream consumers decide filtering policy.
     """
-    subject = (flat.get("raz_norm_subject") or "").lower()
-    act = (flat.get("raz_norm_act") or "").lower()
-    condition = (flat.get("raz_condition_of_application") or "").lower()
-    articulation = (flat.get("raz_norm_articulation") or "").lower()
-
     flags: list[str] = []
-
-    # Check for named characters in each Raz component.
-    # Use word-boundary matching to avoid substring false positives
-    # (e.g., "pearl" matching in "a pearl of great price").
-    for name in blocklist:
-        pattern = re.compile(r"\b" + re.escape(name) + r"\b")
-        if pattern.search(subject):
-            flags.append(f"named_char_in_subject:{name}")
-        if pattern.search(act):
-            flags.append(f"named_char_in_act:{name}")
-        if pattern.search(condition):
-            flags.append(f"named_char_in_condition:{name}")
-        if pattern.search(articulation):
-            flags.append(f"named_char_in_articulation:{name}")
-
-    # Check for titled names (Mr./Mrs./Miss/etc. + ProperNoun)
     for field_name, field_val in [
-        ("subject", flat.get("raz_norm_subject") or ""),
-        ("act", flat.get("raz_norm_act") or ""),
-        ("condition", flat.get("raz_condition_of_application") or ""),
-        ("articulation", flat.get("raz_norm_articulation") or ""),
+        ("subject", flat.get("raz_norm_subject")),
+        ("act", flat.get("raz_norm_act")),
+        ("condition", flat.get("raz_condition_of_application")),
+        ("articulation", flat.get("raz_norm_articulation")),
     ]:
-        if _TITLE_PATTERN.search(field_val):
-            flags.append(f"titled_name_in_{field_name}")
+        flags.extend(detector.field_flags(field_name, field_val))
 
-    # Deduplicate flags (a name might match both blocklist and title pattern)
+    # Deduplicate flags (a name might match more than one layer)
     seen = set()
     unique_flags = []
     for f in flags:
@@ -323,7 +300,12 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
 
     # Explode rows so each extracted norm gets its own row.
     # Must happen before clean_for_parquet which drops raz_norms_raw.
-    char_blocklist = _get_character_blocklist(cfg)
+    from ..name_detection import PersonNameDetector
+    _use_ner = OmegaConf.select(cfg, "norm_quality.use_ner", default=True)
+    detector = PersonNameDetector(
+        blocklist=_get_character_blocklist(cfg),
+        use_ner=bool(_use_ner) if _use_ner is not None else True,
+    )
 
     if "raz_norms_raw" in result_df.columns:
         rows: List[Dict[str, Any]] = []
@@ -340,7 +322,7 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
                     new_row["raz_norm_index"] = i
                     new_row["raz_norm_count"] = len(norms_raw)
                     new_row.update(_flatten_norm(norm_entry))
-                    new_row = _validate_norm_quality(new_row, char_blocklist)
+                    new_row = _validate_norm_quality(new_row, detector)
                     rows.append(new_row)
                     added += 1
                 if added == 0:

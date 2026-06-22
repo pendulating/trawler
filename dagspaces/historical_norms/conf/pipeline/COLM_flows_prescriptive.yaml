@@ -22,7 +22,7 @@ runtime:
   sample_n: null
 
 pipeline:
-  output_root: ${hydra:run.dir}/COLM_flows_prescriptive
+  output_root: ${hydra:runtime.output_dir}/COLM_flows_prescriptive
   allow_partial: false
 
   sources:

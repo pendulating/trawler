@@ -24,7 +24,7 @@ runtime:
   sample_n: null
 
 pipeline:
-  output_root: ${hydra:run.dir}/norm_consolidation_from_clusters
+  output_root: ${hydra:runtime.output_dir}/norm_consolidation_from_clusters
   allow_partial: false
 
   sources:

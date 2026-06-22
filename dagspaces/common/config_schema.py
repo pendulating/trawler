@@ -192,19 +192,70 @@ def load_pipeline_graph(cfg: DictConfig) -> PipelineGraphSpec:
 def resolve_output_root(graph_spec: PipelineGraphSpec, cfg: DictConfig) -> str:
     root = graph_spec.output_root
     if root:
-        return os.path.abspath(os.path.expanduser(root))
-    # Fallback to runtime.output_root or hydra.run.dir if provided
-    runtime_root = getattr(getattr(cfg, "runtime", object()), "output_root", None)
-    if runtime_root:
-        return os.path.abspath(os.path.expanduser(str(runtime_root)))
-    hydra_cfg = getattr(cfg, "hydra", None)
+        resolved = os.path.abspath(os.path.expanduser(root))
+    else:
+        # Fallback to runtime.output_root or hydra.run.dir if provided
+        runtime_root = getattr(getattr(cfg, "runtime", object()), "output_root", None)
+        if runtime_root:
+            resolved = os.path.abspath(os.path.expanduser(str(runtime_root)))
+        else:
+            hydra_cfg = getattr(cfg, "hydra", None)
+            try:
+                hydra_run_dir = getattr(getattr(hydra_cfg, "run", object()), "dir", None)
+            except Exception:
+                hydra_run_dir = None
+            if hydra_run_dir:
+                resolved = os.path.abspath(os.path.expanduser(str(hydra_run_dir)))
+            else:
+                resolved = os.path.abspath(os.getcwd())
+    _assert_unique_in_multirun(resolved)
+    return resolved
+
+
+def _assert_unique_in_multirun(output_root: str) -> None:
+    """Refuse to start if a sweep job's output_root is shared across jobs.
+
+    Reason: prior to 2026-04-28 every pipeline yaml used
+    ``${hydra:run.dir}/<name>`` for ``pipeline.output_root``. The
+    ``${hydra:run.dir}`` resolver returns ``hydra.run.dir`` (the
+    *run-mode* template), which is identical for every job in a sweep
+    (same ``now()`` timestamp, no per-job subdir). All sweep jobs
+    therefore resolved to the same path and raced/overwrote each
+    other's outputs — wasting an entire 16-job SFT ablation that took
+    ~75 GPU-hours to produce.
+
+    How to apply: in MULTIRUN mode, ``hydra.runtime.output_dir`` is the
+    only Hydra-provided path that includes the sweep subdir. If the
+    resolved ``output_root`` is not nested under that path, this is the
+    same bug recurring — fail fast with a pointer at the YAML fix
+    rather than letting compute silently corrupt itself.
+    """
     try:
-        hydra_run_dir = getattr(getattr(hydra_cfg, "run", object()), "dir", None)
+        from hydra.core.hydra_config import HydraConfig
+        from hydra.types import RunMode
+        hc = HydraConfig.get()
+        if hc.mode != RunMode.MULTIRUN:
+            return
+        runtime_dir = os.path.abspath(str(hc.runtime.output_dir))
     except Exception:
-        hydra_run_dir = None
-    if hydra_run_dir:
-        return os.path.abspath(os.path.expanduser(str(hydra_run_dir)))
-    return os.path.abspath(os.getcwd())
+        # Hydra not initialized (e.g. unit tests) — nothing to check.
+        return
+    try:
+        common = os.path.commonpath([output_root, runtime_dir])
+    except ValueError:
+        # commonpath raises on mixed absolute/relative; treat as mismatch.
+        common = ""
+    if common != runtime_dir:
+        raise RuntimeError(
+            "pipeline.output_root collision risk in MULTIRUN mode.\n"
+            f"  resolved output_root:  {output_root}\n"
+            f"  hydra.runtime.output_dir: {runtime_dir}\n"
+            "Every sweep job would write to the same output_root, "
+            "overwriting each other's checkpoints/outputs.\n"
+            "Fix: in your pipeline yaml, use "
+            "${hydra:runtime.output_dir}/<name> (NOT ${hydra:run.dir}/<name>) "
+            "for pipeline.output_root."
+        )
 
 
 def iter_topologically(nodes: Dict[str, PipelineNodeSpec]) -> Iterable[PipelineNodeSpec]:

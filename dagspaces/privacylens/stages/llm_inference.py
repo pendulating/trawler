@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 
-from dagspaces.common.vllm_inference import run_vllm_inference
+from dagspaces.common.vllm_inference import (
+    model_needs_reasoning_budget,
+    run_vllm_inference,
+)
 from ..prompts import (
     _clean_generated_action, _extract_t_dict, _list_sensitive_items,
     build_action_prompt,
@@ -23,6 +26,7 @@ from ..prompts import (
     build_leakage_judge_prompt_per_secret,
     build_qa_prompt,
     extract_ci_fields,
+    post_process_action,
 )
 
 
@@ -77,10 +81,16 @@ def run_qa_probe_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     def preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
         axis = row["_qa_axis"]
         prompt = build_qa_prompt(row, axis)
-        row["messages"] = [
-            {"role": "system", "content": prompt["system"]},
-            {"role": "user", "content": prompt["user"]},
-        ]
+        # Upstream SALT-NLP/PrivacyLens probing.py uses a single-turn
+        # message — no system role. ``build_qa_prompt`` returns ``system=""``
+        # to signal that; emit a single user turn so the chat template
+        # doesn't wrap an empty system block (which would add tokens and
+        # silently drift from upstream).
+        messages: list[dict[str, Any]] = []
+        if prompt.get("system"):
+            messages.append({"role": "system", "content": prompt["system"]})
+        messages.append({"role": "user", "content": prompt["user"]})
+        row["messages"] = messages
         row["sampling_params"] = dict(sp_qa, guided_decoding={"json": _qa_schema})
         return row
 
@@ -108,7 +118,18 @@ def run_action_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     For each row, generates the final action from the trajectory.
     """
     sp_base = dict(OmegaConf.to_container(cfg.sampling_params, resolve=True))
-    sp_action = dict(sp_base, max_tokens=4096)
+
+    # Reasoning models burn the action budget on hidden CoT before emitting the
+    # ReAct "Action:" block. At 4096 they truncate mid-reasoning and the action
+    # never lands → low agent_action_format_rate (2026-06-04 sweep: context-
+    # reasoner/ppo hit finish_reason=length on 227/493 actions, completion
+    # p90 == the 4096 cap). Give reasoning models a larger budget; the
+    # preflight clamp in run_vllm_inference caps it to (max_model_len - prompt)
+    # so it can never overflow context. Non-reasoning models keep 4096 — they
+    # don't truncate (e.g. gpt-oss completion max was 2222), so a bigger budget
+    # would only mask format issues, not fix them.
+    action_max_tokens = 8192 if model_needs_reasoning_budget(cfg.model) else 4096
+    sp_action = dict(sp_base, max_tokens=action_max_tokens)
 
     def preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
         prompt = build_action_prompt(row)
@@ -120,7 +141,13 @@ def run_action_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         return row
 
     def postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
-        row["generated_action"] = row.get("generated_text", "")
+        # Truncate the raw generation to its first ReAct Action/Action Input
+        # block (upstream-faithful — see prompts.py::post_process_action).
+        # Storing the post-processed text in generated_action means every
+        # downstream consumer (sanity gate, judge prompt substitution,
+        # disk parquet) sees the same canonical surface the SALT-NLP eval
+        # harness would.
+        row["generated_action"] = post_process_action(row.get("generated_text", ""))
         return row
 
     result_df = run_vllm_inference(
@@ -144,49 +171,33 @@ def _judge_mode(cfg: DictConfig) -> str:
 
 
 def _get_batch_export_client(cfg: DictConfig):
-    """Construct a JudgeClient for batch-export mode, offline only.
+    """Construct an offline JudgeClient for writing ``requests.jsonl``.
 
-    This deliberately ignores every live-mode field (``judge.base_url``,
-    ``judge.provider``, ``judge.api_key*``) because the JSONL emitted here
-    is destined for OpenAI's Batch API regardless of how you run live
-    judging. The only knob that matters is ``judge.batch.target_model``
-    — the model name written into each JSONL line's ``body.model``.
-    ``judge.temperature`` and ``judge.max_tokens`` are reused as
-    sensible shared defaults; everything else is hardcoded.
+    Branches on ``cfg.judge.mode`` via :mod:`dagspaces.common.judge_export`:
+
+    - ``async`` — probes the live judge endpoint (``$JUDGE_SERVER_URL``
+      / ``judge.base_url``), resolves ``judge.model_name`` (auto-
+      detecting ``default`` from ``/v1/models``), and stamps the
+      resolved name into each JSONL line's ``body.model`` so the sidecar
+      forwards requests vLLM actually serves.
+    - ``batch_export`` — uses ``judge.batch.target_model`` (no default;
+      operators must spell it out so typos like ``gpt-5.2`` fail fast).
+
+    The previous behavior — always reading ``judge.batch.target_model``
+    regardless of mode — silently corrupted every async run.
     """
-    from dagspaces.common.judge_client import JudgeClient
+    from dagspaces.common.judge_export import resolve_export_client
 
-    target_model = str(
-        OmegaConf.select(cfg, "judge.batch.target_model", default=None)
-        or "gpt-5.2"
-    )
-    temperature = float(
-        OmegaConf.select(cfg, "judge.temperature", default=0.0) or 0.0
-    )
-    max_tokens = int(
-        OmegaConf.select(cfg, "judge.max_tokens", default=1024) or 1024
-    )
-    client = JudgeClient(
-        base_url="https://api.openai.com/v1",  # placeholder; offline=True
-        model_name=target_model,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        provider="openai",
-        offline=True,
-    )
-    print(
-        f"[privacylens] Judge (batch-export, offline): "
-        f"target_model={target_model}", flush=True,
+    client, _info = resolve_export_client(
+        cfg, dagspace="privacylens", default_max_tokens=1024,
     )
     return client
 
 
 def _get_batch_export_endpoint(cfg: DictConfig) -> str:
     """Return the endpoint URL written into each JSONL line's ``url`` field."""
-    return str(
-        OmegaConf.select(cfg, "judge.batch.target_endpoint", default=None)
-        or "/v1/chat/completions"
-    )
+    from dagspaces.common.judge_export import resolve_export_endpoint
+    return resolve_export_endpoint(cfg)
 
 
 def _get_judge_client(cfg: DictConfig, *, skip_health_check: bool = False):
@@ -251,27 +262,62 @@ def _write_batch_manifest(output_dir: str, manifest: Dict[str, Any]) -> str:
     return path
 
 
-def _build_leakage_fanout_items(df: pd.DataFrame) -> tuple[list[dict], set]:
+def _agent_action_has_format(action: str) -> bool:
+    """Return True iff ``action`` contains an ``Action:`` line.
+
+    Upstream SALT-NLP/PrivacyLens (``evaluate_final_action.py``) gates
+    judges with::
+
+        if type(actions.iloc[i]['final_action']) is str and \\
+           'Action:' in actions.iloc[i]['final_action']:
+
+    — i.e. the only requirement is that the row's text contains the
+    substring ``Action:``. We mirror that exactly. ``Action Input:`` is
+    *not* required (a row with ``Action: GmailSendEmail`` but a
+    truncated input is still judged upstream; tightening the gate
+    would silently drop rows the published numbers include).
+
+    Rows missing ``Action:`` are tagged ``no_action_format`` and
+    excluded from leakage / helpfulness judging. The sweep-wide
+    ``agent_action_format_rate`` surfaces as a loud sanity-layer
+    warning but does **not** halt the pipeline — upstream has no
+    such gate, so neither do we.
+    """
+    a = str(action or "")
+    return bool(a) and "Action:" in a
+
+
+def _build_leakage_fanout_items(df: pd.DataFrame) -> tuple[list[dict], Dict[Any, str]]:
     """Fan out each row into one (row_idx, sub_idx, secret) item per secret.
 
     Upstream PrivacyLens calls the leakage judge once per
     ``T['sensitive_info_items']`` entry and OR-aggregates the per-secret
-    answers. Rows whose generated_action is empty or doesn't contain
-    ``Action:`` are treated as non-leaking (matching upstream's skip).
+    answers. Rows are skipped for two distinct reasons that we surface
+    separately so format adherence and dataset coverage stay
+    distinguishable downstream:
+
+    * ``"no_action_format"`` — the agent's response lacks ``Action:`` and
+      cannot be graded. **Model-quality signal.**
+    * ``"no_sensitive_info"`` — the seed itself has no
+      ``sensitive_info_items`` so there is nothing to judge for leakage.
+      **Dataset-coverage signal.**
+
+    Returns ``(items, skip_reasons)`` where ``skip_reasons`` maps each
+    skipped row index to one of the strings above.
     """
     items: list[dict] = []
-    skipped: set = set()
+    skip_reasons: Dict[Any, str] = {}
     for idx, row in df.iterrows():
         action = str(row.get("generated_action") or "")
-        if not action or "Action:" not in action:
-            skipped.add(idx)
+        if not _agent_action_has_format(action):
+            skip_reasons[idx] = "no_action_format"
             continue
         t = _extract_t_dict(row.to_dict())
         f = extract_ci_fields(row.to_dict())
         user_name = str(t.get("user_name") or f.get("sender") or "")
         secrets = _list_sensitive_items(t.get("sensitive_info_items"))
         if not secrets:
-            skipped.add(idx)
+            skip_reasons[idx] = "no_sensitive_info"
             continue
         for sub_idx, secret in enumerate(secrets):
             items.append({
@@ -281,7 +327,55 @@ def _build_leakage_fanout_items(df: pd.DataFrame) -> tuple[list[dict], set]:
                 "secret": secret,
                 "action": action,
             })
-    return items, skipped
+    return items, skip_reasons
+
+
+def _stamp_format_status_columns(
+    result_df: pd.DataFrame,
+    *,
+    leakage_skip_reasons: Optional[Dict[Any, str]] = None,
+    helpfulness_skipped: Optional[set] = None,
+) -> None:
+    """In-place stamp format-status columns onto ``result_df``.
+
+    These columns ride downstream through ``pending.parquet`` →
+    ``finalize_async`` → ``compute_metrics`` so the metrics layer can
+    distinguish *judged* rows from *defaulted* rows without rerunning
+    inference.
+
+    Columns added (when the matching skip set is provided):
+
+    * ``agent_action_format_status`` — ``"valid"`` when the row's
+      ``generated_action`` contains an ``Action:`` line, otherwise
+      ``"no_action_format"``. Always populated; used by
+      :func:`compute_format_health` to compute the headline
+      ``agent_action_format_rate``.
+    * ``leakage_judged`` — bool. ``True`` iff the leakage judge actually
+      ran on this row.
+    * ``leakage_skip_reason`` — string. Empty when ``leakage_judged``,
+      otherwise the reason slug (``no_action_format`` |
+      ``no_sensitive_info``).
+    * ``helpfulness_judged`` — bool. ``True`` iff the helpfulness judge
+      actually ran on this row.
+    """
+    # Always stamp agent_action_format_status: it's a property of the
+    # input row, not of any particular judge skip set.
+    if "generated_action" in result_df.columns:
+        result_df["agent_action_format_status"] = result_df["generated_action"].apply(
+            lambda a: "valid" if _agent_action_has_format(a) else "no_action_format"
+        )
+    else:
+        result_df["agent_action_format_status"] = "no_action_format"
+
+    if leakage_skip_reasons is not None:
+        skipped_idx = set(leakage_skip_reasons.keys())
+        result_df["leakage_judged"] = ~result_df.index.isin(skipped_idx)
+        result_df["leakage_skip_reason"] = result_df.index.to_series().map(
+            lambda i: leakage_skip_reasons.get(i, "")
+        )
+
+    if helpfulness_skipped is not None:
+        result_df["helpfulness_judged"] = ~result_df.index.isin(helpfulness_skipped)
 
 
 def export_leakage_judge_batch(
@@ -304,12 +398,15 @@ def export_leakage_judge_batch(
     client = _get_batch_export_client(cfg)
     schema = YesNoResult.model_json_schema()
 
-    items, skipped = _build_leakage_fanout_items(df)
-    if skipped:
+    items, skip_reasons = _build_leakage_fanout_items(df)
+    if skip_reasons:
+        n_no_action = sum(1 for r in skip_reasons.values() if r == "no_action_format")
+        n_no_secrets = sum(1 for r in skip_reasons.values() if r == "no_sensitive_info")
         print(
-            f"[leakage_judge_export] WARNING: {len(skipped)}/{len(df)} rows "
-            f"skipped (no valid Action: or no sensitive_info_items); "
-            f"treated as non-leaking at aggregation",
+            f"[leakage_judge_export] {len(skip_reasons)}/{len(df)} rows skipped "
+            f"(no_action_format={n_no_action}, no_sensitive_info={n_no_secrets}). "
+            f"compute_format_health will surface this; metrics report both "
+            f"`*_among_parseable` and `*_overall_with_default_zero`.",
             flush=True,
         )
 
@@ -359,16 +456,19 @@ def export_leakage_judge_batch(
         "stage": "leakage_judge",
         "text_column": "leak_judge_text",
         "items_parquet": items_path,
-        "skipped_row_count": len(skipped),
+        "skipped_row_count": len(skip_reasons),
+        "skipped_no_action_format": sum(1 for r in skip_reasons.values() if r == "no_action_format"),
+        "skipped_no_sensitive_info": sum(1 for r in skip_reasons.values() if r == "no_sensitive_info"),
         "fanout": "per-secret",
     })
     _write_batch_manifest(output_dir, manifest)
 
     result_df = df.copy()
     result_df["leak_judge_text"] = ""  # filled by finalize after aggregation
+    _stamp_format_status_columns(result_df, leakage_skip_reasons=skip_reasons)
     print(
         f"[leakage_judge_export] wrote {manifest['count']} requests to "
-        f"{jsonl_path} ({len(df) - len(skipped)} rows × secrets; "
+        f"{jsonl_path} ({len(df) - len(skip_reasons)} rows × secrets; "
         f"model={manifest['model']})",
         flush=True,
     )
@@ -396,15 +496,17 @@ def export_helpfulness_judge_batch(
     skipped: set = set()
     for idx, row in df.iterrows():
         action = str(row.get("generated_action") or "")
-        if not action or "Action:" not in action:
+        if not _agent_action_has_format(action):
             skipped.add(idx)
             continue
         items.append({"row_idx": idx, "row": row.to_dict(), "action": action})
 
     if skipped:
         print(
-            f"[helpfulness_judge_export] WARNING: {len(skipped)}/{len(df)} rows "
-            f"skipped (no valid Action:); treated as score 0 at aggregation",
+            f"[helpfulness_judge_export] {len(skipped)}/{len(df)} rows skipped "
+            f"(no_action_format). compute_format_health will surface this; "
+            f"metrics report both `*_among_parseable` and "
+            f"`*_overall_with_default_zero`.",
             flush=True,
         )
 
@@ -441,11 +543,13 @@ def export_helpfulness_judge_batch(
         "text_column": "helpfulness_judge_text",
         "items_parquet": items_path,
         "skipped_row_count": len(skipped),
+        "skipped_no_action_format": len(skipped),
     })
     _write_batch_manifest(output_dir, manifest)
 
     result_df = df.copy()
     result_df["helpfulness_judge_text"] = ""
+    _stamp_format_status_columns(result_df, helpfulness_skipped=skipped)
     print(
         f"[helpfulness_judge_export] wrote {manifest['count']} requests to "
         f"{jsonl_path} ({len(items)}/{len(df)} rows; "
@@ -470,12 +574,15 @@ def run_leakage_judge_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFra
     client = _get_judge_client(cfg)
     schema = YesNoResult.model_json_schema()
 
-    items, skipped = _build_leakage_fanout_items(df)
-    if skipped:
+    items, skip_reasons = _build_leakage_fanout_items(df)
+    if skip_reasons:
+        n_no_action = sum(1 for r in skip_reasons.values() if r == "no_action_format")
+        n_no_secrets = sum(1 for r in skip_reasons.values() if r == "no_sensitive_info")
         print(
-            f"[leakage_judge] WARNING: {len(skipped)}/{len(df)} rows skipped "
-            f"(no valid Action: or no sensitive_info_items); "
-            f"treated as non-leaking",
+            f"[leakage_judge] {len(skip_reasons)}/{len(df)} rows skipped "
+            f"(no_action_format={n_no_action}, no_sensitive_info={n_no_secrets}). "
+            f"compute_format_health will surface this; metrics report both "
+            f"`*_among_parseable` and `*_overall_with_default_zero`.",
             flush=True,
         )
 
@@ -489,7 +596,7 @@ def run_leakage_judge_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFra
 
     print(
         f"[leakage_judge] Judging {len(items)} (row × secret) pairs "
-        f"across {len(df) - len(skipped)} rows...",
+        f"across {len(df) - len(skip_reasons)} rows...",
         flush=True,
     )
     responses = client.judge_batch(items, build_messages, json_schema=schema)
@@ -535,6 +642,7 @@ def run_leakage_judge_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFra
 
     result_df = df.copy()
     result_df["leak_judge_text"] = leak_judge_texts
+    _stamp_format_status_columns(result_df, leakage_skip_reasons=skip_reasons)
     return result_df
 
 
@@ -561,15 +669,17 @@ def run_helpfulness_judge_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.Dat
     skipped_indices: set = set()
     for idx, row in df.iterrows():
         action = str(row.get("generated_action") or "")
-        if not action or "Action:" not in action:
+        if not _agent_action_has_format(action):
             skipped_indices.add(idx)
             continue
         items.append({"row_idx": idx, "row": row.to_dict(), "action": action})
 
     if skipped_indices:
         print(
-            f"[helpfulness_judge] WARNING: {len(skipped_indices)}/{len(df)} "
-            f"rows skipped (no valid Action:); recorded as Poor (0)",
+            f"[helpfulness_judge] {len(skipped_indices)}/{len(df)} "
+            f"rows skipped (no_action_format). compute_format_health will "
+            f"surface this; metrics report both `*_among_parseable` and "
+            f"`*_overall_with_default_zero`.",
             flush=True,
         )
 
@@ -590,4 +700,5 @@ def run_helpfulness_judge_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.Dat
         by_idx.get(idx, '{"score": 0, "reasoning": "no valid action"}')
         for idx in df.index
     ]
+    _stamp_format_status_columns(result_df, helpfulness_skipped=skipped_indices)
     return result_df

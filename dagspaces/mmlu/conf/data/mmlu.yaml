@@ -1,0 +1,17 @@
+# @package _global_
+#
+# cais/mmlu — 57-subject MCQ knowledge benchmark.
+#
+# Splits available (cais/mmlu, "all" config):
+#   test            — 14,042 questions (canonical eval)
+#   validation      — 1,531 questions
+#   dev             — 5 per subject, used for k_shot exemplars
+#   auxiliary_train — 99,842 (training; do NOT eval on this)
+#
+# Use HF_TOKEN if the user's HF account requires gating. cais/mmlu is
+# public, so HF_TOKEN is optional in practice.
+data:
+  hf_dataset: cais/mmlu
+  hf_config: all
+  split: test
+  hf_token: ${oc.env:HF_TOKEN,null}

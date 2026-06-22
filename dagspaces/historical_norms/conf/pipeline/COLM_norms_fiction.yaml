@@ -2,8 +2,10 @@
 # Raz Norm Extraction Pipeline -- Fiction Texts (COLM)
 #
 # Extracts structured Raz norm tuples from a sample of fiction:
-#   Pride and Prejudice, Alice in Wonderland, Frankenstein,
-#   The Age of Innocence, 1984
+#   (10 novels — see data/fiction_sample_for_colm.yaml): Pride and
+#   Prejudice, Alice in Wonderland, Middlemarch, The Age of Innocence,
+#   Bleak House, Les Miserables, Anna Karenina, The Picture of Dorian
+#   Gray, The Count of Monte Cristo, 1984
 #
 # Pipeline: Fetch -> Norm Reasoning -> Norm Extraction -> Role Abstraction
 #
@@ -23,7 +25,7 @@ runtime:
   sample_n: null
 
 pipeline:
-  output_root: ${hydra:run.dir}/COLM_norms_fiction
+  output_root: ${hydra:runtime.output_dir}/COLM_norms_fiction
   allow_partial: false
 
   sources:

@@ -1,0 +1,91 @@
+# @package _global_
+# Hydra sweep: re-judge the FULL Appendix-Table-1 model roster on PrivacyLens
+# under one judge — the live Qwen3.6-27B server (klara:8002) — so every reported
+# PrivacyLens row comes from a single, consistent judge and date.
+#
+# PrivacyLens ONLY. PrivacyLens is the only judge-dependent benchmark (see
+# all_benchmarks.yaml header). The gold-scored benchmarks (goldcoin, confaide,
+# vlm_geoprivacy, cirl probing, mmlu) never call the judge, so their numbers are
+# judge-invariant — re-running them under a new judge is wasted compute. We pin
+# benchmark_filter.include=[privacylens] below; keep the existing gold-scored
+# numbers for the rest of the table.
+#
+# Why: the table previously mixed judges by accident of when each model ran
+# (Qwen3-32B-AWQ on Mar30, Gemma-4 on Apr20, Qwen3.6 on Apr24). The judge
+# ablation (notebooks/normative-simulacra/judge_validation_rebuttal_2026_05_30.py)
+# showed Qwen3-32B-AWQ is a lenient outlier while Qwen3.6 is consensus-aligned;
+# per CONGRUENCE.md, Qwen3.6-27B is the single source of truth going forward.
+# The Qwen3.5-family base/instruct and Llama rows already had an Apr24 Qwen3.6
+# pass; they are re-run here so the final PrivacyLens column is one coherent
+# sweep (supersedes Apr24).
+#
+# Judge: job 926377, Qwen3.6-27B on klara:8002 (confirmed via /v1/models).
+# GRPO: canonical headline checkpoint only (important_colm_runs → grpo cell 4).
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun +sweep=qwen36_judge_all_2026_05_30
+#
+# Adjust judge concurrency (single shared judge server):
+#   ... hydra.launcher.array_parallelism=3
+
+# PrivacyLens-only whitelist (mirrors conf/benchmark_filter/privacylens_only.yaml).
+# include is a whitelist: when non-empty, only these benchmarks run and the
+# still-enabled mmlu/others are suppressed.
+benchmark_filter:
+  include:
+    - privacylens
+  exclude: []
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # One shared Qwen3.6 judge server — keep concurrent jobs modest.
+    array_parallelism: 3
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      # The Qwen3.6-27B judge that is already running.
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      # 22 models: full Appendix-Table-1 roster.
+      #   Qwen3.5 family (base + instruct), 2B/4B/9B
+      #   Qwen3.5 SFT-CI finetunes + headline GRPO
+      #   other architectures (+SFT-CI): Gemma-3-12B, GPT-OSS-20B,
+      #     OpenThinker3-7B, Phi-4
+      #   external CI baselines: Llama-3.1-8B (base+instruct), CIRL,
+      #     ContextReasoner
+      model: >-
+        qwen3.5-2b/base,
+        qwen3.5-2b/instruct,
+        qwen3.5-2b/sft-ci,
+        qwen3.5-4b/base,
+        qwen3.5-4b/instruct,
+        qwen3.5-4b/sft-ci,
+        qwen3.5-9b/base,
+        qwen3.5-9b/instruct,
+        qwen3.5-9b/sft-ci,
+        qwen3.5-9b/grpo-v3-vr05-lambda05,
+        gemma-3-12b/it,
+        gemma-3-12b/it-sft-ci,
+        gpt-oss-20b/instruct,
+        gpt-oss-20b/sft-ci,
+        openthinker3-7b/instruct,
+        openthinker3-7b/sft-ci,
+        phi-4/instruct,
+        phi-4/sft-ci,
+        llama3.1-8b/base,
+        llama3.1-8b/instruct,
+        cirl/base,
+        context-reasoner/ppo

@@ -92,6 +92,20 @@ W&B project: `privacylens-eval`.
 2. **Axis variance is large**: S-axis QA accuracy often ~95%, T-axis drops to 70–80% for the same model. Trajectory context adds reasoning burden *and* exposes which models actually reason over it.
 3. **External judge is a hard dependency**: set `JUDGE_SERVER_URL` (or `judge.base_url`) before launching. See `wiki/dagspaces.md#judges` for commercial-API routing.
 4. **Helpful-but-leaky vs. unhelpful-and-leaky**: compare `leakage_rate` against `adjusted_leakage_rate` to understand the trade-off.
+5. **Action-prompt variant changed mid-experiment (2026-05-12)**: `build_action_prompt` was rewritten to upstream SALT-NLP/ToolEmu ReAct, doubling mean action length and emitting a `Thought:` block before each `Action:`. Mar 30 – Apr 24 sweeps used the terse trawler-custom variant; May 12+ sweeps use the upstream variant. Action parquets are not byte-comparable across the boundary, so judge-attribution analyses across this date are contaminated by task drift. See `wiki/changelog/2026-05-12_privacylens_action_prompt_react.md`.
+
+## Tests
+
+Regression coverage for prompt construction, post-processing, and the
+action-format gate lives at `tests/privacylens/test_prompts.py` (pytest).
+Run before merging any change to `dagspaces/privacylens/prompts.py` or
+`stages/llm_inference.py`. The load-bearing invariant is that
+`T['final_action']` and `T['sensitive_info_items']` never appear in the
+rendered agent or QA prompt — leakage there trivializes the eval.
+
+```bash
+python -m pytest tests/privacylens/ -v
+```
 
 ## Citation
 

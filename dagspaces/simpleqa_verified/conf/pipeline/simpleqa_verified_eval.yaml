@@ -1,0 +1,49 @@
+# @package _global_
+#
+# Live-judge pipeline: load → infer (GPU) → judge (CPU, inline) → metrics.
+# Used for standalone runs and when participating in eval_all's live
+# variant (all_benchmarks_live.yaml). Requires a reachable judge endpoint
+# at ${judge.base_url}.
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+judge:
+  mode: live
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/simpleqa_verified
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+
+      llm_inference:
+        stage: llm_inference
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/llm_inference/dataset.parquet
+        launcher: slurm_gpu_1x
+
+      judge_grade:
+        stage: judge_grade_live
+        depends_on: [llm_inference]
+        inputs:
+          dataset: llm_inference.dataset
+        outputs:
+          dataset: outputs/judge_grade/dataset.parquet
+
+      compute_metrics:
+        stage: compute_metrics
+        depends_on: [judge_grade]
+        inputs:
+          dataset: judge_grade.dataset
+        outputs:
+          dataset: outputs/compute_metrics/metrics.parquet

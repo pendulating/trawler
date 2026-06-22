@@ -19,7 +19,7 @@ runtime:
   sample_n: null
 
 pipeline:
-  output_root: ${hydra:run.dir}/ci_extraction_1984
+  output_root: ${hydra:runtime.output_dir}/ci_extraction_1984
   allow_partial: false
 
   sources:

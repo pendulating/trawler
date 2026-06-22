@@ -1,0 +1,89 @@
+# @package _global_
+# Raz Norm Extraction Pipeline — Fiction Texts (COLM, prefetched, scaled).
+#
+# Variant of COLM_norms_fiction_prefetched that pins the model to
+# qwen3.6-27b/instruct and runs each stage on 4 GPUs with
+# data_parallel_size=2 × tensor_parallel_size=2 (two replicas, each
+# sharded across 2 GPUs). Throughput target is ~2× the 2-GPU baseline
+# per stage; combined with the smaller 27B vs 72B model, ~4× faster than
+# the qwen2.5-72b/awq path overall.
+#
+# Stages: norm_reasoning → norm_extraction only. Role abstraction is
+# run separately via role_abstraction_standalone_qwen36 against the
+# extraction parquet — that pattern lets the role-abstraction prompt
+# be iterated without re-running stages 1-2 (~16h). See
+# wiki/howto/colm-100-novel-run.md.
+#
+# Usage:
+#   FICTION_CHUNKS_PATH=/path/to/chunks.parquet \
+#     python -m dagspaces.historical_norms.cli \
+#       pipeline=COLM_norms_fiction_prefetched_qwen36
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# NOTE: this pipeline assumes `model=qwen3.6-27b/instruct` is passed on the
+# CLI. The model can't be pinned via defaults from a pipeline yaml because
+# the base config loads `pipeline` before `model`, so a `- override /model:`
+# here doesn't apply.
+
+# Override prompts to use fiction variants
+prompt_reasoning: ${prompt_norm_reasoning_fiction}
+prompt_extraction: ${prompt_norm_extraction_fiction}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/COLM_norms_fiction_qwen36
+  allow_partial: false
+
+  sources:
+    prefetched_chunks:
+      path: ${oc.env:FICTION_CHUNKS_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      # ============================================================
+      # Stage 1: Raz Norm Reasoning (from prefetched chunks)
+      # ============================================================
+      reasoning:
+        stage: norm_reasoning
+        depends_on: []
+        inputs:
+          dataset: prefetched_chunks
+        outputs:
+          dataset: outputs/reasoning/reasoning.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 6144
+          model.engine_kwargs.data_parallel_size: 2
+          model.engine_kwargs.tensor_parallel_size: 2
+        launcher: slurm_gpu_4x
+        wandb_suffix: reasoning
+
+      # ============================================================
+      # Stage 2: Raz Norm Extraction
+      # Role abstraction (stage 3) runs separately — see
+      # role_abstraction_standalone_qwen36.
+      # ============================================================
+      extraction:
+        stage: norm_extraction
+        depends_on: [reasoning]
+        inputs:
+          dataset: reasoning.dataset
+        outputs:
+          dataset: outputs/extraction/structured_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 8192
+          model.engine_kwargs.data_parallel_size: 2
+          model.engine_kwargs.tensor_parallel_size: 2
+        launcher: slurm_gpu_4x
+        wandb_suffix: extraction

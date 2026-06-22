@@ -1,0 +1,13 @@
+# @package _global_
+#
+# Run the CI-aligned benchmarks only (the current canonical sweep). This
+# is what the default all_benchmarks.yaml does today; the filter file
+# exists so the intent is explicit when documenting reproducible sweeps.
+# Excluding both capability controls keeps the CI sweep set explicit.
+# When a future capability benchmark lands, add it to this exclude list
+# so `+benchmark_filter=ci_only` continues to mean "CI benchmarks only".
+benchmark_filter:
+  include: []
+  exclude:
+    - simpleqa_verified
+    - mmlu

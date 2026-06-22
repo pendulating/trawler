@@ -1,7 +1,7 @@
 # Uses Hydra Submitit Slurm launcher
 _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
 submitit_folder: ${hydra.sweep.dir}/.submitit/%j
-timeout_min: 480
+timeout_min: 14400  # 10 days; pierson partition is uncapped
 nodes: 1
 tasks_per_node: 1
 cpus_per_task: 4

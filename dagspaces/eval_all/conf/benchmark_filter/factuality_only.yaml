@@ -1,0 +1,12 @@
+# @package _global_
+#
+# Run ONLY the factuality / non-CI controls. Today: simpleqa_verified.
+# Note: per-benchmark `enabled: false` still wins — when a benchmark is
+# disabled in the pipeline yaml, including it here will skip it with
+# reason=enabled=false. Pair this filter with an explicit
+# `benchmarks.simpleqa_verified.enabled=true` CLI override (or flip it
+# in all_benchmarks.yaml itself) to actually launch the run.
+benchmark_filter:
+  include:
+    - simpleqa_verified
+  exclude: []

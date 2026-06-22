@@ -1,0 +1,9 @@
+# @package _global_
+#
+# Zero-shot direct MCQ. Matches the format used by most modern
+# instruct-tuned MMLU evaluations and OpenAI's simple-evals/mmlu_eval.
+# Guided decoding enforces {"answer": "<letter>"}; the JSON nudge is
+# primarily for non-guided fallbacks.
+prompt:
+  k_shot: 0
+  instruction_response_json: true

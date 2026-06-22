@@ -41,20 +41,39 @@ benchmarks:
     module: dagspaces.goldcoin_hipaa.cli
     pipeline: full_eval
     vlm_only: false
+    enabled: true
   privacylens:
     module: dagspaces.privacylens.cli
     pipeline: privacylens_clean_batch
     vlm_only: false
+    enabled: true
     extra_args: ${judge_batch_extras}
   cirl_vignettes:
     module: dagspaces.cirl_vignettes.cli
     pipeline: cirl_vignettes_eval
     vlm_only: false
+    enabled: true
   confaide:
     module: dagspaces.confaide.cli
     pipeline: confaide_eval
     vlm_only: false
+    enabled: true
   vlm_geoprivacy:
     module: dagspaces.vlm_geoprivacy_bench.cli
     pipeline: mcq_eval
     vlm_only: true
+    enabled: true
+  simpleqa_verified:
+    module: dagspaces.simpleqa_verified.cli
+    pipeline: simpleqa_verified_batch_export
+    vlm_only: false
+    enabled: false
+    extra_args: ${judge_batch_extras}
+  # No judge stage → no batch-export variant needed; just reuse the
+  # standard pipeline. Listed for parity with the other variants so the
+  # benchmark entry exists everywhere.
+  mmlu:
+    module: dagspaces.mmlu.cli
+    pipeline: mmlu_eval
+    vlm_only: false
+    enabled: false

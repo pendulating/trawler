@@ -2,8 +2,10 @@
 # Contextual Integrity Information Flow Extraction Pipeline -- Fiction Texts
 #
 # Extracts Nissenbaum CI information flow tuples from a sample of fiction:
-#   Pride and Prejudice, Alice in Wonderland, Frankenstein,
-#   The Age of Innocence, 1984
+#   (10 novels — see data/fiction_sample_for_colm.yaml): Pride and
+#   Prejudice, Alice in Wonderland, Middlemarch, The Age of Innocence,
+#   Bleak House, Les Miserables, Anna Karenina, The Picture of Dorian
+#   Gray, The Count of Monte Cristo, 1984
 #
 # Pipeline: Fetch (Gutenberg IDs + text URLs) -> CI Reasoning -> CI Extraction
 #
@@ -25,7 +27,7 @@ runtime:
   sample_n: null
 
 pipeline:
-  output_root: ${hydra:run.dir}/ci_extraction_fiction
+  output_root: ${hydra:runtime.output_dir}/ci_extraction_fiction
   allow_partial: false
 
   sources:

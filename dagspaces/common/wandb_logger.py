@@ -802,6 +802,16 @@ def build_wandb_tags(
     except Exception:
         pass
 
+    # Cultural name-perturbation variant (privacylens_perturb pipeline). Lets
+    # dashboards compare original vs. culturally-perturbed runs for one model.
+    try:
+        from omegaconf import OmegaConf
+        culture = OmegaConf.select(cfg, "perturb.culture")
+        if culture:
+            tags.append(f"culture:{culture}")
+    except Exception:
+        pass
+
     # GRPO training config tags (only present during training runs)
     try:
         from omegaconf import OmegaConf
@@ -809,7 +819,10 @@ def build_wandb_tags(
         if grpo_cfg is not None:
             cr = grpo_cfg.get("contrastive_ratio")
             if cr is not None:
-                tags.append(f"contrastive:{cr}")
+                tags.append(f"cratio:{cr}")
+            cl = grpo_cfg.get("contrastive_lambda")
+            if cl is not None:
+                tags.append(f"clambda:{cl}")
             if grpo_cfg.get("online_rground"):
                 tags.append("rground:online")
             else:
@@ -846,7 +859,10 @@ def build_wandb_tags(
                     tmeta = _json.load(_f)
                 cr = tmeta.get("contrastive_ratio")
                 if cr is not None:
-                    tags.append(f"contrastive:{cr}")
+                    tags.append(f"cratio:{cr}")
+                cl = tmeta.get("contrastive_lambda")
+                if cl is not None:
+                    tags.append(f"clambda:{cl}")
                 rw = tmeta.get("reward_weights", [])
                 if len(rw) == 6:
                     if rw[5] > 0.0:

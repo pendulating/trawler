@@ -43,9 +43,14 @@ defaults:
   - override /hydra/launcher: slurm_monitor
 
 # Surfaces in W&B as judge_mode:async on every child run.
+# JUDGE_SERVER_URL is the codebase-wide convention (privacylens / cirl /
+# grpo / launch scripts all use it, and conf/sweep/*.yaml export it to
+# pin sidecar-port assignments per sweep half). JUDGE_BASE_URL is the
+# legacy alias for direct sidecar invocation — accepted as a fallback so
+# anyone still exporting it keeps working.
 judge:
   mode: async
-  base_url: ${oc.env:JUDGE_BASE_URL,http://klara:8002}
+  base_url: ${oc.env:JUDGE_SERVER_URL,${oc.env:JUDGE_BASE_URL,http://klara:8002}}
 
 judge_sidecar:
   enabled: true
@@ -67,20 +72,42 @@ benchmarks:
     module: dagspaces.goldcoin_hipaa.cli
     pipeline: full_eval
     vlm_only: false
+    enabled: true
   privacylens:
     module: dagspaces.privacylens.cli
     pipeline: privacylens_async
     finalize_pipeline: privacylens_async_finalize
     vlm_only: false
+    enabled: true
   cirl_vignettes:
     module: dagspaces.cirl_vignettes.cli
     pipeline: cirl_vignettes_eval
     vlm_only: false
+    enabled: true
   confaide:
     module: dagspaces.confaide.cli
     pipeline: confaide_eval
     vlm_only: false
+    enabled: true
   vlm_geoprivacy:
     module: dagspaces.vlm_geoprivacy_bench.cli
     pipeline: mcq_eval
     vlm_only: true
+    enabled: true
+  # Factuality control: off by default for the canonical CI sweep. Flip
+  # to enabled=true (or use +benchmark_filter=factuality_only with an
+  # accompanying CLI override) to include SimpleQA-Verified scores.
+  simpleqa_verified:
+    module: dagspaces.simpleqa_verified.cli
+    pipeline: simpleqa_verified_async
+    finalize_pipeline: simpleqa_verified_async_finalize
+    vlm_only: false
+    enabled: false
+  # Knowledge control: 57-subject MCQ. No judge needed (ground-truth
+  # labels), so no finalize_pipeline. Off by default; turn on with
+  # benchmarks.mmlu.enabled=true or +benchmark_filter=knowledge_only.
+  mmlu:
+    module: dagspaces.mmlu.cli
+    pipeline: mmlu_eval
+    vlm_only: false
+    enabled: true

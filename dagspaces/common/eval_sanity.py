@@ -101,6 +101,7 @@ DEFAULT_REFUSAL_PATTERNS: List[str] = [
 #: ``conf/config.yaml`` may override individual entries.
 DEFAULT_THRESHOLDS: Dict[str, float] = {
     "parseable_rate:lt": 0.95,
+    "format_adherence_rate:lt": 0.95,
     "truncated_rate:gt": 0.02,
     "empty_response_rate:gt": 0.005,
     "refusal_rate:gt": 0.02,
@@ -111,12 +112,61 @@ DEFAULT_THRESHOLDS: Dict[str, float] = {
     "judge_unparseable_rate:gt": 0.01,
     "judge_per_secret_skip_rate:gt": 0.02,
     "judge_label_entropy:lt": 0.30,
+    "judge_api_error_rate:gt": 0.01,
+}
+
+#: Fail thresholds. Crossing these signals that the resulting metrics
+#: cannot be trusted — by default the pipeline halts (see
+#: :class:`SanityFailure` + ``runners/sanity.py``). Set
+#: ``runtime.allow_unreliable_metrics=true`` to demote fails to warnings
+#: for a single run. Only metrics that directly compromise metric
+#: trustworthiness when crossed get default fail entries; other metrics
+#: stay warn-only unless a benchmark opts in via cfg.sanity.fail_thresholds.
+#:
+#: Note: ``format_adherence_rate`` is intentionally **not** in this dict.
+#: Upstream SALT-NLP/PrivacyLens has no adherence gate — they report
+#: leakage/helpfulness conditioned on parseable rows and let the
+#: denominator speak for itself. We mirror that: format adherence is a
+#: warn-only metric (``DEFAULT_THRESHOLDS["format_adherence_rate:lt"] =
+#: 0.95``) that surfaces as a loud banner but never halts the pipeline.
+#: This is essential for base-model sweeps, where weak instruction
+#: followers can easily fall below any reasonable gate even though the
+#: downstream judge numbers on the parseable subset are still meaningful.
+DEFAULT_FAIL_THRESHOLDS: Dict[str, float] = {
+    "parseable_rate:lt": 0.7,
+    "judge_unparseable_rate:gt": 0.2,
+    "judge_api_error_rate:gt": 0.05,
 }
 
 
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
+
+class SanityFailure(RuntimeError):
+    """Raised by the sanity runner when a fail-severity threshold is crossed.
+
+    Stage runners do not catch this — it propagates to the orchestrator,
+    which marks the stage as failed and surfaces it in the run summary.
+    Override with ``cfg.runtime.allow_unreliable_metrics=true`` (escape
+    hatch — only for debugging known-broken runs).
+    """
+
+    def __init__(self, dagspace: str, stage: str, failures: "List[SanityWarning]"):
+        self.dagspace = dagspace
+        self.stage = stage
+        self.failures = list(failures)
+        msg_lines = [
+            f"sanity FAILURE in {dagspace}.{stage} ({len(self.failures)} fail-tier threshold(s) crossed):"
+        ]
+        for f in self.failures:
+            msg_lines.append(f"  - {f.message()}")
+        msg_lines.append(
+            "Metrics from this stage cannot be trusted. Set "
+            "runtime.allow_unreliable_metrics=true to demote to warnings."
+        )
+        super().__init__("\n".join(msg_lines))
+
 
 @dataclass(frozen=True)
 class SanityWarning:
@@ -126,11 +176,11 @@ class SanityWarning:
     value: float
     threshold: float
     comparison: str  # "gt" (warn when value > threshold) or "lt"
-    severity: str = "warn"
+    severity: str = "warn"  # "warn" | "fail"
 
     def message(self) -> str:
         sym = ">" if self.comparison == "gt" else "<"
-        return f"{self.metric}={self.value:.4f} {sym} {self.threshold} (warn)"
+        return f"{self.metric}={self.value:.4f} {sym} {self.threshold} ({self.severity})"
 
 
 @dataclass
@@ -145,36 +195,76 @@ class SanityReport:
     failures_dropped: int = 0
     n_rows: int = 0
 
+    @property
+    def warns(self) -> List[SanityWarning]:
+        """Threshold violations at warn severity only."""
+        return [w for w in self.warnings if w.severity == "warn"]
+
+    @property
+    def failures(self) -> List[SanityWarning]:
+        """Threshold violations at fail severity (pipeline-halting)."""
+        return [w for w in self.warnings if w.severity == "fail"]
+
     def has_warnings(self) -> bool:
         return len(self.warnings) > 0
+
+    def has_failures(self) -> bool:
+        return any(w.severity == "fail" for w in self.warnings)
 
     def worst_warning(self) -> Optional[SanityWarning]:
         if not self.warnings:
             return None
-        # Severity ranking: ratio of (value − threshold) magnitude to threshold,
-        # i.e. how far past the line we are. Larger ⇒ worse.
+        # Severity ranking: fail beats warn, then ratio of (value − threshold)
+        # magnitude to threshold (how far past the line we are).
+        def _badness(w: SanityWarning) -> tuple[int, float]:
+            sev_rank = 1 if w.severity == "fail" else 0
+            if w.threshold == 0:
+                return (sev_rank, abs(w.value))
+            return (sev_rank, abs(w.value - w.threshold) / max(abs(w.threshold), 1e-9))
+        return max(self.warnings, key=_badness)
+
+    def worst_failure(self) -> Optional[SanityWarning]:
+        fails = self.failures
+        if not fails:
+            return None
         def _badness(w: SanityWarning) -> float:
             if w.threshold == 0:
                 return abs(w.value)
             return abs(w.value - w.threshold) / max(abs(w.threshold), 1e-9)
-        return max(self.warnings, key=_badness)
+        return max(fails, key=_badness)
 
     def print_loud(self, *, prefix: str = "") -> None:
-        """Print a loud banner to stderr summarizing any warnings."""
+        """Print a loud banner to stderr summarizing any warnings/failures.
+
+        Failures get a distinct ``XXX`` bar so they read differently from
+        plain warnings in stderr scrollback. Both banners are emitted when
+        a stage has both kinds of violations.
+        """
         if not self.has_warnings():
             return
-        bar = "!" * 70
-        head = f"{prefix}SANITY WARNINGS — {self.dagspace}.{self.stage} ({len(self.warnings)} threshold(s))"
-        lines = ["", bar, head, bar]
-        for w in self.warnings:
-            lines.append(f"  - {w.message()}")
-        if self.failures_dropped > 0:
-            lines.append(
-                f"  + {self.failures_dropped} additional failure rows dropped "
-                f"(failure_rows capped at {FAILURE_ROW_CAP})"
-            )
-        lines.append(bar)
-        print("\n".join(lines), file=sys.stderr, flush=True)
+        fails = self.failures
+        warns = self.warns
+        if fails:
+            bar = "X" * 70
+            head = f"{prefix}SANITY FAILURE — {self.dagspace}.{self.stage} ({len(fails)} fail-tier threshold(s))"
+            lines = ["", bar, head, bar]
+            for w in fails:
+                lines.append(f"  - {w.message()}")
+            lines.append(bar)
+            print("\n".join(lines), file=sys.stderr, flush=True)
+        if warns:
+            bar = "!" * 70
+            head = f"{prefix}SANITY WARNINGS — {self.dagspace}.{self.stage} ({len(warns)} threshold(s))"
+            lines = ["", bar, head, bar]
+            for w in warns:
+                lines.append(f"  - {w.message()}")
+            if self.failures_dropped > 0:
+                lines.append(
+                    f"  + {self.failures_dropped} additional failure rows dropped "
+                    f"(failure_rows capped at {FAILURE_ROW_CAP})"
+                )
+            lines.append(bar)
+            print("\n".join(lines), file=sys.stderr, flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -185,11 +275,27 @@ def _resolve_threshold(
     metric: str,
     comparison: str,
     overrides: Optional[Dict[str, float]],
+    severity: str = "warn",
 ) -> Optional[float]:
-    key = f"{metric}:{comparison}"
-    if overrides and key in overrides:
-        return float(overrides[key])
-    return DEFAULT_THRESHOLDS.get(key)
+    """Resolve a threshold for ``(metric, comparison, severity)``.
+
+    Per-run overrides take precedence over the built-in defaults. Override
+    keys may be ``"<metric>:<comparison>"`` (legacy, treated as warn) or
+    ``"<metric>:<comparison>:<severity>"`` (new explicit form).
+    """
+    key_sev = f"{metric}:{comparison}:{severity}"
+    if overrides and key_sev in overrides:
+        return float(overrides[key_sev])
+    if severity == "warn":
+        # Legacy key form (no severity) defaults to warn.
+        legacy_key = f"{metric}:{comparison}"
+        if overrides and legacy_key in overrides:
+            return float(overrides[legacy_key])
+        return DEFAULT_THRESHOLDS.get(legacy_key)
+    if severity == "fail":
+        legacy_fail_key = f"{metric}:{comparison}"
+        return DEFAULT_FAIL_THRESHOLDS.get(legacy_fail_key)
+    return None
 
 
 def _emit_warning(
@@ -199,17 +305,40 @@ def _emit_warning(
     comparison: str,
     overrides: Optional[Dict[str, float]],
 ) -> None:
-    threshold = _resolve_threshold(metric, comparison, overrides)
-    if threshold is None:
-        return
-    cross = (value > threshold) if comparison == "gt" else (value < threshold)
-    if cross:
+    """Check fail-tier and warn-tier thresholds for ``(metric, comparison)``.
+
+    If the fail threshold is crossed, emit a single fail-severity warning
+    (warn is implied). Otherwise, if the warn threshold is crossed, emit a
+    warn-severity warning. At most one warning per ``(metric, comparison)``
+    pair so the same violation doesn't appear twice in the report.
+    """
+    def _crossed(thr: Optional[float]) -> bool:
+        if thr is None:
+            return False
+        return (value > thr) if comparison == "gt" else (value < thr)
+
+    fail_thr = _resolve_threshold(metric, comparison, overrides, severity="fail")
+    if _crossed(fail_thr):
         report.warnings.append(
             SanityWarning(
                 metric=metric,
                 value=float(value),
-                threshold=float(threshold),
+                threshold=float(fail_thr),
                 comparison=comparison,
+                severity="fail",
+            )
+        )
+        return
+
+    warn_thr = _resolve_threshold(metric, comparison, overrides, severity="warn")
+    if _crossed(warn_thr):
+        report.warnings.append(
+            SanityWarning(
+                metric=metric,
+                value=float(value),
+                threshold=float(warn_thr),
+                comparison=comparison,
+                severity="warn",
             )
         )
 
@@ -338,8 +467,12 @@ def compute_parse_health(
     refusal_pats = _compile_refusal_patterns(refusal_patterns)
 
     # ---- parseable_rate ---------------------------------------------------
+    # Treat any status starting with ``parsed_status_value`` as success so
+    # parsers can carry sub-type info (``parsed``, ``parsed_json``,
+    # ``parsed_yes_no_normalize``) without all the variants counting as
+    # failures.
     if status_col in df.columns:
-        parsed_mask = df[status_col].astype(str) == parsed_status_value
+        parsed_mask = df[status_col].astype(str).str.startswith(parsed_status_value)
         parseable_rate = float(parsed_mask.sum()) / n
     else:
         # No parse_status column → assume everything parsed; nothing useful
@@ -417,7 +550,7 @@ def compute_parse_health(
         def _ftype(row) -> str:
             if status_col in df.columns:
                 s = str(row.get(status_col, "")).strip()
-                if s and s != parsed_status_value:
+                if s and not s.startswith(parsed_status_value):
                     return s
             comp = str(row.get(completion_col, "")) if completion_col in df.columns else ""
             if not comp.strip():
@@ -441,6 +574,114 @@ def compute_parse_health(
 
 
 # ---------------------------------------------------------------------------
+# Format-extraction health
+# ---------------------------------------------------------------------------
+
+def compute_format_health(
+    df: pd.DataFrame,
+    *,
+    dagspace: str,
+    stage: str,
+    format_col: str,
+    model: str = "",
+    valid_value: str = "valid",
+    raw_response_col: Optional[str] = None,
+    id_col: Optional[str] = None,
+    thresholds: Optional[Dict[str, float]] = None,
+) -> SanityReport:
+    """Compute health metrics for a downstream format-extraction step.
+
+    Many benchmarks have a "did the model produce something we can grade"
+    gate that runs *after* parse and *before* judging — e.g.
+    PrivacyLens's ``Action:`` regex extraction, MCQ answer extraction.
+    Today these gates either silently default the row's metric (treat as
+    non-leaking, score=0, etc.) or print a one-off WARNING. Either way
+    the resulting rate flows into ``metrics.json`` as if every input
+    contributed, which inflates or deflates the headline number.
+
+    This helper reframes the gate as a first-class sanity check:
+
+    * The stage that runs the extraction populates a ``format_col``
+      column on every row with values ``"valid"`` (gate passed) or any
+      other string naming the failure mode (e.g. ``"no_action"``,
+      ``"no_sensitive_info"``, ``"empty"``).
+    * This function reads ``format_col``, computes
+      ``format_adherence_rate = #valid / #total``, and emits the
+      appropriate WARN / FAIL warning. Default thresholds: WARN < 0.95,
+      FAIL < 0.9 (paper-quality bar — overrideable via cfg).
+    * Non-adherent rows are written to ``failure_rows`` in the shared
+      schema, so they show up in the same W&B failure-row dashboard
+      that parse/judge failures already feed.
+
+    Args:
+        df: Stage output. Must contain ``format_col``.
+        dagspace: e.g. ``"privacylens"``.
+        stage: e.g. ``"leakage_judge_export"``.
+        format_col: Per-row format-status column.
+        model: Task-LLM identifier (for the failure-row ``model`` field).
+        valid_value: Value of ``format_col`` that means "extraction
+            succeeded." Anything else counts as a failure.
+        raw_response_col: Optional raw model output column for failure
+            previews.
+        id_col: Optional row identifier; populates ``custom_id``.
+        thresholds: Override default thresholds. Use the explicit
+            severity-keyed form
+            ``"format_adherence_rate:lt:fail": 0.85`` to set per-benchmark
+            fail thresholds.
+    """
+    report = SanityReport(dagspace=dagspace, stage=stage, n_rows=len(df))
+    n = len(df)
+    if n == 0:
+        return report
+
+    if format_col not in df.columns:
+        # Defensive: the caller is responsible for populating this. Surface
+        # the misconfiguration rather than silently passing.
+        report.warnings.append(
+            SanityWarning(
+                metric="format_col_missing",
+                value=0.0,
+                threshold=1.0,
+                comparison="lt",
+                severity="fail",
+            )
+        )
+        return report
+
+    valid_mask = df[format_col].astype(str) == valid_value
+    adherence_rate = float(valid_mask.sum()) / n
+    report.metrics["format_adherence_rate"] = round(adherence_rate, 6)
+    _emit_warning(report, "format_adherence_rate", adherence_rate, "lt", thresholds)
+
+    # Per-failure-mode breakdown so callers can tell *why* extraction
+    # failed (no_action vs. no_sensitive_info vs. empty …) without
+    # rerunning the parquet.
+    if (~valid_mask).any():
+        mode_counts = (
+            df.loc[~valid_mask, format_col].astype(str).value_counts().to_dict()
+        )
+        for mode, count in mode_counts.items():
+            safe_mode = re.sub(r"\W+", "_", str(mode)).strip("_") or "unknown"
+            report.metrics[f"format_failure_rate__{safe_mode}"] = round(count / n, 6)
+
+    if (~valid_mask).any():
+        flagged = df.loc[~valid_mask].copy()
+        flagged["_sanity_failure_type"] = flagged[format_col].astype(str)
+        rows_df, dropped = _build_failure_rows(
+            flagged,
+            dagspace=dagspace,
+            stage=stage,
+            model=model,
+            id_col=id_col,
+            completion_col=raw_response_col,
+        )
+        report.failure_rows = rows_df
+        report.failures_dropped = dropped
+
+    return report
+
+
+# ---------------------------------------------------------------------------
 # Judge-stage health
 # ---------------------------------------------------------------------------
 
@@ -456,6 +697,8 @@ def compute_judge_health(
     id_col: Optional[str] = None,
     skipped_input_n: Optional[int] = None,
     thresholds: Optional[Dict[str, float]] = None,
+    n_api_errors: Optional[int] = None,
+    api_error_denominator: Optional[int] = None,
 ) -> SanityReport:
     """Compute health metrics for an LLM-judge stage's output.
 
@@ -476,6 +719,19 @@ def compute_judge_health(
             (e.g. privacylens leakage's "no Action: substring" rule),
             pass ``len(skipped)`` here to surface the skip rate.
         thresholds: Override default ``DEFAULT_THRESHOLDS`` entries.
+        n_api_errors: Number of judge requests that returned an HTTP
+            error or sidecar-exhausted-retries error — distinct from
+            unparseable (the response *was* a real assistant message,
+            we just couldn't parse it). When present, surfaces a
+            ``judge_api_error_rate`` metric whose denominator defaults
+            to total fanout requests (``len(df) + skipped_input_n +
+            n_api_errors`` if no ``api_error_denominator`` is given).
+            FAIL >0.05 by default — async runs that the live judge
+            server 404'd cannot be quoted.
+        api_error_denominator: Override the denominator used when
+            computing ``judge_api_error_rate``. Set this to the total
+            fanout count when the dagspace knows it explicitly (e.g.
+            len(items_df) for per-secret leakage fanout).
     """
     report = SanityReport(dagspace=dagspace, stage=stage, n_rows=len(df))
     n = len(df)
@@ -512,6 +768,27 @@ def compute_judge_health(
         skip_rate = float(skipped_input_n) / float(skipped_input_n + n)
         report.metrics["judge_per_secret_skip_rate"] = round(skip_rate, 6)
         _emit_warning(report, "judge_per_secret_skip_rate", skip_rate, "gt", thresholds)
+
+    # ---- judge_api_error_rate -------------------------------------------
+    # The async-judge sidecar (and the OpenAI Batch API) write per-row
+    # error lines into output.jsonl on HTTP failure. Those rows make it
+    # into ``df`` with ``label_col`` populated by the parser's *default*
+    # branch (no Yes / score=0), so judge_unparseable_rate alone won't
+    # catch them. The dagspace-level finalize counts them and passes the
+    # tally here; if anything > 5% errored the run is unquotable.
+    if n_api_errors is not None:
+        denom = api_error_denominator
+        if denom is None:
+            # Default denominator: every judge request that should have
+            # produced a response — judged rows + upstream-skipped rows
+            # + errored rows. ``n`` is the row count post-finalize, which
+            # already includes the errored rows.
+            denom = n + (skipped_input_n or 0)
+        if denom and denom > 0:
+            api_err_rate = float(n_api_errors) / float(denom)
+            report.metrics["judge_api_error_rate"] = round(api_err_rate, 6)
+            report.metrics["n_judge_api_errors"] = int(n_api_errors)
+            _emit_warning(report, "judge_api_error_rate", api_err_rate, "gt", thresholds)
 
     # ---- failure rows ----------------------------------------------------
     if unparseable_mask.any():

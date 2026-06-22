@@ -7,7 +7,7 @@ and are used by the reward functions to validate GRPO completions.
 from __future__ import annotations
 
 from typing import List, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +117,45 @@ class NoFlowCoverageJudgment(BaseModel):
     )
     explanation: str = Field(
         description="Brief explanation of the coverage assessment",
+    )
+
+
+class RankedCompletion(BaseModel):
+    """One candidate's position in a within-group grounding ranking."""
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_index: int = Field(
+        ge=0,
+        description="0-based index of the candidate, as numbered in the prompt",
+    )
+    rank: int = Field(
+        ge=1,
+        description="1 = best grounded in the provided norms; no ties allowed",
+    )
+    grounding_score: float = Field(
+        ge=0.0, le=1.0,
+        description="Absolute normative grounding of this candidate against "
+                    "the provided norms (0=ungrounded, 1=fully grounded)",
+    )
+
+
+class CompletionRankingJudgment(BaseModel):
+    """Listwise R_ground judge output: rank all candidate completions of the
+    same passage by how well their extractions are grounded in the retrieved
+    norms. Forces tie-breaking that per-candidate absolute scoring cannot —
+    the May 2026 sweep showed 60% of G-completion groups received identical
+    absolute R_ground (zero GRPO advantage).
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    # No explanation/justification field: it is never consumed, and under
+    # guided decoding a required free-text field both dominates generation
+    # latency and truncates the response at max_tokens (observed 2026-06-10:
+    # ~100s/call and mid-array cutoffs at 1024 tokens). The ranking criteria
+    # live in the prompt; emission order (rankings-first) means a trailing
+    # explanation could not have served as reasoning anyway.
+    rankings: List[RankedCompletion] = Field(
+        description="Exactly one entry per candidate, each with a distinct rank",
     )
 
 

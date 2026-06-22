@@ -1,0 +1,85 @@
+# @package _global_
+#
+# eval_all pipeline for the PrivacyLens cultural name-perturbation experiment.
+# Runs the perturbed PrivacyLens eval once per name-culture (western control +
+# 5 treatments) as separate "benchmarks", all under the async-judge sidecar
+# flow. Combine with a model sweep (conf/sweep/privacylens_culture.yaml) to get
+# the full models x cultures matrix:
+#
+#   sbatch scripts/judge_server.sub                 # 2-GPU vLLM judge service
+#   export JUDGE_SERVER_URL=http://<host>:<port>
+#   python -m dagspaces.eval_all.cli --multirun \
+#     pipeline=privacylens_culture +sweep=privacylens_culture
+#
+# Each culture is a distinct benchmark entry whose only difference is
+# `+perturb.culture=<c>` (forwarded to both the export and the finalize CLIs).
+# The privacylens orchestrator qualifies the W&B run id by culture, so every
+# (model, culture) pair is its own resumable run; compare them by the
+# `culture:<c>` tag with the model held fixed.
+
+defaults:
+  - /model: qwen3.5-9b/instruct
+  - override /hydra/launcher: slurm_monitor
+
+judge:
+  mode: async
+  base_url: ${oc.env:JUDGE_SERVER_URL,${oc.env:JUDGE_BASE_URL,http://klara:8002}}
+
+judge_sidecar:
+  enabled: true
+  base_url: ${judge.base_url}
+  model: ${oc.env:JUDGE_MODEL,Qwen3.6-27B}
+  concurrency: 8
+  parallel_manifests: 4
+  # The leakage judge is the throughput bottleneck: ~1487 per-secret requests
+  # per culture (3x helpfulness) all funnel into one shared judge server. With
+  # multiple culture/model jobs contending, a 6h drain window (the old default)
+  # expired before the backlog cleared and finalize crashed on a missing
+  # output.jsonl. Walltime is 10 days, so give the drain 24h of headroom.
+  drain_timeout_s: 86400
+  drain_poll_interval_s: 30.0
+  api_key_env: null
+
+benchmarks:
+  privacylens_western:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_perturb_async
+    finalize_pipeline: privacylens_async_finalize
+    vlm_only: false
+    enabled: true
+    extra_args: ["+perturb.culture=western"]
+  privacylens_east_asian:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_perturb_async
+    finalize_pipeline: privacylens_async_finalize
+    vlm_only: false
+    enabled: true
+    extra_args: ["+perturb.culture=east_asian"]
+  privacylens_south_asian:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_perturb_async
+    finalize_pipeline: privacylens_async_finalize
+    vlm_only: false
+    enabled: true
+    extra_args: ["+perturb.culture=south_asian"]
+  privacylens_arabic_me:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_perturb_async
+    finalize_pipeline: privacylens_async_finalize
+    vlm_only: false
+    enabled: true
+    extra_args: ["+perturb.culture=arabic_me"]
+  privacylens_african:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_perturb_async
+    finalize_pipeline: privacylens_async_finalize
+    vlm_only: false
+    enabled: true
+    extra_args: ["+perturb.culture=african"]
+  privacylens_african_american:
+    module: dagspaces.privacylens.cli
+    pipeline: privacylens_perturb_async
+    finalize_pipeline: privacylens_async_finalize
+    vlm_only: false
+    enabled: true
+    extra_args: ["+perturb.culture=african_american"]

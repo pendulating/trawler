@@ -1,0 +1,16 @@
+# @package _global_
+model:
+  model_source: /share/pierson/matt/zoo/models/Phi-4
+  model_family: phi-4
+  # phi-4 hedges in prose on confaide tier2 and truncated before any rating
+  # (2026-05-27 sweep: 100% finish_reason=length at 32 tokens). Opt into the
+  # confaide "rating first" format directive + larger budget. Format-only nudge;
+  # paper prompt is unchanged for models without this flag.
+  force_answer_format: true
+  engine_kwargs:
+    max_model_len: 8192
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+  batch_size: 0
+  concurrency: 1

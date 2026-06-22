@@ -1,0 +1,68 @@
+# @package _global_
+# Per-model revalidation sweep — openthinker3-7b/sft-ci ONLY.
+#
+# Counterpart to reasoning_revalidate_ctxreasoner_2026_06_08.yaml. The shared
+# 2026-06-07 sweep applied repetition_penalty=1.3 to this model too, and it was
+# strictly harmful here:
+#   cirl_vignettes  was PASSING at baseline -> 0.484 with rep1.3 (the penalty
+#       pushed clean (A)/(B) verdicts into garbled, code-switched output:
+#       "No"/"Yes"/\boxed{NO}/\boxed{В} instead of the MCQ letters).
+#   confaide parse_responses_2a  was PASSING at baseline -> 0.58-0.67 with rep1.3
+#       (same degradation into multilingual chaos).
+# So openthinker carries NO repetition penalty. cirl_vignettes reverts to its
+# passing baseline; confaide tier2a is carried by the model-agnostic parser fix
+# (confaide/stages/parse_responses.py), which lifts this run's degraded text to
+# 0.714 and should clear higher without the penalty.
+#
+# KNOWN RESIDUAL (not addressed here): confaide parse_responses_3_control was
+# 0.682 at baseline — the `</think>\n</think>...` degenerate spam emits no
+# yes/no token at all, so neither the parser fix (tier-2 only) nor removing rep
+# penalty recovers it. If this gate trips again it reflects genuine checkpoint
+# degeneracy on that tier, to be decided separately (e.g. relax the sanity gate
+# for this checkpoint).
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun \
+#       +sweep=reasoning_revalidate_openthinker_2026_06_08
+
+benchmark_filter:
+  include:
+    - confaide
+    - cirl_vignettes
+  exclude: []
+
+# Gold-scored only -> no judge traffic. Disable the sidecar.
+judge_sidecar:
+  enabled: false
+
+benchmarks:
+  confaide:
+    # temp=0.0 is already the confaide default for this model (no sampling_params
+    # in its model config); stated explicitly to document intent and pin it.
+    extra_args:
+      - sampling_params.temperature=0.0
+  cirl_vignettes:
+    # No overrides — revert to the passing baseline (no repetition penalty).
+    extra_args: []
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 1
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      model: openthinker3-7b/sft-ci

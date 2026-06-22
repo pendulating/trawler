@@ -11,3 +11,11 @@ model:
     trust_remote_code: true
   batch_size: 0
   concurrency: 1
+
+# At temperature=0 this reasoning model degenerates into repetition loops —
+# in the 2026-05-27 eval_all sweep, cirl_vignettes output looped on
+# `<CI>...</CI><|begin_of_solution|` and never emitted an (A)/(B) verdict
+# (0/669 unparseable rows contained any answer token). A nonzero temperature
+# breaks the loop. Seed is fixed in the stage sampling_params for reproducibility.
+sampling_params:
+  temperature: 0.6

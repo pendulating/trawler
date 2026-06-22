@@ -63,17 +63,24 @@ def clean_gutenberg_boilerplate(text: str) -> str:
 
     return text.strip()
 
-def chunk_text(text: str, chunk_size: int = 2000, overlap: int = 200) -> List[str]:
+def chunk_text(text: str, chunk_size: int = 6000, overlap: int = 1000) -> List[str]:
     """Semantic chunking by paragraph with character-level overlap.
 
     Builds chunks up to *chunk_size* characters by appending whole
     paragraphs.  When a chunk is full, the next chunk starts with the
     last *overlap* characters of the previous chunk so downstream stages
     never lose context at chunk boundaries.
+
+    Invariant: no emitted chunk exceeds *chunk_size* characters.  Content
+    that does not fit alongside the overlap seed is packed sentence-by-
+    sentence, and sentences that cannot fit on a freshly seeded chunk are
+    hard-split at the character level.  A chunk is only emitted once it
+    holds content beyond its overlap seed (no duplicate-only chunks).
     """
     paragraphs = re.split(r'\n\s*\n', text)
     chunks: List[str] = []
     current_chunk = ""
+    seed_len = 0  # length of the overlap seed at the head of current_chunk
 
     for para in paragraphs:
         para = para.strip()
@@ -82,31 +89,44 @@ def chunk_text(text: str, chunk_size: int = 2000, overlap: int = 200) -> List[st
 
         if len(current_chunk) + len(para) + 2 < chunk_size:
             current_chunk += para + "\n\n"
-        else:
-            if current_chunk:
+            continue
+
+        if len(current_chunk) > seed_len:
+            chunks.append(current_chunk.strip())
+            # Start next chunk with the trailing overlap from the previous
+            prev = current_chunk.strip()
+            current_chunk = prev[-overlap:] + "\n\n" if overlap and len(prev) > overlap else ""
+            seed_len = len(current_chunk)
+
+        if len(current_chunk) + len(para) + 2 < chunk_size:
+            current_chunk += para + "\n\n"
+            continue
+
+        # Paragraph doesn't fit even on a freshly seeded chunk: pack it
+        # sentence-by-sentence so no chunk exceeds chunk_size.
+        sentences = re.split(r'(?<=[.!?])\s+', para)
+        for sentence in sentences:
+            if len(current_chunk) + len(sentence) + 1 < chunk_size:
+                current_chunk += sentence + " "
+                continue
+            if len(current_chunk) > seed_len:
                 chunks.append(current_chunk.strip())
-                # Start next chunk with the trailing overlap from the previous
                 prev = current_chunk.strip()
-                current_chunk = prev[-overlap:] + "\n\n" if overlap and len(prev) > overlap else ""
+                current_chunk = prev[-overlap:] + " " if overlap and len(prev) > overlap else ""
+                seed_len = len(current_chunk)
+            # Sentence doesn't fit even on a fresh seed: hard-split it.
+            while len(current_chunk) + len(sentence) + 1 >= chunk_size:
+                room = max(1, chunk_size - len(current_chunk) - 1)
+                chunks.append((current_chunk + sentence[:room]).strip())
+                sentence = sentence[room:]
+                prev = chunks[-1]
+                current_chunk = prev[-overlap:] + " " if overlap and len(prev) > overlap else ""
+                seed_len = len(current_chunk)
+            current_chunk += sentence + " "
 
-            # Handle paragraphs larger than chunk_size
-            if len(para) > chunk_size:
-                sentences = re.split(r'(?<=[.!?])\s+', para)
-                for sentence in sentences:
-                    if len(current_chunk) + len(sentence) + 1 < chunk_size:
-                        current_chunk += sentence + " "
-                    else:
-                        if current_chunk:
-                            chunks.append(current_chunk.strip())
-                            prev = current_chunk.strip()
-                            current_chunk = prev[-overlap:] + " " if overlap and len(prev) > overlap else ""
-                        current_chunk += sentence + " "
-            else:
-                current_chunk += para + "\n\n"
-
-    if current_chunk.strip():
+    if current_chunk.strip() and len(current_chunk) > seed_len:
         chunks.append(current_chunk.strip())
-        
+
     return chunks
 
 def fetch_text_from_url(url: str) -> Optional[str]:
@@ -133,8 +153,8 @@ def run_fetch_gutenberg(cfg: Any) -> pd.DataFrame:
     """
     gutenberg_ids = cfg.data.get("gutenberg_ids", [])
     text_urls = cfg.data.get("text_urls", [])
-    chunk_size = cfg.data.get("chunk_size", 2000)
-    overlap = cfg.data.get("overlap", 200)
+    chunk_size = cfg.data.get("chunk_size", 6000)
+    overlap = cfg.data.get("overlap", 1000)
     
     rows = []
 

@@ -11,3 +11,10 @@ model:
     max_num_batched_tokens: 8192
   batch_size: 0
   concurrency: 1
+
+# OpenAI recommends temperature=1.0 for GPT-OSS; low temps cause degenerate
+# repetition loops that exhaust max_tokens before the harmony `final` channel
+# (observed in the 2026-05-27 eval_all sweep: 100% finish_reason=length, all
+# output stuck in the `analysis` channel). Mirrors gpt-oss-20b/sft-ci.yaml.
+sampling_params:
+  temperature: 1.0

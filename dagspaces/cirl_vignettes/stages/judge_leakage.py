@@ -22,46 +22,30 @@ from ..prompts import build_leakage_judge_prompt, parse_leakage_judgment
 
 
 def _get_batch_export_client(cfg: DictConfig) -> JudgeClient:
-    """Offline JudgeClient used by every CIRL-Vignettes batch-export stage.
+    """Offline JudgeClient used by CIRL-Vignettes ``*_judge_batch_export`` stages.
 
-    Ignores every live-mode ``judge.*`` field (``base_url``, ``provider``,
-    ``api_key*``) because the emitted JSONL targets OpenAI's Batch API
-    regardless of how live judging is wired. Reads only:
+    Branches on ``cfg.judge.mode`` via :mod:`dagspaces.common.judge_export`:
 
-      - ``judge.batch.target_model`` (default: ``gpt-5.2``)
-      - ``judge.temperature``        (shared with live mode; default 0.0)
-      - ``judge.max_tokens``         (shared with live mode; default 400)
+    - ``async`` — probes the live judge endpoint, resolves ``judge.model_name``
+      against ``/v1/models``, and stamps the served model into ``body.model``
+      so the sidecar forwards requests vLLM actually answers.
+    - ``batch_export`` — uses ``judge.batch.target_model`` (no default —
+      operators must spell it out, so typos fail fast).
+
+    The previous behavior unconditionally read ``judge.batch.target_model``
+    regardless of mode, which silently corrupted every async run.
     """
-    target_model = str(
-        OmegaConf.select(cfg, "judge.batch.target_model", default=None)
-        or "gpt-5.2"
-    )
-    temperature = float(
-        OmegaConf.select(cfg, "judge.temperature", default=0.0) or 0.0
-    )
-    max_tokens = int(
-        OmegaConf.select(cfg, "judge.max_tokens", default=400) or 400
-    )
-    client = JudgeClient(
-        base_url="https://api.openai.com/v1",
-        model_name=target_model,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        provider="openai",
-        offline=True,
-    )
-    print(
-        f"[cirl_vignettes] Judge (batch-export, offline): "
-        f"target_model={target_model}", flush=True,
+    from dagspaces.common.judge_export import resolve_export_client
+
+    client, _info = resolve_export_client(
+        cfg, dagspace="cirl_vignettes", default_max_tokens=400,
     )
     return client
 
 
 def _get_batch_export_endpoint(cfg: DictConfig) -> str:
-    return str(
-        OmegaConf.select(cfg, "judge.batch.target_endpoint", default=None)
-        or "/v1/chat/completions"
-    )
+    from dagspaces.common.judge_export import resolve_export_endpoint
+    return resolve_export_endpoint(cfg)
 
 
 def _build_leakage_items(df: pd.DataFrame) -> Tuple[List[Dict[str, Any]], set]:
@@ -135,9 +119,11 @@ def judge_leakage(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     items, skipped_indices = _build_leakage_items(df)
 
     if skipped_indices:
-        print(f"[judge_leakage] WARNING: {len(skipped_indices)}/{len(df)} cases "
-              f"had no valid Action: in generated output (treated as no leakage, "
-              f"matching CI-RL behavior)", flush=True)
+        print(f"[judge_leakage] {len(skipped_indices)}/{len(df)} cases "
+              f"had no valid Action: in generated output (treated as no leakage; "
+              f"compute_format_health will surface this and metrics distinguish "
+              f"`*_among_judged` from `*_overall_with_default_zero`).",
+              flush=True)
     print(f"[judge_leakage] Judging {len(items)} (case, secret) pairs "
           f"across {len(df) - len(skipped_indices)} valid cases", flush=True)
 
@@ -182,9 +168,22 @@ def judge_leakage(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     df["leakage_count"] = leakage_count_col
     df["leakage_judgments"] = judgments_col
 
+    # Stamp format-status columns so compute_trajectory_metrics can split
+    # judged from defaulted rows in conditional metrics.
+    from .judge_helpfulness import _stamp_format_columns
+    df = _stamp_format_columns(df, leakage_skipped=skipped_indices)
+
     leak_count = sum(has_leakage_col)
-    print(f"[judge_leakage] {leak_count}/{len(df)} cases have leakage "
-          f"({leak_count/len(df)*100:.1f}%)", flush=True)
+    judged_n = int(df["leakage_judged"].astype(bool).sum())
+    leak_among_judged = int(
+        (df.loc[df["leakage_judged"].astype(bool), "has_leakage"]).sum()
+    )
+    print(
+        f"[judge_leakage] {leak_count}/{len(df)} cases have leakage overall; "
+        f"{leak_among_judged}/{judged_n} among judged "
+        f"({(leak_among_judged/judged_n*100) if judged_n else 0:.1f}%)",
+        flush=True,
+    )
 
     return df
 
@@ -209,8 +208,9 @@ def export_leakage_judge_batch(
 
     items, skipped_indices = _build_leakage_items(df)
     if skipped_indices:
-        print(f"[judge_leakage_export] WARNING: {len(skipped_indices)}/{len(df)} "
-              f"cases skipped (no valid Action:), treated as no leakage",
+        print(f"[judge_leakage_export] {len(skipped_indices)}/{len(df)} "
+              f"cases skipped (no_action_format). compute_format_health will "
+              f"surface this; metrics distinguish judged vs. defaulted.",
               flush=True)
 
     def custom_id_fn(item: Dict[str, Any], idx: int) -> str:
@@ -262,4 +262,5 @@ def export_leakage_judge_batch(
         f"model={manifest['model']})",
         flush=True,
     )
-    return df.copy()
+    from .judge_helpfulness import _stamp_format_columns
+    return _stamp_format_columns(df, leakage_skipped=skipped_indices)

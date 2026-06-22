@@ -11,7 +11,7 @@
 #     wandb.enabled=false
 
 pipeline:
-  output_root: ${hydra:run.dir}/grpo_smoke
+  output_root: ${hydra:runtime.output_dir}/grpo_smoke
 
   sources:
     sft_checkpoint:

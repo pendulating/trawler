@@ -26,6 +26,8 @@ One directory per pipeline. All invoked with `python -m dagspaces.{name}.cli pip
 
 **Gotcha — prompt defaults**: always use the fiction-specific pipeline variants when processing Gutenberg text (`COLM_norms_fiction_prefetched`, `COLM_flows_fiction_prefetched`, `ci_extraction_from_reasoning_fiction`). The base `ci_extraction.yaml` defaults to **prescriptive** prompts (written for religious texts) and will produce misaligned output on fiction.
 
+**Building larger / different corpora**: the legacy `COLM_fetch_fiction` pipeline is hardcoded to a 10-book list and re-downloads from gutenberg.org on every run. For top-K-by-popularity, top-K-authors × N, or arbitrary ID lists with a durable on-disk cache, use `dagspaces.common.gutenberg` instead — see [howto/build-gutenberg-corpus.md](howto/build-gutenberg-corpus.md). It produces a `chunks.parquet` with a superset of the legacy schema, so `COLM_norms_fiction_prefetched` consumes it via `FICTION_CHUNKS_PATH` unchanged.
+
 ---
 
 ## `grpo_training` — SFT + GRPO

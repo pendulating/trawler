@@ -64,6 +64,35 @@ class NormUniverseRunner(StageRunner):
             "input_rows": input_rows,
         }
 
+        # Surface the universe shape on the W&B run, and version the
+        # universe JSON as an artifact so downstream GRPO runs can record
+        # exactly which universe build they trained against.
+        logger = getattr(context, "logger", None)
+        if logger is not None:
+            try:
+                total_norms = metadata["rows"]
+                logger.log_metrics({
+                    "norm_universe/books": len(norm_universes),
+                    "norm_universe/total_norms": total_norms,
+                    "norm_universe/input_rows": input_rows,
+                    "norm_universe/dropped_invalid_or_duplicate": input_rows - total_norms,
+                })
+                if json_output_path:
+                    logger.log_artifact(
+                        json_output_path,
+                        name="norm_universes",
+                        type="norm_universe",
+                        metadata={
+                            "n_books": len(norm_universes),
+                            "total_norms": total_norms,
+                            "norms_per_book": {
+                                k: len(v) for k, v in sorted(norm_universes.items())
+                            },
+                        },
+                    )
+            except Exception as e:
+                print(f"[{self.stage_name}] WARNING: W&B logging failed: {e}")
+
         outputs = {}
         if json_output_path:
             outputs["dataset"] = json_output_path

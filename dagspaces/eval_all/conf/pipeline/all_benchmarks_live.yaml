@@ -23,19 +23,34 @@ benchmarks:
     module: dagspaces.goldcoin_hipaa.cli
     pipeline: full_eval
     vlm_only: false
+    enabled: true
   privacylens:
     module: dagspaces.privacylens.cli
     pipeline: privacylens_clean
     vlm_only: false
+    enabled: true
   cirl_vignettes:
     module: dagspaces.cirl_vignettes.cli
     pipeline: cirl_vignettes_eval
     vlm_only: false
+    enabled: true
   confaide:
     module: dagspaces.confaide.cli
     pipeline: confaide_eval
     vlm_only: false
+    enabled: true
   vlm_geoprivacy:
     module: dagspaces.vlm_geoprivacy_bench.cli
     pipeline: mcq_eval
     vlm_only: true
+    enabled: true
+  simpleqa_verified:
+    module: dagspaces.simpleqa_verified.cli
+    pipeline: simpleqa_verified_eval
+    vlm_only: false
+    enabled: false
+  mmlu:
+    module: dagspaces.mmlu.cli
+    pipeline: mmlu_eval
+    vlm_only: false
+    enabled: false

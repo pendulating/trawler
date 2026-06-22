@@ -44,7 +44,7 @@ This distinction is verifiable and becomes a reward signal during GRPO.
 
 ### Robustness / fallback notes
 
-- **Silent `has_information_exchange` fallback**: if guided decoding omits this field, `ci_reasoning` infers it from `len(flows) > 0`. Decoding failures can go unnoticed.
+- **`has_information_exchange` fallback is a dead path in practice**: the field is required by the guided-decoding schema (`CIReasoningList`), so the `len(flows) > 0` inference in `ci_reasoning.py` only fires if `extract_json` hand-repairs a malformed output that dropped the field — a narrow edge case, not a routine silent fallback (verified 2026-06-09 review, S11).
 - **Conservative row-expansion defaults**: the flow-expansion step applies empty-string defaults on malformed flow entries so the pipeline doesn't crash mid-run. Schema validity is enforced upstream by guided decoding, but check parse traces if numbers look off.
 - **Extraction receives a per-flow snippet**, not the full chunk, with fallback to `article_text` if the snippet is absent. Reasoning sees the whole chunk; extraction sees the snippet the reasoning pointed to. Affects context-dependent flows that need wider lookaround.
 
@@ -68,4 +68,4 @@ At GRPO time, each extracted flow retrieves top-k norms from $\hat{\mathcal{N}}_
 
 Default: **Qwen2.5-72B-Instruct-AWQ** on 2 GPUs with guided decoding for schema validity. Config: `dagspaces/common/conf/model/qwen2.5-72b/awq.yaml`.
 
-Judge model for `R_ground`: Qwen2.5-32B-Instruct (configurable in judge server).
+Judge model for `R_ground`: **Qwen3.6-27B** (TP=2; served by `scripts/judge_server.sub` or `scripts/launch_auxiliary_servers.sh`; configurable via `JUDGE_MODEL` env var).

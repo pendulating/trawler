@@ -1,9 +1,24 @@
 # @package _global_
-# Qwen3.5-9B + SFT LoRA adapter via vLLM native LoRA
+# Qwen3.5-9B-Instruct + SFT LoRA adapter via vLLM native LoRA.
+#
+# Backbone: /share/pierson/matt/zoo/models/Qwen3.5-9B (the instruct weights;
+# the pretraining-only base lives at Qwen3.5-9B-Base and is wired via
+# qwen3.5-9b/base.yaml).
+#
+# CURRENT (COLM paper sweep): 1111-instruct flavor from the SFT pair-format
+# ablation (all four flow_* toggles True). Source run:
+#   multirun/2026-04-28_sft_pair_ablation/18-34-09/
+#     ctx-True_appr-True_norms-True_conf-True/
+# Adapter's base_model_name_or_path matches the model_source below.
+# See notebooks/wicked/sft_pair_ablation_eval.ipynb for the ablation analysis.
+#
+# Previous lora_path (kept for reference; paper now uses the 1111-instruct):
+#   multirun/2026-03-24_grpo_training/19-29-34/sft_only/outputs/sft/checkpoint
 model:
   model_source: /share/pierson/matt/zoo/models/Qwen3.5-9B
   model_family: qwen3.5
-  lora_path: /share/pierson/matt/UAIR/multirun/2026-03-24_grpo_training/19-29-34/sft_only/outputs/sft/checkpoint
+  lora_path: /share/pierson/matt/UAIR/multirun/2026-04-28_sft_pair_ablation/18-34-09/ctx-True_appr-True_norms-True_conf-True/sft_only/outputs/sft/checkpoint
+  thinking_mode: off
   chat_template_kwargs:
     enable_thinking: false
   engine_kwargs:

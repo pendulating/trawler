@@ -102,6 +102,9 @@ class _NoOpLogger:
     def set_config(self, data: Dict[str, Any], allow_val_change: bool = True) -> None:
         pass
 
+    def log_artifact(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
     def log_sanity_report(self, report: Any) -> None:
         # Even with wandb disabled, surface warnings on stderr so the
         # operator sees them. Tolerate any non-SanityReport object.

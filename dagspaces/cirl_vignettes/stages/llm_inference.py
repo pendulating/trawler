@@ -11,7 +11,10 @@ from typing import Any, Dict
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 
-from dagspaces.common.vllm_inference import run_vllm_inference
+from dagspaces.common.vllm_inference import (
+    model_needs_reasoning_budget,
+    run_vllm_inference,
+)
 from ..prompts import build_prompt_for_row
 
 
@@ -25,17 +28,10 @@ def run_llm_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     sp_dict.pop("trajectory_temperature", None)
     sp_dict.pop("trajectory_max_tokens", None)
 
-    # Thinking models need more tokens for reasoning before the answer
-    _strips_thinking = False
-    try:
-        ctk = getattr(cfg.model, "chat_template_kwargs", None) or {}
-        if hasattr(ctk, "enable_thinking"):
-            _strips_thinking = not bool(ctk.enable_thinking)
-        elif isinstance(ctk, dict):
-            _strips_thinking = not bool(ctk.get("enable_thinking", True))
-    except Exception:
-        pass
-    if _strips_thinking:
+    # Reasoning models (enable_thinking=false OR a harmony/qwen3/deepseek
+    # reasoning parser, e.g. gpt-oss) spend tokens on hidden CoT before the
+    # answer — give them a generous budget so the (A)/(B) choice survives.
+    if model_needs_reasoning_budget(cfg.model):
         sp_dict["max_tokens"] = max(sp_dict.get("max_tokens", 16), 4096)
     elif think:
         sp_dict["max_tokens"] = max(sp_dict.get("max_tokens", 16), 512)

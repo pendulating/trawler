@@ -42,7 +42,7 @@ training:
     context_embedding_model: all-MiniLM-L6-v2
 
 pipeline:
-  output_root: ${hydra:run.dir}/grpo_programmatic_only
+  output_root: ${hydra:runtime.output_dir}/grpo_programmatic_only
 
   sources:
     sft_checkpoint:

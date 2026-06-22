@@ -1,0 +1,38 @@
+# @package _global_
+# Hydra sweep: 1-GPU models, judge server on port 9015 (max 3 concurrent).
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun +sweep=colm_1gpu_judge1
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 2
+    setup:
+      # Ensure sbatch (via ~/.local/bin shim) and srun (from the slurm client
+      # dir) resolve when the monitor job runs on a compute node whose
+      # default PATH lacks them — matches slurm_monitor.yaml's workaround.
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      model: >-
+        qwen3.5-2b/base,
+        qwen3.5-2b/instruct,
+        qwen3.5-4b/base,
+        qwen3.5-4b/instruct,
+        qwen3.5-9b/base, 
+        qwen3.5-9b/instruct, 
+        qwen3.5-9b/sft-ci
+

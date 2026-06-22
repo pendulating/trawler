@@ -39,13 +39,9 @@ def _generate_vignettes(
     Returns list of dicts with: prompt_text, source_id, gold_judgment,
     source_norm (full norm dict), normative_force.
     """
-    # Map normative_force → gold judgment
-    _FORCE_TO_GOLD = {
-        "obligatory": "yes",
-        "recommended": "yes",
-        "prohibited": "no",
-        "discouraged": "no",
-    }
+    # Map normative_force → gold judgment (single source of truth in deontic.py,
+    # shared with the reranker judge's appropriateness-consistency term).
+    from .deontic import FORCE_TO_GOLD as _FORCE_TO_GOLD
 
     vignettes = []
     for source_id, norms in norm_universes.items():
@@ -349,6 +345,17 @@ def run_grpo_training_stage(
         OmegaConf.select(cfg, "training.grpo"), resolve=True
     )
 
+    # Seed all RNGs (Python random, NumPy, torch) up front so that every source
+    # of run-to-run variation downstream — the no-flow downsampling + shuffle in
+    # _build_grpo_dataset, the data sampler, generation sampling, and model init —
+    # is controlled by a single seed. This makes each run reproducible given its
+    # seed and is the basis for the seed-variance sweep (sweep/seed_variance.yaml),
+    # which holds all hyperparameters fixed and varies only training.grpo.seed.
+    from transformers import set_seed as _set_seed
+    seed = int(grpo_cfg.get("seed", 42))
+    _set_seed(seed)
+    print(f"[grpo_training] Seeded all RNGs with seed={seed}")
+
     # Load chunks
     chunks_df = pd.read_parquet(chunks_path)
 
@@ -467,16 +474,25 @@ def run_grpo_training_stage(
     # Online R_ground: use embedding + judge servers instead of cached lookup
     online_rground = None
     use_online_rground = grpo_cfg.get("online_rground", False) and weights[5] > 0.0
-    _contrastive = grpo_cfg.get("contrastive_ratio", 0.1)
+    _contrastive = grpo_cfg.get("contrastive_ratio", 0.0)
     # Contrastive pairing works with both online and cached R_ground.
     # Contrastive rows are added as new dataset entries (with a trailing
     # newline to make the formatted prompt key unique).  OnlineRGround
     # retrieves norms from the wrong source for contrastive completions,
     # producing naturally low R_ground.
     if use_online_rground:
-        from .clients import EmbeddingClient, JudgeClient, NormRetriever
+        from .clients import (
+            EmbeddingClient,
+            JudgeClient,
+            NormRetriever,
+            RerankerJudgeClient,
+        )
         from .online_rground import OnlineRGround
-        from ..schemas import FlowGovernanceJudgment, NoFlowCoverageJudgment
+        from ..schemas import (
+            CompletionRankingJudgment,
+            FlowGovernanceJudgment,
+            NoFlowCoverageJudgment,
+        )
 
         emb_port = grpo_cfg.get("embedding_server_port", 8001)
         judge_port = grpo_cfg.get("judge_server_port", 8002)
@@ -518,17 +534,66 @@ def run_grpo_training_stage(
         nf_system_prompt = str(OmegaConf.select(nf_prompt_cfg, "system_prompt") or "") if nf_prompt_cfg else ""
         nf_prompt_template = str(OmegaConf.select(nf_prompt_cfg, "prompt_template") or "") if nf_prompt_cfg else ""
 
+        # Listwise ranking judge prompt (rground_scoring="ranked")
+        rk_prompt_cfg = OmegaConf.select(cfg, "prompt_reward_judge_ranking")
+        rk_system_prompt = str(OmegaConf.select(rk_prompt_cfg, "system_prompt") or "") if rk_prompt_cfg else ""
+        rk_prompt_template = str(OmegaConf.select(rk_prompt_cfg, "prompt_template") or "") if rk_prompt_cfg else ""
+
         embedding_client = EmbeddingClient(
             base_url=embedding_url,
             model_name=emb_model_name,
         )
-        judge_client = JudgeClient(
-            base_url=judge_url,
-            model_name=judge_model_name,
-            system_prompt=system_prompt,
-            prompt_template=prompt_template,
-            json_schema=FlowGovernanceJudgment.model_json_schema(),
-        )
+
+        # Judge backend: the generative LLM judge (default) or a cross-encoder
+        # reranker (Qwen3-Reranker) that scores grounding ~10x cheaper. The
+        # reranker is duck-typed to JudgeClient, so OnlineRGround is unchanged;
+        # it covers norm_match/governance but folds appropriateness into a
+        # single relevance ordering (see RerankerJudgeClient docstring).
+        _judge_backend = str(grpo_cfg.get("rground_judge_backend", "llm")).lower()
+        _judge_workers = int(grpo_cfg.get("judge_max_workers", 16))
+        if _judge_backend == "reranker":
+            rr_port = grpo_cfg.get("reranker_server_port", 8003)
+            reranker_url = (
+                str(grpo_cfg.get("reranker_server_url") or "")
+                or os.environ.get("GRPO_RERANKER_SERVER_URL", "")
+                or f"http://localhost:{rr_port}"
+            )
+            reranker_model_name = str(
+                OmegaConf.select(cfg, "reranker_model.model_source")
+                or grpo_cfg.get("reranker_model_name")
+                or ""
+            )
+            _rr_instruction = str(grpo_cfg.get("reranker_instruction") or "").strip()
+            _rr_app_weight = float(grpo_cfg.get("reranker_app_weight", 0.2))
+            _rr_kwargs = {
+                "base_url": reranker_url,
+                "model_name": reranker_model_name,
+                "max_workers": _judge_workers,
+                "app_weight": _rr_app_weight,
+            }
+            if _rr_instruction:
+                _rr_kwargs["instruction"] = _rr_instruction
+            judge_client = RerankerJudgeClient(**_rr_kwargs)
+            print(f"[grpo_training] R_ground judge backend=reranker "
+                  f"(url={reranker_url}, model={reranker_model_name or '<default>'}, "
+                  f"app_weight={_rr_app_weight})")
+        elif _judge_backend == "llm":
+            judge_client = JudgeClient(
+                base_url=judge_url,
+                model_name=judge_model_name,
+                system_prompt=system_prompt,
+                prompt_template=prompt_template,
+                json_schema=FlowGovernanceJudgment.model_json_schema(),
+                # vLLM batches concurrent requests; the prescreen pass issues
+                # thousands of ranking calls, so low concurrency dominates
+                # wall-clock (4 workers × ~2200 calls was a >12h pass).
+                max_workers=_judge_workers,
+            )
+        else:
+            raise ValueError(
+                f"[grpo_training] unknown rground_judge_backend={_judge_backend!r} "
+                f"(expected 'llm' or 'reranker')"
+            )
 
         norm_retriever = NormRetriever(
             norm_universes=norm_universes,
@@ -537,6 +602,18 @@ def run_grpo_training_stage(
         )
 
         _contrastive_lambda = float(grpo_cfg.get("contrastive_lambda", 0.5))
+        _rground_scoring = str(grpo_cfg.get("rground_scoring", "absolute"))
+        # Deontic appropriateness-consistency blend (default 0 = legacy/grounding
+        # only). For the LLM-judge ranked path this mirrors the reranker backend's
+        # reranker_app_weight: blend the deterministic norm-force→appropriateness
+        # check into R_ground so the reward rewards context-relative judgments,
+        # not just topical grounding.
+        _rground_app_weight = float(grpo_cfg.get("rground_app_weight", 0.0))
+        if _rground_scoring == "ranked" and not rk_prompt_template:
+            raise ValueError(
+                "[grpo_training] rground_scoring='ranked' requires the "
+                "prompt_reward_judge_ranking config (prompt/reward_judge_ranking.yaml)"
+            )
         online_rground = OnlineRGround(
             embedding_client=embedding_client,
             judge_client=judge_client,
@@ -546,16 +623,27 @@ def run_grpo_training_stage(
             no_flow_judge_system_prompt=nf_system_prompt,
             no_flow_judge_prompt_template=nf_prompt_template,
             no_flow_judge_json_schema=NoFlowCoverageJudgment.model_json_schema(),
+            scoring_mode=_rground_scoring,
+            ranking_system_prompt=rk_system_prompt,
+            ranking_prompt_template=rk_prompt_template,
+            ranking_json_schema=CompletionRankingJudgment.model_json_schema(),
+            rank_top_k=int(grpo_cfg.get("rank_top_k", 5)),
+            rank_weight=float(grpo_cfg.get("rank_weight", 0.5)),
+            app_weight=_rground_app_weight,
         )
         print(f"[grpo_training] Online R_ground enabled "
               f"(embed={embedding_url}, judge={judge_url}, "
-              f"contrastive_lambda={_contrastive_lambda})")
+              f"scoring={_rground_scoring}, "
+              f"contrastive_lambda={_contrastive_lambda}, "
+              f"app_weight={_rground_app_weight})")
     elif not use_online_rground and weights[5] > 0.0:
         print(f"[grpo_training] R_ground using cached lookup "
               f"({len(reward_cache)} entries)")
 
     _nf_scoring = grpo_cfg.get("no_flow_scoring", "independent")
+    _composition = str(grpo_cfg.get("reward_composition", "additive"))
     _judgment_weights = list(grpo_cfg.get("judgment_reward_weights", [0.5, 0.25, 0.25]))
+    _abstention_penalty = float(grpo_cfg.get("abstention_penalty", 0.0))
     reward_fn = CompositeRewardFunction(
         weights=weights,
         norm_universes=norm_universes,
@@ -567,8 +655,11 @@ def run_grpo_training_stage(
         online_rground=online_rground,
         no_flow_scoring=_nf_scoring,
         judgment_weights=_judgment_weights,
+        composition=_composition,
+        abstention_penalty=_abstention_penalty,
     )
-    print(f"[grpo_training] No-flow scoring mode: {_nf_scoring}")
+    print(f"[grpo_training] No-flow scoring mode: {_nf_scoring}, "
+          f"reward composition: {_composition}")
     reward_fn.enable_thinking_grpo = enable_thinking_grpo
     print(f"[grpo_training] Reward traces → {trace_log_path} (every {trace_every} calls)")
 
@@ -774,6 +865,54 @@ def run_grpo_training_stage(
     print(f"[grpo_training] Gold labels: {n_gold_pos} has_exchange=True, "
           f"{n_gold_neg} has_exchange=False, {n_gold_unk} unknown")
 
+    # --- Variance pre-screening (Phase 2) ---
+    # Sample G completions per prompt from the merged SFT policy and drop
+    # prompts whose group reward std is ~0 — they produce zero-advantage
+    # GRPO groups and only burn generation + judge throughput. Runs before
+    # TRL's colocated vLLM engine exists; its own engine is torn down inside.
+    # reward_fn.prompt_metadata is already populated, so scoring matches
+    # training exactly.
+    from .prompt_screening import prescreen_dataset
+    _n_pre_screen = len(dataset)
+    dataset = prescreen_dataset(
+        dataset, reward_fn, merged_dir, grpo_cfg, output_dir,
+        cache_identity=sft_checkpoint,
+        composite_config_path=base_model_path,
+    )
+    _n_screened_out = _n_pre_screen - len(dataset)
+
+    # --- Held-out dev split (Phase 5a) ---
+    # TRL evaluates reward on eval_dataset (generation + reward pass every
+    # eval_steps), giving a held-out reward curve — the first-line signal
+    # for "is GRPO learning anything that generalizes".
+    _dev_fraction = float(grpo_cfg.get("dev_fraction", 0.0))
+    eval_dataset = None
+    if _dev_fraction > 0.0 and len(dataset) >= 20:
+        _split = dataset.train_test_split(test_size=_dev_fraction, seed=seed)
+        dataset, eval_dataset = _split["train"], _split["test"]
+        print(f"[grpo_training] Dev split: {len(dataset)} train / "
+              f"{len(eval_dataset)} dev prompts (dev_fraction={_dev_fraction})")
+    elif _dev_fraction > 0.0:
+        print(f"[grpo_training] Skipping dev split: only {len(dataset)} "
+              f"prompts after screening")
+
+    # Gold-label stats of the FINAL training set (post-screen, post-split) —
+    # the promotion gates compare the policy's no-flow rate against this
+    # base rate, so it must describe what the model actually trains on.
+    _train_gold_pos = sum(1 for r in dataset if r.get("gold_has_exchange") is True)
+    _train_gold_neg = sum(1 for r in dataset if r.get("gold_has_exchange") is False)
+    # Vignette accounting (2026-06-09 review, F6): screening can strip
+    # vignettes disproportionately (their judgment rewards often have
+    # degenerate variance under the SFT policy), so the configured
+    # vignette_ratio describes the PRE-screen mix only. Record the realized
+    # post-screen count so the paper's mix claim is auditable.
+    _train_vignettes = sum(1 for r in dataset if r.get("task_type") == "norm_judgment")
+    if n_vignette_meta:
+        print(f"[grpo_training] Vignettes in final training set: "
+              f"{_train_vignettes}/{len(dataset)} "
+              f"({_train_vignettes / max(len(dataset), 1):.1%}; "
+              f"pre-screen {n_vignette_meta}, configured ratio {_vignette_ratio})")
+
     # vLLM mode configuration
     vllm_mode = grpo_cfg.get("vllm_mode", "colocate")
     use_vllm = grpo_cfg.get("use_vllm", True)
@@ -796,8 +935,34 @@ def run_grpo_training_stage(
         save_strategy=grpo_cfg.get("save_strategy", "steps"),
         save_steps=grpo_cfg.get("save_steps", 200),
         use_vllm=use_vllm,
+        seed=seed,
+        data_seed=seed,
         report_to="wandb" if OmegaConf.select(cfg, "wandb.enabled") else "none",
     )
+
+    # Optimizer/objective knobs that TRL otherwise defaults silently
+    # (beta=0.0 → no KL anchor, scale_rewards="group" → std-scaled
+    # advantages, mask_truncated_completions=False, num_iterations=1,
+    # epsilon_high=epsilon=0.2 → symmetric clip,
+    # vllm_importance_sampling_mode="sequence_mask" → zeroes the WHOLE
+    # completion's gradient when its summed logp-mismatch exceeds the cap,
+    # which length-biases against long completions; "token_truncate" clamps
+    # per-token instead). Only forwarded when set in the training config so
+    # configs that omit them keep TRL defaults.
+    for _knob in ("beta", "scale_rewards", "mask_truncated_completions",
+                  "num_iterations", "epsilon_high",
+                  "vllm_importance_sampling_mode", "vllm_importance_sampling_cap"):
+        _val = grpo_cfg.get(_knob)
+        if _val is not None:
+            grpo_config_kwargs[_knob] = _val
+
+    # Held-out reward evaluation on the dev split. The global eval batch
+    # must be divisible by num_generations (TRL constraint), so use exactly
+    # one group per eval batch.
+    if eval_dataset is not None:
+        grpo_config_kwargs["eval_strategy"] = "steps"
+        grpo_config_kwargs["eval_steps"] = int(grpo_cfg.get("eval_steps", 50))
+        grpo_config_kwargs["per_device_eval_batch_size"] = grpo_config_kwargs["num_generations"]
 
     # Optional overrides: max_steps / warmup_steps take precedence over ratio
     max_steps = grpo_cfg.get("max_steps")
@@ -808,6 +973,18 @@ def run_grpo_training_stage(
         grpo_config_kwargs["warmup_steps"] = int(warmup_steps)
     else:
         grpo_config_kwargs["warmup_ratio"] = grpo_cfg.get("warmup_ratio", 0.1)
+
+    # LR schedule (v6 2026-06-19): TRL/HF default the GRPO scheduler to a cosine
+    # that decays to ~0 by end-of-run — the v5 trace showed the effective lr ≈ 0
+    # over the back half, so the (correct) gold-flow advantage was never followed.
+    # "cosine_with_min_lr" floors the schedule at min_lr_rate * peak_lr instead of
+    # zero, keeping the update alive across all epochs. Only forwarded when set.
+    lr_scheduler_type = grpo_cfg.get("lr_scheduler_type")
+    if lr_scheduler_type is not None:
+        grpo_config_kwargs["lr_scheduler_type"] = str(lr_scheduler_type)
+        min_lr_rate = grpo_cfg.get("min_lr_rate")
+        if min_lr_rate is not None:
+            grpo_config_kwargs["lr_scheduler_kwargs"] = {"min_lr_rate": float(min_lr_rate)}
 
     if use_vllm:
         grpo_config_kwargs["vllm_mode"] = vllm_mode
@@ -895,6 +1072,9 @@ def run_grpo_training_stage(
             print(f"[grpo_training] Warning: failed to patch TRL vLLM init: {e}")
 
     print(f"[grpo_training] Starting GRPO (G={training_args.num_generations}, "
+          f"lr={training_args.learning_rate}, beta={training_args.beta}, "
+          f"scale_rewards={training_args.scale_rewards}, "
+          f"mask_truncated={training_args.mask_truncated_completions}, "
           f"vllm={use_vllm}, mode={vllm_mode if use_vllm else 'N/A'})")
 
     # Callback to fix base_model_name_or_path in intermediate checkpoint
@@ -920,6 +1100,7 @@ def run_grpo_training_stage(
         reward_funcs=reward_fn,
         args=training_args,
         train_dataset=dataset,
+        eval_dataset=eval_dataset,
         processing_class=tokenizer,
         callbacks=[_FixAdapterBasePathCallback()],
     )
@@ -949,15 +1130,38 @@ def run_grpo_training_stage(
     _training_meta = {
         "contrastive_ratio": _contrastive,
         "contrastive_lambda": float(grpo_cfg.get("contrastive_lambda", 0.5)),
+        "num_generations": training_args.num_generations,
+        "learning_rate": training_args.learning_rate,
+        "lr_scheduler_type": str(training_args.lr_scheduler_type),
+        "min_lr_rate": grpo_cfg.get("min_lr_rate"),
+        "num_epochs": grpo_config_kwargs["num_train_epochs"],
+        "beta": training_args.beta,
+        "scale_rewards": training_args.scale_rewards,
+        "mask_truncated_completions": training_args.mask_truncated_completions,
+        "num_iterations": training_args.num_iterations,
+        "epsilon_high": training_args.epsilon_high,
         "vignette_ratio": _vignette_ratio,
+        "n_vignettes_pre_screen": n_vignette_meta,
+        # Final training set (post-screen, post-split), like n_flow_chunks —
+        # the realized vignette mix, vs. the configured pre-screen ratio.
+        "n_vignettes_post_screen": _train_vignettes,
         "judgment_reward_weights": _judgment_weights,
         "no_flow_scoring": _nf_scoring,
+        "reward_composition": _composition,
+        "abstention_penalty": _abstention_penalty,
+        "rground_scoring": str(grpo_cfg.get("rground_scoring", "absolute")),
+        "rground_judge_backend": str(grpo_cfg.get("rground_judge_backend", "llm")).lower(),
+        "reranker_app_weight": float(grpo_cfg.get("reranker_app_weight", 0.2)),
+        "rground_app_weight": float(grpo_cfg.get("rground_app_weight", 0.0)),
         "reward_weights": list(weights),
         "online_rground": use_online_rground,
         "enable_thinking_grpo": enable_thinking_grpo,
         "n_training_rows": len(dataset),
-        "n_flow_chunks": n_gold_pos,
-        "n_no_flow_chunks": n_gold_neg,
+        "n_screened_out": _n_screened_out,
+        "dev_fraction": _dev_fraction,
+        "n_dev_rows": len(eval_dataset) if eval_dataset is not None else 0,
+        "n_flow_chunks": _train_gold_pos,
+        "n_no_flow_chunks": _train_gold_neg,
         "base_model": base_model_path,
         "sft_checkpoint": sft_checkpoint,
     }
@@ -966,23 +1170,46 @@ def run_grpo_training_stage(
         json.dump(_training_meta, _mf, indent=2)
     print(f"[grpo_training] Wrote training metadata to {_meta_path}")
 
-    # Update W&B config with runtime training stats (if TRL's wandb run is active)
+    # Mirror the FULL training metadata into the W&B run config — same dict
+    # as training_metadata.json, so the two can never drift apart (the old
+    # hand-copied subset silently omitted every redesign knob: rground_scoring,
+    # reward_composition, n_screened_out, vignette counts, beta, ...).
     try:
         import wandb as _wandb
         if _wandb.run is not None:
             _wandb.run.config.update({
                 "grpo_runtime": {
-                    "n_total_rows": len(dataset),
-                    "n_contrastive": sum(1 for m in reward_fn.prompt_metadata.values() if m.get("is_contrastive")),
-                    "n_flow_chunks": n_gold_pos,
-                    "n_no_flow_chunks": n_gold_neg,
-                    "contrastive_ratio": _contrastive,
-                    "reward_weights": list(weights),
-                    "online_rground": use_online_rground,
-                    "enable_thinking_grpo": enable_thinking_grpo,
+                    **_training_meta,
+                    "n_contrastive_rows": sum(
+                        1 for m in reward_fn.prompt_metadata.values()
+                        if m.get("is_contrastive")
+                    ),
                 }
             }, allow_val_change=True)
     except Exception:
         pass
+
+    # Run the promotion gates immediately and put the verdict next to the
+    # training curves — a cell that fails gates should be visible in the
+    # sweep table without anyone remembering to run the checker script.
+    # (scripts/check_grpo_promotion_gates.py still works for re-checks.)
+    try:
+        from ..gates import check_promotion_gates
+        _gates_report = check_promotion_gates(output_dir)
+        _gates_path = os.path.join(output_dir, "promotion_gates.json")
+        with open(_gates_path, "w") as _gf:
+            json.dump(_gates_report, _gf, indent=2)
+        print(f"[grpo_training] Promotion gates: "
+              f"promote={_gates_report.get('promote')} → {_gates_path}")
+        import wandb as _wandb
+        if _wandb.run is not None:
+            _wandb.run.summary["gates/promote"] = bool(_gates_report.get("promote"))
+            for _gname, _g in (_gates_report.get("gates") or {}).items():
+                _wandb.run.summary[f"gates/{_gname}/status"] = _g.get("status")
+                for _k, _v in _g.items():
+                    if isinstance(_v, (int, float)) and not isinstance(_v, bool):
+                        _wandb.run.summary[f"gates/{_gname}/{_k}"] = _v
+    except Exception as _e:
+        print(f"[grpo_training] WARNING: promotion gates did not run: {_e}")
 
     print(f"[grpo_training] Saved GRPO checkpoint to {output_dir}")

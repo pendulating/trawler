@@ -27,7 +27,12 @@ from omegaconf import DictConfig, OmegaConf
 
 # Model families with VLM prompt builders in vlm_geoprivacy_bench.
 # Must match keys in dagspaces/vlm_geoprivacy_bench/model_prompts.py PROMPT_BUILDERS.
-_VLM_FAMILIES = {"qwen2.5-vl", "qwen3-vl", "qwen3.5", "llama-vision", "gemma-3", "internvl2.5", "deepseek-vl2", "phi-4"}
+# NOTE: "phi-4" is intentionally absent. The local /share/.../zoo/models/Phi-4
+# weights are the *text-only* Phi-4, not Phi-4-multimodal — running the VLM
+# benchmark against it crashes vLLM's multimodal renderer
+# ("'HfRenderer' object has no attribute '_mm_req_counter'"). Re-add only if
+# a genuine multimodal Phi-4 checkpoint is wired up.
+_VLM_FAMILIES = {"qwen2.5-vl", "qwen3-vl", "qwen3.5", "llama-vision", "gemma-3", "internvl2.5", "deepseek-vl2"}
 
 
 def _is_vlm_model(model_cfg: DictConfig) -> bool:
@@ -46,6 +51,12 @@ def run_eval_all(cfg: DictConfig) -> None:
     debug = bool(OmegaConf.select(cfg, "runtime.debug") or False)
     sample_n = OmegaConf.select(cfg, "runtime.sample_n")
     is_vlm = _is_vlm_model(model_cfg)
+
+    # Meta benchmark whitelist/blacklist. See conf/benchmark_filter/*.yaml
+    # for named reusable filters. Precedence in the dispatch loop below:
+    # explicit-disable > include-whitelist > exclude-blacklist > vlm_only.
+    benchmark_include = list(OmegaConf.select(cfg, "benchmark_filter.include") or [])
+    benchmark_exclude = list(OmegaConf.select(cfg, "benchmark_filter.exclude") or [])
 
     # Resolve the model config name from Hydra's override list.
     # Hydra stores CLI overrides in cfg; we need the short name (e.g. "qwen3.5-9b")
@@ -127,12 +138,27 @@ def run_eval_all(cfg: DictConfig) -> None:
             module = bench_cfg["module"]
             pipeline = bench_cfg["pipeline"]
             vlm_only = bench_cfg.get("vlm_only", False)
+            enabled = bool(bench_cfg.get("enabled", True))
             extra_args = bench_cfg.get("extra_args") or []
 
-            if vlm_only and (skip_vlm or not is_vlm):
-                reason = "skip_vlm=true" if skip_vlm else f"{model_name} is text-only"
+            # Skip precedence (documented in conf/config.yaml):
+            #   1. enabled=false on the benchmark entry           — always wins
+            #   2. benchmark_filter.include non-empty whitelist
+            #   3. benchmark_filter.exclude blacklist
+            #   4. vlm_only constraint vs. the model family
+            skip_reason: Optional[str] = None
+            if not enabled:
+                skip_reason = "enabled=false"
+            elif benchmark_include and bench_name not in benchmark_include:
+                skip_reason = f"not in benchmark_filter.include={benchmark_include}"
+            elif benchmark_exclude and bench_name in benchmark_exclude:
+                skip_reason = f"in benchmark_filter.exclude={benchmark_exclude}"
+            elif vlm_only and (skip_vlm or not is_vlm):
+                skip_reason = "skip_vlm=true" if skip_vlm else f"{model_name} is text-only"
+
+            if skip_reason:
                 print(f"\n{'='*60}")
-                print(f"SKIP {bench_name} ({reason})")
+                print(f"SKIP {bench_name} ({skip_reason})")
                 print(f"{'='*60}")
                 results[bench_name] = "skipped"
                 continue
@@ -242,6 +268,32 @@ def run_eval_all(cfg: DictConfig) -> None:
         for b, s in finalize_results.items()
         if s not in ("ok",) and not s.startswith("skipped")
     ]
+
+    # Always emit a machine-readable status record next to the outputs. SLURM
+    # reports the eval_all job as "completed successfully" regardless of
+    # per-benchmark outcomes, so without this a failed benchmark is only
+    # discoverable by grepping the submitit _log.out for the EVAL SUMMARY block.
+    # Downstream tooling (and the next audit) can read failures.json directly.
+    try:
+        import json
+        status_path = os.path.join(parent_output_dir, "failures.json")
+        with open(status_path, "w") as fh:
+            json.dump(
+                {
+                    "model": model_name,
+                    "dispatch": results,
+                    "finalize": finalize_results,
+                    "failed": failed,
+                    "success": not failed,
+                },
+                fh,
+                indent=2,
+            )
+        print(f"\n[eval_all] status written → {status_path}")
+    except Exception as exc:  # never let bookkeeping mask the real result
+        print(f"[eval_all] WARNING: could not write failures.json: {exc}",
+              file=sys.stderr)
+
     if failed:
         raise RuntimeError(f"Benchmarks failed: {', '.join(failed)}")
 
@@ -268,7 +320,7 @@ def _launch_judge_sidecar(
         print(
             "[eval_all] judge_sidecar.enabled=true but base_url is empty — "
             "skipping sidecar launch. Set judge_sidecar.base_url or the "
-            "JUDGE_BASE_URL env var.",
+            "JUDGE_SERVER_URL env var (JUDGE_BASE_URL also accepted).",
             file=sys.stderr,
         )
         return None
@@ -444,6 +496,11 @@ def _run_judged_finalize(
             cmd.append("runtime.debug=true")
         if sample_n is not None:
             cmd.append(f"runtime.sample_n={sample_n}")
+        # Forward the same per-benchmark overrides the export used (e.g.
+        # +perturb.culture=<c>) so finalize reattaches to the export's W&B
+        # run (the run id is qualified by culture) instead of forking.
+        for extra in (bench_cfg.get("extra_args") or []):
+            cmd.append(str(extra))
 
         print(f"\n{'='*60}")
         print(f"FINALIZE {bench_name} | pipeline={finalize_pipeline}")

@@ -20,6 +20,7 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
         # New clean PrivacyLens eval runners
         from .privacylens_runners import (
             LoadDatasetRunner,
+            PerturbCultureRunner,
             QAProbeInferenceRunner,
             AgentActionInferenceRunner,
             LeakageJudgeInferenceRunner,
@@ -33,6 +34,7 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
         _STAGE_REGISTRY = {
             # Clean PrivacyLens evaluation pipeline
             "load_dataset": LoadDatasetRunner(),
+            "perturb_culture": PerturbCultureRunner(),
             "qa_probe_inference": QAProbeInferenceRunner(),
             "agent_action_inference": AgentActionInferenceRunner(),
             "leakage_judge_inference": LeakageJudgeInferenceRunner(),

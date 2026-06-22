@@ -1,0 +1,87 @@
+# @package _global_
+#
+# Async-judge variant of the cultural-perturbation pipeline — the eval_all
+# path. Identical to privacylens_async (export-only: QA + agent action on GPU,
+# judge stages emit JSONL requests for the sidecar) with the perturb_culture
+# stage inserted between load_dataset and the inference stages.
+#
+# Culture is NOT pinned here (no /perturb default) so eval_all can set it per
+# benchmark entry with `+perturb.culture=<c>` — the same override flows through
+# to the privacylens_async_finalize pipeline, keeping export + finalize on one
+# W&B run (the run id is qualified by culture in the orchestrator). With no
+# override the perturb_culture stage falls back to the western identity
+# passthrough.
+#
+# Launched by dagspaces/eval_all (pipeline=privacylens_culture); see
+# dagspaces/eval_all/conf/pipeline/privacylens_culture.yaml.
+
+defaults:
+  - /model: qwen2.5-72b/awq
+  - override /hydra/launcher: slurm_monitor
+
+judge:
+  mode: async
+
+wandb:
+  phase: export
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/privacylens_eval
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+
+      # Cultural perturbation: RoBERTa-large NER + deterministic name-bank swap.
+      # Uses a GPU for the transformer NER (falls back to CPU if none).
+      perturb_culture:
+        stage: perturb_culture
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/perturb_culture/dataset.parquet
+        launcher: slurm_gpu_1x
+
+      qa_probe_inference:
+        stage: qa_probe_inference
+        depends_on: [perturb_culture]
+        inputs:
+          dataset: perturb_culture.dataset
+        outputs:
+          dataset: outputs/qa_probe_inference/results.parquet
+        launcher: slurm_gpu_1x
+
+      agent_action_inference:
+        stage: agent_action_inference
+        depends_on: [perturb_culture]
+        inputs:
+          dataset: perturb_culture.dataset
+        outputs:
+          dataset: outputs/agent_action_inference/results.parquet
+        launcher: slurm_gpu_1x
+
+      # --- Async export: writes requests.jsonl + items.parquet + pending.parquet
+      # --- + manifest.json. No GPU; no judge calls. The sidecar fills
+      # --- output.jsonl out-of-band; privacylens_async_finalize consumes it.
+      leakage_judge_batch_export:
+        stage: leakage_judge_batch_export
+        depends_on: [agent_action_inference]
+        inputs:
+          dataset: agent_action_inference.dataset
+        outputs:
+          dataset: outputs/leakage_judge_batch/pending.parquet
+
+      helpfulness_judge_batch_export:
+        stage: helpfulness_judge_batch_export
+        depends_on: [agent_action_inference]
+        inputs:
+          dataset: agent_action_inference.dataset
+        outputs:
+          dataset: outputs/helpfulness_judge_batch/pending.parquet

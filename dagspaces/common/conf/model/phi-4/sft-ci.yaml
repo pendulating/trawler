@@ -3,6 +3,8 @@
 model:
   model_source: /share/pierson/matt/zoo/models/Phi-4
   model_family: phi-4
+  # See phi-4/instruct.yaml — opt into the confaide "rating first" format nudge.
+  force_answer_format: true
   lora_path: /share/pierson/matt/UAIR/multirun/2026-03-24_grpo_training/20-50-16/sft_only/outputs/sft/checkpoint
   engine_kwargs:
     max_model_len: 8192

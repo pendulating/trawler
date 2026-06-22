@@ -5,5 +5,9 @@ model:
   chat_template_kwargs:
     enable_thinking: false
   engine_kwargs:
-    max_model_len: 4096
+    # CIRL is a Qwen2.5 model (native 32K context). The eval harness bumps
+    # max_tokens to 4096 for thinking models; a 4096 max_model_len left zero
+    # room for the prompt, so every request was rejected ("Prompt too long")
+    # and the model produced 100% empty output on every benchmark.
+    max_model_len: 32768
     max_num_seqs: 16

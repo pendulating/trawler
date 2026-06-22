@@ -13,7 +13,7 @@ defaults:
   - override /hydra/launcher: slurm_monitor
 
 pipeline:
-  output_root: ${hydra:run.dir}/norm_universe_and_reward_prep
+  output_root: ${hydra:runtime.output_dir}/norm_universe_and_reward_prep
 
   sources:
     abstracted_norms:

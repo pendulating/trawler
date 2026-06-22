@@ -13,7 +13,7 @@ defaults:
   - override /hydra/launcher: slurm_monitor
 
 pipeline:
-  output_root: ${hydra:run.dir}/grpo_training
+  output_root: ${hydra:runtime.output_dir}/grpo_training
 
   sources:
     abstracted_norms:

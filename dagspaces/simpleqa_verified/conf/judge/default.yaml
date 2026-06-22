@@ -1,0 +1,27 @@
+# @package _global_
+#
+# Judge config for SimpleQA-Verified grading.
+#
+# Three execution modes:
+#   - live:         judge call inline via JudgeClient.judge_batch
+#   - async:        write requests.jsonl for the eval_all sidecar to drain
+#   - batch_export: write requests.jsonl for OpenAI Batch API submission
+#
+# Live + async use the same in-cluster vLLM judge (scripts/judge_server.sub
+# on klara:8002 by default). batch_export targets OpenAI and uses
+# judge.batch.target_model — only set when running the batch-export pipeline.
+judge:
+  mode: live
+  base_url: ${oc.env:JUDGE_BASE_URL,http://klara:8002}
+  model_name: ${oc.env:JUDGE_MODEL,default}
+  provider: null              # auto-detect from base_url hostname
+  api_key: null
+  api_key_env: null           # e.g. OPENAI_API_KEY for commercial endpoints
+  max_workers: 8
+  temperature: 0.0
+  max_tokens: 256
+  batch:
+    # Only consulted in batch_export mode. No default — operators must
+    # name the OpenAI model explicitly (matches privacylens convention).
+    target_model: null
+    target_endpoint: /v1/chat/completions

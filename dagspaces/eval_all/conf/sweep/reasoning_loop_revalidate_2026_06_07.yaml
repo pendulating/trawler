@@ -1,0 +1,105 @@
+# @package _global_
+# Hydra sweep: re-validate the TWO reasoning models that still failed parse-rate
+# sanity gates in the 2026-06-05 targeted sweep
+# (multirun/2026-06-05_eval_all/10-20-52, jobs 1 and 5).
+#
+# That sweep proved the parse/format/budget fixes work for 6/8 models. The two
+# residuals are degenerate-repetition pathologies, not parse-logic gaps:
+#
+#   context-reasoner/ppo
+#     - confaide parse_responses_2a: 0.653 < 0.70  (REGRESSED from 0.755 baseline)
+#         Cause: model/context-reasoner/ppo.yaml sets temperature=0.6 GLOBALLY to
+#         break cirl_vignettes <CI> loops, but at 0.6 confaide verbalises the
+#         rating ("strongly disagree") instead of emitting a number — 17/32
+#         unparseable were prose, 15 were <CI> repetition. Baseline temp=0.0 gave
+#         0.755. Fix: revert confaide to temp=0.0 (per-benchmark) AND add a
+#         repetition penalty to kill the residual <CI> loops.
+#     - cirl_vignettes parse_responses: 0.477 < 0.70  (improved from 0.322, still fail)
+#         312/516 unparseable are <CI>...</CI><|begin_of_solution| repetition loops
+#         (190 hit the length cap). temp=0.6 alone only half-broke them. Fix: keep
+#         the validated temp=0.6 and add a repetition penalty on top.
+#
+#   openthinker3-7b/sft-ci
+#     - confaide parse_responses_3_control: 0.682 < 0.70  (pre-existing, ~unchanged
+#         from 0.670 baseline; its other confaide tiers + cirl_vignettes now pass)
+#         83/270 rows are </think>\n</think>\n... degenerate spam filling the entire
+#         4096 reasoning budget. enable_thinking=true (Task 8) did not resolve it; a
+#         bigger budget only lets it loop longer. Fix: a repetition penalty on the
+#         closing-tag token so the loop cannot sustain.
+#
+# DESIGN — all overrides are sweep-yaml extra_args (per-benchmark Hydra CLI args
+# appended to each child subprocess by the eval_all monitor, orchestrator.py:184).
+# NO stage-code or model-config edits: the model is generic, the model-specific
+# knobs live here. Both overrides are safe for both models in this sweep:
+#   confaide temperature=0.0   -> ctx-reasoner reverts 0.6->0.0; openthinker already
+#                                 inherits the confaide default 0.0 (no-op).
+#   *.repetition_penalty=1.3   -> directly suppresses the repeated-token loops both
+#                                 models exhibit. repetition_penalty is forwarded
+#                                 verbatim to vLLM SamplingParams
+#                                 (common/vllm_inference.py:_build_sampling_params).
+# `+` prefix adds the key (it is absent from the default sampling_params, which
+# only carries seed + temperature).
+#
+# Whitelist only the two benchmarks these models failed. mmlu passed for both and
+# is excluded. All gold-scored -> judge sidecar disabled (no judge traffic).
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun \
+#       +sweep=reasoning_loop_revalidate_2026_06_07
+#
+# Sampled smoke test first (local, no SLURM):
+#   python -m dagspaces.eval_all.cli \
+#       +sweep=reasoning_loop_revalidate_2026_06_07 \
+#       model=context-reasoner/ppo runtime.debug=true runtime.sample_n=20 \
+#       hydra/launcher=null
+
+benchmark_filter:
+  include:
+    - confaide
+    - cirl_vignettes
+  exclude: []
+
+# Gold-scored only -> no judge traffic. Disable the sidecar.
+judge_sidecar:
+  enabled: false
+
+# Per-benchmark overrides. Merged into the benchmark entries from
+# all_benchmarks.yaml (cf. all_benchmarks_batch_export.yaml, which sets
+# extra_args the same way).
+benchmarks:
+  confaide:
+    # Revert the global temp=0.6 back to confaide's deterministic default for
+    # this model's rating task, and break residual repetition loops.
+    extra_args:
+      - sampling_params.temperature=0.0
+      - +sampling_params.repetition_penalty=1.3
+  cirl_vignettes:
+    # Keep the validated temp=0.6 (model config); add a loop-break on top.
+    extra_args:
+      - +sampling_params.repetition_penalty=1.3
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # Two single-GPU monitors; no shared-judge bottleneck (gold-scored).
+    array_parallelism: 2
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      # The two reasoning models that failed parse-rate gates on 2026-06-05.
+      model: >-
+        context-reasoner/ppo,
+        openthinker3-7b/sft-ci

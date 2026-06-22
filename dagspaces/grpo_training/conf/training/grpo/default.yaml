@@ -1,4 +1,10 @@
 # @package training.grpo
+# Master RNG seed. Seeds Python random, NumPy, and torch up front (see
+# run_grpo_training_stage) AND is passed to GRPOConfig as seed/data_seed, so it
+# controls the no-flow downsampling/shuffle, data sampler, generation sampling,
+# and model init. Vary only this for the seed-variance study (sweep/seed_variance.yaml).
+seed: 42
+
 num_generations: 8          # G completions per prompt
 learning_rate: 1.0e-6
 per_device_batch_size: 2

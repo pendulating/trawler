@@ -1,0 +1,55 @@
+# @package _global_
+# COLM paper sweep — SEED VARIANCE study.
+#
+# 5 cells: identical hyperparameters, only the RNG seed differs.
+#   seed ∈ {42, 43, 44, 45, 46}
+#
+# Purpose: quantify the run-to-run variance of the GRPO process. All cells use
+# the paper's primary GRPO config (online R_ground, external servers, λ=0.5,
+# ρ=0 — i.e. the unmodified online_rground_external defaults) and the same SFT
+# checkpoint (qwen3.5-9b/sft-ci LoRA). The ONLY thing that varies is
+# training.grpo.seed.
+#
+# Seed control is end-to-end ("total"): run_grpo_training_stage calls
+# transformers.set_seed(seed) before building the dataset, and passes
+# seed=data_seed=seed to GRPOConfig. So a single seed deterministically controls
+# the no-flow downsampling + shuffle, the data sampler order, generation
+# sampling, and model init. Each cell is fully reproducible given its seed; the
+# spread across cells IS the honest "rerun the same command" variance.
+#
+# Prerequisites — export before launch (same as sweep/lambda_axis.yaml). All are
+# already set in server.env on this cluster:
+#   EMBEDDING_SERVER_URL   (e.g. http://klara.tech.cornell.edu:8001 — Qwen3-Embedding-8B)
+#   JUDGE_SERVER_URL       (e.g. http://klara.tech.cornell.edu:8002 — Qwen3.6-27B)
+#   NORM_UNIVERSES_PATH    (norm_universes.json from norm_universe stage)
+#   CI_REASONING_PATH      (chunks parquet with chunk_text + source_id)
+#   NORM_EMBEDDINGS_PATH   (optional — per-book .npy embeddings)
+# The SFT LoRA dir comes from model.lora_path (qwen3.5-9b/sft-ci.yaml).
+#
+# Usage:
+#   python -m dagspaces.grpo_training.cli +sweep=seed_variance
+#
+# After training, each cell writes its checkpoint to:
+#   multirun/<date>_seed_variance_sweep/<time>/seed=<value>/grpo_only_online_external/outputs/grpo/checkpoint
+# Generate eval-time model yamls with scripts/build_sweep_model_yamls.py.
+
+defaults:
+  - override /pipeline: grpo_only_online_external
+  - override /model: qwen3.5-9b/sft-ci
+  - override /training/grpo: online_rground_external
+
+experiment:
+  name: seed_variance_sweep
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 3 concurrent GRPO trainings (matches lambda/ratio sweeps). 5 cells finish
+    # in two waves. Each consumes one slurm_train_1x job and shares the external
+    # embedding+judge servers.
+    array_parallelism: 3
+  sweep:
+    subdir: seed=${training.grpo.seed}
+  sweeper:
+    params:
+      training.grpo.seed: 42,43,44,45,46

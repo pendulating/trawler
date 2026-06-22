@@ -20,12 +20,34 @@ from .judge_leakage import _get_batch_export_client, _get_batch_export_endpoint
 from ..prompts import build_helpfulness_judge_prompt, parse_helpfulness_score
 
 
-def _build_helpfulness_items(df: pd.DataFrame) -> List[Dict[str, Any]]:
-    """Flatten rows into helpfulness-judge inputs, skipping no-action rows."""
+def _action_has_format(action: str) -> bool:
+    """True iff the trajectory's final action contains an ``Action:`` line.
+
+    Same gate CI-RL applies before grading. Without it, the helpfulness
+    judge can't run, and pre-2026-04-27 those rows were silently scored
+    0 — which then baked into ``avg_helpfulness_score`` and dragged the
+    headline number down without any provenance flag.
+    """
+    a = str(action or "")
+    return bool(a) and "Action:" in a
+
+
+def _build_helpfulness_items(
+    df: pd.DataFrame,
+) -> "tuple[List[Dict[str, Any]], set]":
+    """Flatten rows into helpfulness-judge inputs, skipping no-action rows.
+
+    Returns ``(items, skipped_indices)``. ``skipped_indices`` is the set
+    of df row-indices whose ``final_action_generated`` lacks ``Action:``
+    — propagated to the result df as ``helpfulness_judged=False`` so
+    metrics can compute conditional vs. defaulted variants.
+    """
     items: List[Dict[str, Any]] = []
+    skipped: set = set()
     for idx, row in df.iterrows():
         action = str(row.get("final_action_generated", ""))
-        if not action or "Action:" not in action:
+        if not _action_has_format(action):
+            skipped.add(idx)
             continue
         items.append({
             "row_idx": idx,
@@ -34,7 +56,33 @@ def _build_helpfulness_items(df: pd.DataFrame) -> List[Dict[str, Any]]:
             "trajectory": str(row.get("executable_trajectory", "")),
             "action": action,
         })
-    return items
+    return items, skipped
+
+
+def _stamp_format_columns(
+    df: pd.DataFrame,
+    *,
+    helpfulness_skipped: "set | None" = None,
+    leakage_skipped: "set | None" = None,
+) -> pd.DataFrame:
+    """Return ``df`` with ``agent_action_format_status`` and the relevant
+    ``*_judged`` boolean columns populated.
+
+    Idempotent: if ``agent_action_format_status`` is already present
+    (e.g. set by a previous judge stage) we don't overwrite it. The
+    ``*_judged`` columns are always (re)written from the supplied skip
+    set.
+    """
+    df = df.copy()
+    if "agent_action_format_status" not in df.columns and "final_action_generated" in df.columns:
+        df["agent_action_format_status"] = df["final_action_generated"].apply(
+            lambda a: "valid" if _action_has_format(a) else "no_action_format"
+        )
+    if helpfulness_skipped is not None:
+        df["helpfulness_judged"] = ~df.index.isin(helpfulness_skipped)
+    if leakage_skipped is not None:
+        df["leakage_judged"] = ~df.index.isin(leakage_skipped)
+    return df
 
 
 def judge_helpfulness(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
@@ -65,8 +113,16 @@ def judge_helpfulness(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     # Build items for judging. Passes full action text (with Action: prefix) —
     # CI-RL evaluate_final_action.py strips the prefix for leakage but not
     # for helpfulness.
-    items = _build_helpfulness_items(df)
+    items, skipped_indices = _build_helpfulness_items(df)
 
+    if skipped_indices:
+        print(
+            f"[judge_helpfulness] {len(skipped_indices)}/{len(df)} cases "
+            f"skipped (no_action_format). compute_format_health will "
+            f"surface this; metrics report `helpful_rate_among_judged` "
+            f"and `helpful_rate_overall_with_default_zero` separately.",
+            flush=True,
+        )
     print(f"[judge_helpfulness] Judging {len(items)}/{len(df)} cases",
           flush=True)
 
@@ -91,14 +147,23 @@ def judge_helpfulness(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         scores[item["row_idx"]] = parse_helpfulness_score(response)
         raw_texts[item["row_idx"]] = response
 
-    df = df.copy()
+    df = _stamp_format_columns(df, helpfulness_skipped=skipped_indices)
     df["helpfulness_score"] = df.index.map(lambda idx: scores.get(idx, 0))
     df["helpfulness_raw"] = df.index.map(lambda idx: raw_texts.get(idx, ""))
 
-    avg_score = df["helpfulness_score"].mean()
-    helpful_rate = (df["helpfulness_score"] >= 2).mean()
-    print(f"[judge_helpfulness] Avg score: {avg_score:.2f}, "
-          f"helpful rate (>=2): {helpful_rate:.1%}", flush=True)
+    judged_mask = df["helpfulness_judged"].astype(bool)
+    n_judged = int(judged_mask.sum())
+    if n_judged > 0:
+        avg_score_judged = float(df.loc[judged_mask, "helpfulness_score"].mean())
+        helpful_rate_judged = float((df.loc[judged_mask, "helpfulness_score"] >= 2).mean())
+    else:
+        avg_score_judged = 0.0
+        helpful_rate_judged = 0.0
+    print(
+        f"[judge_helpfulness] Among judged ({n_judged}/{len(df)}): "
+        f"avg score {avg_score_judged:.2f}, helpful rate (>=2) {helpful_rate_judged:.1%}",
+        flush=True,
+    )
 
     return df
 
@@ -115,7 +180,14 @@ def export_helpfulness_judge_batch(
     """
     client = _get_batch_export_client(cfg)
 
-    items = _build_helpfulness_items(df)
+    items, skipped_indices = _build_helpfulness_items(df)
+    if skipped_indices:
+        print(
+            f"[judge_helpfulness_export] {len(skipped_indices)}/{len(df)} "
+            f"cases skipped (no_action_format). compute_format_health will "
+            f"surface this; metrics distinguish judged vs. defaulted.",
+            flush=True,
+        )
 
     def custom_id_fn(item: Dict[str, Any], idx: int) -> str:
         return f"cirl_vignettes:judge_helpfulness:{item['row_idx']}"
@@ -161,4 +233,4 @@ def export_helpfulness_judge_batch(
         f"model={manifest['model']})",
         flush=True,
     )
-    return df.copy()
+    return _stamp_format_columns(df, helpfulness_skipped=skipped_indices)

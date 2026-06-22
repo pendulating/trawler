@@ -18,7 +18,7 @@ runtime:
 reasoning_dataset_path: /share/pierson/matt/UAIR/outputs/2026-03-06/15-26-52/ci_extraction_fiction/outputs/ci_reasoning/reasoning.parquet
 
 pipeline:
-  output_root: ${hydra:run.dir}/ci_extraction_from_reasoning_fiction
+  output_root: ${hydra:runtime.output_dir}/ci_extraction_from_reasoning_fiction
   allow_partial: false
 
   sources:

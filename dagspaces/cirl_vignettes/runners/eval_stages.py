@@ -10,7 +10,7 @@ import pandas as pd
 
 from dagspaces.common.runners.base import StageRunner
 from dagspaces.common.orchestrator import StageResult
-from dagspaces.common.eval_sanity import compute_parse_health
+from dagspaces.common.eval_sanity import compute_format_health, compute_parse_health
 from dagspaces.common.runners.sanity import (
     log_sanity_to_context,
     sanity_overrides,
@@ -292,7 +292,26 @@ class ComputeTrajectoryMetricsRunner(StageRunner):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         metrics_df.to_parquet(out_path, index=False)
 
+        # Format-health gate — halts the pipeline if action-format
+        # adherence is too low to trust the rate metrics. Same threshold
+        # ladder (FAIL <0.9, WARN <0.95) as PrivacyLens.
+        thresholds, _ = sanity_overrides(context.cfg)
+        run_metadata: Dict[str, Any] = {"rows": len(metrics_df), "metrics": metrics}
+        if "agent_action_format_status" in df.columns:
+            format_report = compute_format_health(
+                df,
+                dagspace="cirl_vignettes",
+                stage="agent_action_format",
+                format_col="agent_action_format_status",
+                model=task_model_name(context.cfg),
+                id_col="record_id" if "record_id" in df.columns else None,
+                raw_response_col="final_action_generated"
+                    if "final_action_generated" in df.columns else None,
+                thresholds=thresholds,
+            )
+            log_sanity_to_context(context, format_report, metadata=run_metadata)
+
         return StageResult(
             outputs={"dataset": out_path, "metrics_json": metrics_json_path},
-            metadata={"rows": len(metrics_df), "metrics": metrics},
+            metadata=run_metadata,
         )

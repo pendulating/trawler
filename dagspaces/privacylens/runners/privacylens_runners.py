@@ -10,7 +10,11 @@ import pandas as pd
 
 from dagspaces.common.runners.base import StageRunner
 from dagspaces.common.orchestrator import StageResult
-from dagspaces.common.eval_sanity import compute_parse_health
+from dagspaces.common.eval_sanity import (
+    compute_format_health,
+    compute_judge_health,
+    compute_parse_health,
+)
 from dagspaces.common.runners.sanity import (
     log_sanity_to_context as _log_sanity,
     sanity_overrides as _sanity_overrides,
@@ -50,6 +54,50 @@ class LoadDatasetRunner(StageRunner):
         return StageResult(
             outputs={"dataset": out_path},
             metadata={"rows": len(df)},
+        )
+
+
+class PerturbCultureRunner(StageRunner):
+    """Swap person names + locations in the vignettes to a target culture.
+
+    Reads ``perturb.culture`` from the config (default ``western`` = identity
+    passthrough), applies the deterministic name-bank substitution, and writes
+    the perturbed dataset. Coverage counts are surfaced as metadata so a run can
+    confirm the swap actually fired.
+    """
+
+    stage_name = "perturb_culture"
+
+    def run(self, context: Any) -> StageResult:
+        from omegaconf import OmegaConf
+
+        from ..perturb import perturb_dataset
+
+        input_path = context.inputs["dataset"]
+        df = pd.read_parquet(input_path)
+
+        culture = str(OmegaConf.select(context.cfg, "perturb.culture") or "western")
+        result_df = perturb_dataset(df, culture)
+
+        out_path = context.output_paths["dataset"]
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        result_df.to_parquet(out_path, index=False)
+
+        n_persons = int(result_df.get("n_persons_swapped", pd.Series(dtype=int)).sum())
+        n_locations = int(result_df.get("n_locations_swapped", pd.Series(dtype=int)).sum())
+        print(
+            f"[perturb_culture] culture={culture} rows={len(result_df)} "
+            f"persons_swapped={n_persons} locations_swapped={n_locations}",
+            flush=True,
+        )
+        return StageResult(
+            outputs={"dataset": out_path},
+            metadata={
+                "rows": len(result_df),
+                "culture": culture,
+                "n_persons_swapped": n_persons,
+                "n_locations_swapped": n_locations,
+            },
         )
 
 
@@ -222,6 +270,24 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
 
         thresholds, patterns = _sanity_overrides(context.cfg)
         model = _model_name(context.cfg)
+
+        # Format adherence is the most consequential trust signal — it's
+        # the gate the judge applies before grading any row. If too few
+        # actions follow the ``Action:`` format, the resulting leakage
+        # and helpfulness rates are mostly defaulted zeros and cannot
+        # be quoted. Compute first so the pipeline halts before
+        # parse-health adds noise.
+        format_report = compute_format_health(
+            result["leakage_df"],
+            dagspace="privacylens",
+            stage="agent_action_format",
+            format_col="agent_action_format_status",
+            model=model,
+            id_col="record_id",
+            raw_response_col="generated_action",
+            thresholds=thresholds,
+        )
+
         leak_report = compute_parse_health(
             result["leakage_df"],
             dagspace="privacylens",
@@ -249,6 +315,33 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
             thresholds=thresholds,
         )
 
+        # Surface async-judge HTTP errors as judge_api_error_rate. For
+        # leakage the denominator is the per-secret fanout count
+        # (items_df rows); for helpfulness it's per-row. Both metrics
+        # FAIL >0.05 by default, matching the format-adherence gate.
+        leak_judge_health = compute_judge_health(
+            result["leakage_df"],
+            dagspace="privacylens",
+            stage="leakage_judge_api",
+            judge_model=model,
+            label_col="leak_flag",
+            valid_labels=[True, False, 0, 1],
+            n_api_errors=int(result["leakage_meta"].get("n_response_errors", 0) or 0),
+            api_error_denominator=int(result["leakage_meta"].get("items", 0) or 0) or None,
+            thresholds=thresholds,
+        )
+        help_judge_health = compute_judge_health(
+            result["helpfulness_df"],
+            dagspace="privacylens",
+            stage="helpfulness_judge_api",
+            judge_model=model,
+            label_col="helpfulness_score",
+            valid_labels=[0, 1, 2, 3],
+            n_api_errors=int(result["helpfulness_meta"].get("n_response_errors", 0) or 0),
+            api_error_denominator=int(result["helpfulness_meta"].get("rows", 0) or 0) or None,
+            thresholds=thresholds,
+        )
+
         outputs: Dict[str, str] = {
             "metrics_json": result["metrics_json"],
         }
@@ -257,22 +350,42 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
         if metrics_parquet_out:
             outputs["dataset"] = result["metrics_parquet"]
 
+        leak_metrics = result["metrics"].get("leakage", {}) or {}
+        help_metrics = result["metrics"].get("helpfulness", {}) or {}
+        adj_metrics = result["metrics"].get("adjusted_leakage", {}) or {}
         metadata: Dict[str, Any] = {
             "rows": len(result["leakage_df"]),
             "leakage": result["leakage_meta"],
             "helpfulness": result["helpfulness_meta"],
             "metrics": {
-                "leakage_rate": result["metrics"].get("leakage", {}).get("leakage_rate"),
+                "agent_action_format_rate": leak_metrics.get("agent_action_format_rate"),
+                "leakage_rate_among_parseable": leak_metrics.get("leakage_rate_among_parseable"),
+                "leakage_rate_overall_with_default_zero": leak_metrics.get(
+                    "leakage_rate_overall_with_default_zero"
+                ),
                 "qa_accuracy": result["metrics"].get("qa_probing", {}).get("accuracy"),
-                "helpfulness_mean_score": result["metrics"].get("helpfulness", {}).get("mean_score"),
-                "adjusted_leakage_rate": result["metrics"].get("adjusted_leakage", {}).get("adjusted_leakage_rate"),
+                "helpfulness_mean_score_among_parseable": help_metrics.get(
+                    "mean_score_among_parseable"
+                ),
+                "helpful_rate_among_parseable": help_metrics.get("helpful_rate_among_parseable"),
+                "adjusted_leakage_rate": adj_metrics.get("adjusted_leakage_rate"),
             },
         }
+        # Format health first — raises SanityFailure on adherence < 0.9
+        # (default), halting the pipeline before unreliable metrics ship.
+        # Then judge-API health: catches the case where the live judge
+        # server 404'd every request, which silently passes through
+        # parse health (responses are syntactically parseable defaults).
+        _log_sanity(context, format_report, metadata=metadata)
+        _log_sanity(context, leak_judge_health, metadata=metadata)
+        _log_sanity(context, help_judge_health, metadata=metadata)
         _log_sanity(context, leak_report, metadata=metadata)
         _log_sanity(context, help_report, metadata=metadata)
 
         # Headline metrics under finalize/eval/* — same convention as the
-        # live ComputeMetricsRunner.
+        # live ComputeMetricsRunner. Both `_among_parseable` (primary,
+        # paper-quoted) and `_overall_with_default_zero` (audit) are
+        # logged so a sweep can see when overall masks a parseable miss.
         try:
             if context.logger is not None:
                 m = result["metrics"]
@@ -284,12 +397,29 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
                 if qa:
                     wb_metrics["finalize/eval/qa_accuracy"] = qa.get("accuracy", 0.0)
                 if leak:
-                    wb_metrics["finalize/eval/leakage_rate"] = leak.get("leakage_rate", 0.0)
+                    wb_metrics["finalize/eval/agent_action_format_rate"] = leak.get(
+                        "agent_action_format_rate", 0.0
+                    )
+                    wb_metrics["finalize/eval/leakage_rate_among_parseable"] = leak.get(
+                        "leakage_rate_among_parseable", 0.0
+                    )
+                    wb_metrics["finalize/eval/leakage_rate_overall_with_default_zero"] = leak.get(
+                        "leakage_rate_overall_with_default_zero", 0.0
+                    )
                 if helpf:
-                    wb_metrics["finalize/eval/helpfulness_mean_score"] = helpf.get("mean_score", 0.0)
-                    wb_metrics["finalize/eval/helpful_rate"] = helpf.get("helpful_rate", 0.0)
+                    wb_metrics["finalize/eval/helpfulness_mean_score_among_parseable"] = helpf.get(
+                        "mean_score_among_parseable", 0.0
+                    )
+                    wb_metrics["finalize/eval/helpful_rate_among_parseable"] = helpf.get(
+                        "helpful_rate_among_parseable", 0.0
+                    )
+                    wb_metrics["finalize/eval/helpful_rate_overall_with_default_zero"] = helpf.get(
+                        "helpful_rate_overall_with_default_zero", 0.0
+                    )
                 if adj:
-                    wb_metrics["finalize/eval/adjusted_leakage_rate"] = adj.get("adjusted_leakage_rate", 0.0)
+                    wb_metrics["finalize/eval/adjusted_leakage_rate"] = adj.get(
+                        "adjusted_leakage_rate", 0.0
+                    )
                 if wb_metrics:
                     context.logger.log_metrics(wb_metrics)
         except Exception as exc:
@@ -320,9 +450,16 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
                     aliases=aliases,
                     metadata={
                         "group": group,
-                        "leakage_rate": metadata["metrics"].get("leakage_rate"),
+                        "agent_action_format_rate": metadata["metrics"].get("agent_action_format_rate"),
+                        "leakage_rate_among_parseable": metadata["metrics"].get("leakage_rate_among_parseable"),
+                        "leakage_rate_overall_with_default_zero": metadata["metrics"].get(
+                            "leakage_rate_overall_with_default_zero"
+                        ),
                         "qa_accuracy": metadata["metrics"].get("qa_accuracy"),
-                        "helpfulness_mean_score": metadata["metrics"].get("helpfulness_mean_score"),
+                        "helpfulness_mean_score_among_parseable": metadata["metrics"].get(
+                            "helpfulness_mean_score_among_parseable"
+                        ),
+                        "helpful_rate_among_parseable": metadata["metrics"].get("helpful_rate_among_parseable"),
                         "adjusted_leakage_rate": metadata["metrics"].get("adjusted_leakage_rate"),
                     },
                     description="PrivacyLens async-judge finalize metrics",
@@ -483,11 +620,14 @@ class ComputeMetricsRunner(StageRunner):
         out_path = context.output_paths["dataset"]
         metrics_df.to_parquet(out_path, index=False)
 
-        # Print summary
-        qa = metrics.get("qa_probing", {})
-        leak = metrics.get("leakage", {})
-        help_m = metrics.get("helpfulness", {})
-        adj = metrics.get("adjusted_leakage", {})
+        # Print summary — both `_among_parseable` (paper-quoted) and
+        # `_overall_with_default_zero` (audit) are surfaced explicitly so
+        # a reader can't confuse "0% leakage" with "0% of inputs were
+        # gradeable, all defaulted to non-leaking."
+        qa = metrics.get("qa_probing", {}) or {}
+        leak = metrics.get("leakage", {}) or {}
+        help_m = metrics.get("helpfulness", {}) or {}
+        adj = metrics.get("adjusted_leakage", {}) or {}
         print(flush=True)
         print("=" * 60, flush=True)
         print("  PRIVACYLENS EVALUATION RESULTS", flush=True)
@@ -497,19 +637,47 @@ class ComputeMetricsRunner(StageRunner):
         for axis, am in qa.get("per_axis", {}).items():
             print(f"    {axis} accuracy:       {am.get('accuracy', 0):.4f} ({am.get('correct', 0)}/{am.get('total', 0)})", flush=True)
         print(f"    Unparseable:       {qa.get('unparseable_count', 0)}/{qa.get('total', 0)}", flush=True)
+        print(f"  Trust:", flush=True)
+        print(f"    Action format rate: {leak.get('agent_action_format_rate', 0):.4f}", flush=True)
+        print(f"    Skipped (no_action_format): {leak.get('skipped_no_action_format', 0)}", flush=True)
+        print(f"    Skipped (no_sensitive_info): {leak.get('skipped_no_sensitive_info', 0)}", flush=True)
         print(f"  Leakage:", flush=True)
-        print(f"    Leakage rate:      {leak.get('leakage_rate', 0):.4f} ({leak.get('leaking_count', 0)}/{leak.get('total', 0)})", flush=True)
-        print(f"    Mean leak prob:    {leak.get('mean_leak_probability', 0):.4f}", flush=True)
+        print(f"    Among parseable:    {leak.get('leakage_rate_among_parseable', 0):.4f} "
+              f"({leak.get('leaking_count_among_parseable', 0)}/{leak.get('total', 0) - leak.get('skipped_no_action_format', 0) - leak.get('skipped_no_sensitive_info', 0)})", flush=True)
+        print(f"    Overall (default 0): {leak.get('leakage_rate_overall_with_default_zero', 0):.4f} "
+              f"({leak.get('leaking_count_overall', 0)}/{leak.get('total', 0)})", flush=True)
+        print(f"    Mean leak prob:     {leak.get('mean_leak_probability_among_parseable', 0):.4f}", flush=True)
         if help_m:
             print(f"  Helpfulness:", flush=True)
-            print(f"    Mean score:        {help_m.get('mean_score', 0):.4f}", flush=True)
-            print(f"    Helpful rate:      {help_m.get('helpful_rate', 0):.4f} ({help_m.get('helpful_count', 0)}/{help_m.get('total', 0)})", flush=True)
+            print(f"    Mean score (parseable): {help_m.get('mean_score_among_parseable', 0):.4f}", flush=True)
+            print(f"    Mean score (overall):   {help_m.get('mean_score_overall_with_default_zero', 0):.4f}", flush=True)
+            print(f"    Helpful rate (parseable): {help_m.get('helpful_rate_among_parseable', 0):.4f}", flush=True)
+            print(f"    Helpful rate (overall):   {help_m.get('helpful_rate_overall_with_default_zero', 0):.4f}", flush=True)
         if adj:
-            print(f"  Adjusted Leakage (helpful only):", flush=True)
-            print(f"    Adjusted rate:     {adj.get('adjusted_leakage_rate', 0):.4f} ({adj.get('leaking_among_helpful', 0)}/{adj.get('total_helpful', 0)})", flush=True)
+            print(f"  Adjusted Leakage (helpful AND judged only):", flush=True)
+            print(f"    Adjusted rate:     {adj.get('adjusted_leakage_rate', 0):.4f} "
+                  f"({adj.get('leaking_among_helpful', 0)}/{adj.get('total_helpful_and_judged', 0)})", flush=True)
         print("=" * 60, flush=True)
+
+        # Format-health sanity gate — halts the pipeline if action-format
+        # adherence is too low to trust the metrics. Same threshold ladder
+        # as the async finalize runner.
+        thresholds, _ = _sanity_overrides(context.cfg)
+        model = _model_name(context.cfg)
+        format_report = compute_format_health(
+            leakage_df,
+            dagspace="privacylens",
+            stage="agent_action_format",
+            format_col="agent_action_format_status",
+            model=model,
+            id_col="record_id",
+            raw_response_col="generated_action",
+            thresholds=thresholds,
+        )
+        run_metadata: Dict[str, Any] = {"rows": len(metrics_df), "metrics": metrics}
+        _log_sanity(context, format_report, metadata=run_metadata)
 
         return StageResult(
             outputs={"dataset": out_path, "metrics_json": metrics_json_path},
-            metadata={"rows": len(metrics_df), "metrics": metrics},
+            metadata=run_metadata,
         )

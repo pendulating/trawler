@@ -1,0 +1,33 @@
+# @package _global_
+# COLM paper sweep — ρ axis (contrastive_ratio) at λ=1.0.
+#
+# 4 cells: ρ ∈ {0.05, 0.10, 0.20, 0.50} with contrastive_lambda=1.0.
+# Origin (λ=1.0, ρ=0) is shared with sweep/lambda_axis.yaml and is NOT repeated here.
+#
+# See sweep/lambda_axis.yaml for prerequisites + usage notes.
+#
+# Usage:
+#   python -m dagspaces.grpo_training.cli +sweep=ratio_axis
+
+defaults:
+  - override /pipeline: grpo_only_online_external
+  - override /model: qwen3.5-9b/sft-ci
+  - override /training/grpo: online_rground_external
+
+experiment:
+  name: ratio_axis_sweep
+
+# Pin contrastive_lambda=1.0 (paper primary setting) and sweep ρ.
+training:
+  grpo:
+    contrastive_lambda: 1.0
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 3
+  sweep:
+    subdir: ratio=${training.grpo.contrastive_ratio}
+  sweeper:
+    params:
+      training.grpo.contrastive_ratio: 0.05,0.10,0.20,0.50

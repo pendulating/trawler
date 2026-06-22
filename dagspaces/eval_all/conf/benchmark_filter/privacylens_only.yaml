@@ -1,0 +1,12 @@
+# @package _global_
+# Single-benchmark whitelist for PrivacyLens — the only currently judge-
+# dependent benchmark (see all_benchmarks.yaml header). Use when re-running
+# under a new judge: the gold-scored benchmarks (goldcoin, confaide,
+# vlm_geoprivacy, cirl probing, mmlu) never call the judge, so re-running them
+# under a different judge is wasted compute — their numbers are judge-invariant.
+#
+#   python -m dagspaces.eval_all.cli --multirun +sweep=... +benchmark_filter=privacylens_only
+benchmark_filter:
+  include:
+    - privacylens
+  exclude: []

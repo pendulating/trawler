@@ -1,0 +1,58 @@
+# @package _global_
+#
+# Async-export half of the async-judge flow. Inference runs on GPU; the
+# judge stage emits requests.jsonl + items.parquet + pending.parquet +
+# manifest.json under outputs/judge_grade/ and exits. The eval_all
+# judge_sidecar (when this pipeline is invoked inside eval_all) discovers
+# the manifest, drains the requests against the live judge server, and
+# writes output.jsonl next to them. The companion
+# simpleqa_verified_async_finalize pipeline then merges everything into
+# metrics.
+#
+# Phase 1 manual flow (no eval_all sidecar):
+#   python -m dagspaces.simpleqa_verified.cli pipeline=simpleqa_verified_async \
+#       judge.mode=async hydra.run.dir=outputs/<RUN>
+#   python -m dagspaces.eval_all.judge_sidecar oneshot \
+#       --run-dir outputs/<RUN>/simpleqa_verified \
+#       --base-url ${JUDGE_BASE_URL} --model ${JUDGE_MODEL}
+#   python -m dagspaces.simpleqa_verified.cli pipeline=simpleqa_verified_async_finalize \
+#       hydra.run.dir=outputs/<RUN>
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+judge:
+  mode: async
+
+wandb:
+  phase: export
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/simpleqa_verified
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+
+      llm_inference:
+        stage: llm_inference
+        depends_on: [load_dataset]
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/llm_inference/dataset.parquet
+        launcher: slurm_gpu_1x
+
+      judge_grade:
+        stage: judge_grade_batch_export
+        depends_on: [llm_inference]
+        inputs:
+          dataset: llm_inference.dataset
+        outputs:
+          dataset: outputs/judge_grade/pending.parquet

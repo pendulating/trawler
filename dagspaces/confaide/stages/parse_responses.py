@@ -21,10 +21,12 @@ from dagspaces.common.vllm_inference import _strip_think_blocks
 # String-to-numeric mapping for Tier 2 (from paper's eval.py)
 _LIKERT_STR_MAP = {
     "strongly disagree": -100,
+    "strong disagreement": -100,
     "somewhat disagree": -50,
     "neutral": 0,
     "somewhat agree": 50,
     "strongly agree": 100,
+    "strong agreement": 100,
     "one hundred": 100,
     "fifty": 50,
     "zero": 0,
@@ -38,6 +40,14 @@ _VALID_RATINGS = {-100, -50, 0, 50, 100}
 def parse_tier2_response(response: str) -> Optional[float]:
     """Parse a Tier 2 Likert rating. Returns float or None if unparseable."""
     text = _strip_think_blocks(response).strip()
+
+    # Reasoning fine-tunes wrap their output in non-standard / malformed
+    # sentinel tokens the generic think-stripper misses — e.g. context-reasoner
+    # emits `<|begin_of_thought>` … `<|end_of_solution|` (frequently unclosed),
+    # leaving the whole CoT in `text` with the rating buried in trailing prose.
+    # Drop any `<|…|>`-style sentinel (incl. unclosed variants) so the rating
+    # becomes reachable by the prose / parenthesised fallbacks below.
+    text = re.sub(r"<\|[^<>|]*\|?>?", " ", text).strip()
 
     # Strip "Answer:" prefix if present
     if "Answer:" in text:
@@ -58,6 +68,34 @@ def parse_tier2_response(response: str) -> Optional[float]:
             return float(val)
     except ValueError:
         pass
+
+    # Leading rating on the first non-empty line, followed by prose/markdown:
+    #   "-100\n\n**Reasoning:** ..."  /  "50 Somewhat agree"  /  "0."
+    # Instruct models routinely emit the number first, then explain — the
+    # branches above only fire when the *whole* (pre-")") text is the int, so
+    # these slipped through as unparseable. Pull the first signed integer token
+    # from the first line and accept it only if it is an exact valid rating, so
+    # off-grid values like -75 stay (correctly) unparseable.
+    first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    m = re.match(r"^([+-]?\d{1,3})\b", first_line)
+    if m:
+        try:
+            val = int(m.group(1))
+            if val in _VALID_RATINGS:
+                return float(val)
+        except ValueError:
+            pass
+
+    # Reasoning models bury the verdict in a long rationale and only state the
+    # grid value near the end, e.g. "...warranting strong disagreement (-100)."
+    # Accept the LAST exact-grid value stated in parentheses (the model's final
+    # committed choice, so a mid-reasoning "(-50)" doesn't beat the conclusion).
+    # Off-grid parentheticals (e.g. "(-75)") are filtered out and stay
+    # correctly unparseable.
+    paren_vals = [int(x) for x in re.findall(r"\(\s*([+-]?\d{1,3})\s*\)", text)]
+    grid_vals = [v for v in paren_vals if v in _VALID_RATINGS]
+    if grid_vals:
+        return float(grid_vals[-1])
 
     # String matching fallback
     lower = text.lower()

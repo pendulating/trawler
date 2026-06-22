@@ -46,6 +46,34 @@ def _build_norm_text(row: dict) -> str:
     return " | ".join(parts)
 
 
+def dedup_universe_norms(df: pd.DataFrame, source_col: str) -> pd.DataFrame:
+    """Drop exact-duplicate norms within each book (2026-06-09 review, F5).
+
+    Identity is the normalized embedding text (`_build_norm_text`) per book —
+    exactly what defines a norm's retrieval behavior in the universe. Keeps
+    the first occurrence. Measured on the fiction10 corpus this removes
+    ~0.5% of norms, almost all same-chunk extractor stutter (cross-chunk
+    overlap duplication is negligible: 1 exact group in 11,554 norms).
+    """
+    import re
+
+    key = (
+        df[source_col].astype(str)
+        + "||"
+        + pd.Series(
+            [re.sub(r"\s+", " ", _build_norm_text(r)).strip().lower()
+             for r in df.to_dict("records")],
+            index=df.index,
+        )
+    )
+    deduped = df[~key.duplicated()].reset_index(drop=True)
+    n_dropped = len(df) - len(deduped)
+    if n_dropped:
+        print(f"[norm_universe] Dropped {n_dropped} exact-duplicate norms "
+              f"({n_dropped / max(len(df), 1):.2%})")
+    return deduped
+
+
 # Norm fields to include in the JSON universe
 _NORM_FIELDS = [
     "raz_prescriptive_element",
@@ -102,6 +130,7 @@ def run_norm_universe_stage(
     # Filter to norms with valid articulations
     mask = df["raz_norm_articulation"].notna() & (df["raz_norm_articulation"] != "")
     df = df[mask].reset_index(drop=True)
+    df = dedup_universe_norms(df, source_col)
     print(f"[norm_universe] {len(df)} valid norms across "
           f"{df[source_col].nunique()} books")
 

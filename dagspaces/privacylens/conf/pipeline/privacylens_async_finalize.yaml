@@ -26,7 +26,7 @@ wandb:
   phase: finalize
 
 pipeline:
-  output_root: ${hydra:run.dir}/privacylens_eval
+  output_root: ${hydra:runtime.output_dir}/privacylens_eval
   allow_partial: false
   sources: {}
   graph:

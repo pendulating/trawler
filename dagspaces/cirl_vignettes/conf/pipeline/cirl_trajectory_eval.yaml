@@ -6,7 +6,7 @@ defaults:
   - override /hydra/launcher: slurm_monitor
 
 pipeline:
-  output_root: ${hydra:run.dir}/cirl_vignettes
+  output_root: ${hydra:runtime.output_dir}/cirl_vignettes
   allow_partial: false
   sources: {}
   graph:
