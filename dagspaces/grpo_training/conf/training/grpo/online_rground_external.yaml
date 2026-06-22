@@ -54,16 +54,22 @@ save_steps: 100
 # disabling the adapter — so this anchors the policy to the SFT checkpoint
 # exactly (no separate ref model loaded).
 #
-# v4 (2026-06-17): beta 0.01 → 0.0. Three full runs (P=0, 0.2, 0.4) failed
-# to reduce gold-has-flow over-abstention. v3 traces showed 91% of gold-flow
-# G=8 groups are MIXED (extract-vs-abstain advantage signal IS present) and
-# only 8.6% all-abstain — so the failure is NOT centering cancellation of the
-# flat penalty; the present gradient simply isn't followed. Diagnosis: the
-# reverse-KL term is mode-seeking and anchors the policy to the merged-SFT
-# reference, which itself abstains 54% — every step pulls back toward
-# abstention. DAPO removes the KL term entirely for exactly this reason
-# (policy should leave the init basin); TRL's own default is beta=0.
-beta: 0.0
+# v8 (2026-06-22): beta 0.0 → 0.02. The v4 rationale (beta=0 to escape the
+# SFT basin, DAPO-style) was sound but v6 exposed its cost: with beta=0 + lr
+# 2e-5 the policy entropy ran away ~10× (0.6→6.0 nats), which blew the
+# vLLM-rollout vs HF-trainer logprob mismatch up ~80× and collapsed the
+# importance-sampling ratios (min→1e-15) so token_truncate masked the gradient
+# (corr(entropy,logp_diff)=+0.92, corr(entropy,IS)=−0.96 — the clean advantage
+# never reached the weights). The v7 pilot (beta=0.02, single-variable, 150
+# steps) FIXED this exactly as predicted: entropy bounded 0.58→0.69, IS≈1.0,
+# KL mean 0.22, zero masking, every group carrying real reward spread (~0.37).
+# β·KL ≈ 0.02×0.06 ≈ 0.001 — a stability floor, NOT an SFT anchor that
+# dominates the advantage. REQUIRED before raising update strength
+# (num_iterations below): μ>1 moves the policy further from the rollout within
+# a batch, which only stays stable with a non-zero entropy floor. Lower beta
+# is ruled out (β·KL already negligible; only re-risks the runaway).
+# See wiki/grpo_training_field_notes/2026-06-22_v8_plan.md.
+beta: 0.02
 # ── Clip-Higher (DAPO, v4 2026-06-17) ──
 # Decouple the PPO upper clip from the lower (epsilon stays 0.2). Raising the
 # upper bound lets the LOW-probability action (here: extraction) take larger
@@ -71,6 +77,25 @@ beta: 0.0
 # the field-standard lever against mode/entropy collapse. Pairs with beta=0:
 # beta→0 unlocks movement, clip-higher directs it toward the rare-correct path.
 epsilon_high: 0.28
+# ── GRPO inner-iteration count μ (v8 2026-06-22) ──
+# num_iterations (μ in the GRPO paper) = optimizer passes per batch of
+# generations. TRL default 1 — and at μ=1 the rollout snapshot
+# old_per_token_logps is taken at generation time with NO optimizer step
+# before the single loss step, so the PPO ratio coef_1 = exp(logπ_θ −
+# logπ_θ_old) ≡ 1 and the clip never binds. That is exactly why v4's
+# epsilon_high=0.28 was INERT (clip_ratio/high_mean ~1e-4 all run). At μ=2 the
+# second inner pass recomputes logπ_θ at UPDATED weights against the frozen
+# snapshot → coef_1 departs from 1 → Clip-Higher finally lets advantage>0
+# (extraction) tokens take asymmetrically larger up-steps. μ=2 also DOUBLES
+# optimizer steps per rollout at judge-cost-neutral cost: generation+judging
+# runs every steps_per_generation×μ steps, so the same judged batch is reused
+# for both updates. This is the most direct attack on v5/v7's headline failure
+# — a +0.72 within-group advantage that is present every step but unfollowed
+# (grad_norm ~0.1, PPO clip never binds, lr decays before the policy moves).
+# Start at 2, not 4: the v6 entropy/IS-collapse fingerprint surfaces fast if
+# μ destabilizes; pairs with beta=0.02 above. trace_metrics.summarize_log_
+# history() surfaces it. See 2026-06-22_v8_plan.md.
+num_iterations: 2
 # ── vLLM importance-sampling correction mode (v5 2026-06-18) ──
 # THE binding constraint behind the v1–v4 over-abstention failures. TRL's
 # default vllm_importance_sampling_mode="sequence_mask" sums the per-token

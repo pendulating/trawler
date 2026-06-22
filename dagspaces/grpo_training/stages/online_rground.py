@@ -749,10 +749,44 @@ class OnlineRGround:
                       if self.app_weight > 0.0 else None)
 
             for pos, i in enumerate(judged):
-                base = max(0.0, min(
-                    1.0,
-                    correct_scores[pos] - self.contrastive_lambda * wrong_grounding[pos],
-                ))
+                # ── Symmetric contrastive clamp (v8, 2026-06-22) ──
+                # Apply the wrong-universe penalty to the GROUNDING component
+                # only, leaving the rank component (within-group anti-tie
+                # discrimination) contrast-free:
+                #   base = w_r·rank + (1−w_r)·clamp(g_correct − λ·g_wrong, 0, 1)
+                # The prior form subtracted λ·g_wrong from the full rank-BLENDED
+                # correct score while g_wrong was FULL grounding — an asymmetry
+                # (correct side diluted ×(1−w_r) by the rank blend, wrong side
+                # not) that clamped ~1/3 of well-grounded extractions to 0 when
+                # g_wrong≈g_correct and, worse, ate the rank signal so
+                # tied-grounding groups collapsed toward zero advantage. The
+                # contrast is now grounding-vs-grounding (symmetric); λ=1.0 and
+                # the contrastive thesis are unchanged. correct_scores already
+                # encodes the n_candidates==1 / judge-failed fallbacks, so
+                # reconstruct the grounding term from g_correct and swap in its
+                # contrasted value; fall back to the legacy form when the rank
+                # blend does not apply (singleton / judge-failed / no grounding).
+                g_correct = grounding_by_pos.get(pos)
+                if judge_failed or g_correct is None or n_cand <= 1:
+                    base = max(0.0, min(
+                        1.0,
+                        correct_scores[pos]
+                        - self.contrastive_lambda * wrong_grounding[pos],
+                    ))
+                else:
+                    g_correct = max(0.0, min(1.0, float(g_correct)))
+                    contrasted = max(0.0, min(
+                        1.0,
+                        g_correct - self.contrastive_lambda * wrong_grounding[pos],
+                    ))
+                    # correct_scores[pos] = w_r·rank + (1−w_r)·g_correct; replace
+                    # the grounding term with its contrasted value, rank intact.
+                    base = max(0.0, min(
+                        1.0,
+                        correct_scores[pos]
+                        - (1.0 - self.rank_weight) * g_correct
+                        + (1.0 - self.rank_weight) * contrasted,
+                    ))
                 app_cons = None
                 if self.app_weight > 0.0:
                     # candidate_texts[i] is the extraction JSON (or the no-flow

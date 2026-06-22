@@ -61,6 +61,12 @@ def _reward_signature(reward_fn, temperature: float, max_tokens: int) -> str:
     rank_weight were absent, so retrieval-depth changes reused stale caches).
     judge_model may still read "default" if the client hasn't resolved the
     served model id yet — it still distinguishes explicitly-configured judges.
+
+    The config knobs above only guard CONFIG-level reward changes. A change to
+    the scoring *formula* in code (same knobs, different math) would otherwise
+    cache-hit on a stale screen — so ``rground_formula_version`` is bumped
+    whenever the R_ground computation changes (v8 2026-06-22: symmetric
+    contrastive clamp). See 2026-06-22_v8_plan.md.
     """
     rg = getattr(reward_fn, "online_rground", None)
     return json.dumps({
@@ -72,6 +78,7 @@ def _reward_signature(reward_fn, temperature: float, max_tokens: int) -> str:
         "rank_top_k": getattr(rg, "rank_top_k", None),
         "rank_weight": getattr(rg, "rank_weight", None),
         "app_weight": getattr(rg, "app_weight", None),
+        "rground_formula_version": "v8_symmetric_clamp",
         "judge_model": getattr(getattr(rg, "judge_client", None),
                                "model_name", None),
         "temperature": temperature,

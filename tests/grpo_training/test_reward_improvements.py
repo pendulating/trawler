@@ -522,11 +522,14 @@ class TestRankedOnlineRGround:
         scores = rg(completions=completions, prompts=prompts,
                     metadata_list=[self.META] * 3)
 
+        # Symmetric contrastive clamp (v8): contrast hits the GROUNDING term
+        # only, rank component survives — base = w_r·rank + (1−w_r)·clamp(
+        # g_correct − λ·g_wrong, 0, 1).
         # Candidate 0 (flows): rank 1, grounding 0.9, wrong grounding 0.1
-        assert scores[0] == pytest.approx(0.5 * 1.0 + 0.5 * 0.9 - 0.5 * 0.1)
+        assert scores[0] == pytest.approx(0.5 * 1.0 + 0.5 * (0.9 - 0.5 * 0.1))
         # Candidate 1 (no-flow declaration is a judged candidate): rank 2,
         # grounding 0.8, wrong grounding 0.2
-        assert scores[1] == pytest.approx(0.5 * 0.0 + 0.5 * 0.8 - 0.5 * 0.2)
+        assert scores[1] == pytest.approx(0.5 * 0.0 + 0.5 * (0.8 - 0.5 * 0.2))
         # Parse failure: never judged, scores 0
         assert scores[2] == 0.0
         # Two listwise passes (correct + wrong), one item each, 2 candidates
@@ -649,10 +652,11 @@ class TestAppropriatenessBlend:
         scores = rg(
             completions=[_flow_completion("appropriate"), _flow_completion("inappropriate")],
             prompts=["p"] * 2, metadata_list=[self.META] * 2)
-        # base0=0.90 (rank1/grnd0.9 - 0.5*0.1); base1=0.30 (rank2/grnd0.8 - 0.5*0.2)
+        # Symmetric clamp (v8): base0 = 0.5·1.0 + 0.5·(0.9−0.5·0.1) = 0.925;
+        # base1 = 0.5·0.0 + 0.5·(0.8−0.5·0.2) = 0.35.
         # app: cand0 appropriate vs prohibited -> 0.0; cand1 inappropriate -> 1.0
-        assert scores[0] == pytest.approx(0.5 * 0.90 + 0.5 * 0.0)
-        assert scores[1] == pytest.approx(0.5 * 0.30 + 0.5 * 1.0)
+        assert scores[0] == pytest.approx(0.5 * 0.925 + 0.5 * 0.0)
+        assert scores[1] == pytest.approx(0.5 * 0.35 + 0.5 * 1.0)
         assert scores[1] > scores[0]  # context-relative verdict wins
         d0 = rg.last_diagnostics[0][0]
         assert d0["norm_force"] == "prohibited"
@@ -667,7 +671,8 @@ class TestAppropriatenessBlend:
         scores = rg(
             completions=[_flow_completion("appropriate"), _flow_completion("inappropriate")],
             prompts=["p"] * 2, metadata_list=[self.META] * 2)
-        assert scores[0] == pytest.approx(0.5 * 1.0 + 0.5 * 0.9 - 0.5 * 0.1)
+        # Symmetric clamp (v8): contrast on grounding term only.
+        assert scores[0] == pytest.approx(0.5 * 1.0 + 0.5 * (0.9 - 0.5 * 0.1))
         assert rg.last_diagnostics[0][0]["app_consistency"] is None
 
     def test_invalid_app_weight_rejected(self):
@@ -677,3 +682,76 @@ class TestAppropriatenessBlend:
                 embedding_client=_FakeEmbeddingClient(), judge_client=_FakeRankingJudge(),
                 norm_retriever=_FakeRetriever(), scoring_mode="ranked",
                 ranking_prompt_template="x", app_weight=1.5)
+
+
+class _FakeFlatGroundingJudge:
+    """Correct-universe grounding is FLAT (only rank discriminates), wrong-
+    universe grounding is set independently. This is the configuration that
+    exposed the old contrastive asymmetry: full-weight wrong grounding swamped
+    the rank-diluted correct blend, zeroing well-grounded candidates and
+    collapsing within-group advantage. Ranks are distinct (1..n)."""
+
+    def __init__(self, correct_grounding=0.6, wrong_grounding=0.7):
+        self.correct_grounding = correct_grounding
+        self.wrong_grounding = wrong_grounding
+        self.batches = []
+
+    def judge_ranking_batch(self, items, system_prompt, prompt_template,
+                            json_schema=None):
+        self.batches.append(items)
+        is_wrong_pass = len(self.batches) > 1
+        g = self.wrong_grounding if is_wrong_pass else self.correct_grounding
+        return [
+            [{"candidate_index": i, "rank": i + 1, "grounding_score": g}
+             for i in range(item["n_candidates"])]
+            for item in items
+        ]
+
+
+class TestContrastiveSymmetry:
+    """v8 (2026-06-22): the wrong-universe penalty hits the GROUNDING component
+    only; the rank component (within-group anti-tie discrimination) survives.
+    Regression for the asymmetry that clamped ~1/3 of well-grounded extractions
+    to 0. See wiki/grpo_training_field_notes/2026-06-22_v8_plan.md."""
+
+    META = {"source_id": "book_a", "prompt_id": "p1",
+            "chunk_text": "Alice whispered her secret to Bob."}
+
+    def test_rank_signal_survives_high_wrong_grounding(self):
+        # Correct grounding flat 0.6, wrong grounding 0.7, λ=1.0, 3 candidates.
+        judge = _FakeFlatGroundingJudge(correct_grounding=0.6, wrong_grounding=0.7)
+        rg = _make_ranked_rground(judge, contrastive_lambda=1.0)
+        scores = rg(completions=[FLOW_COMPLETION] * 3, prompts=["p"] * 3,
+                    metadata_list=[self.META] * 3)
+        # contrasted grounding = clamp(0.6 − 1.0·0.7, 0, 1) = 0.0 for all;
+        # the rank component (w_r=0.5) is preserved:
+        #   rank1 → 0.5·1.0 + 0.5·0.0 = 0.50
+        #   rank2 → 0.5·0.5 + 0.5·0.0 = 0.25
+        #   rank3 → 0.5·0.0 + 0.5·0.0 = 0.00
+        assert scores[0] == pytest.approx(0.50)
+        assert scores[1] == pytest.approx(0.25)
+        assert scores[2] == pytest.approx(0.0)
+        # The old asymmetric form gave clamp(blend − 1.0·0.7) = [0.1, 0, 0]:
+        # within-group advantage collapsed (two candidates tied at 0). The fix
+        # keeps three distinct values → a real gradient.
+        assert len({round(s, 6) for s in scores}) == 3
+
+    def test_wrong_penalty_still_bites(self):
+        # Same flat-correct judge; LOW wrong grounding lets the grounding term
+        # survive → higher score than the HIGH-wrong case. Confirms the
+        # contrastive penalty is real, not silently dropped by the fix.
+        low = _make_ranked_rground(
+            _FakeFlatGroundingJudge(correct_grounding=0.6, wrong_grounding=0.1),
+            contrastive_lambda=1.0)
+        s_low = low(completions=[FLOW_COMPLETION] * 2, prompts=["p"] * 2,
+                    metadata_list=[self.META] * 2)
+        high = _make_ranked_rground(
+            _FakeFlatGroundingJudge(correct_grounding=0.6, wrong_grounding=0.6),
+            contrastive_lambda=1.0)
+        s_high = high(completions=[FLOW_COMPLETION] * 2, prompts=["p"] * 2,
+                      metadata_list=[self.META] * 2)
+        # rank-1: low-wrong contrasted=0.5 → 0.5·1.0+0.5·0.5 = 0.75;
+        #         high-wrong contrasted=0.0 → 0.5·1.0+0.5·0.0 = 0.50
+        assert s_low[0] == pytest.approx(0.75)
+        assert s_high[0] == pytest.approx(0.50)
+        assert s_low[0] > s_high[0]
