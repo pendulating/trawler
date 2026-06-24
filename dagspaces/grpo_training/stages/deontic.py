@@ -153,3 +153,26 @@ def candidate_appropriateness_consistency(
         return NEUTRAL_CONSISTENCY
     vals = [appropriateness_consistency(lab, force) for lab in labels]
     return sum(vals) / len(vals)
+
+
+def direction_multiplier(consistency: float, floor: float = 0.4) -> float:
+    """Map appropriateness-consistency [0,1] to a reward multiplier [floor,1].
+
+    The v9 two-sided reward uses this to *multiply* R_ground by how well the
+    model's appropriate/inappropriate verdict agrees with the governing norm's
+    deontic force, instead of the v8 additive blend that left mis-judgment
+    nearly free. Affine: ``floor + (1-floor)*consistency``, so
+
+      consistency 1.0 (correct direction)        → 1.0
+      consistency 0.5 (hedge / "ambiguous" / no label) → (1+floor)/2  (0.7 at floor=0.4)
+      consistency 0.0 (wrong direction)          → floor (0.4)
+
+    The floor (>0) *discounts* a wrong/hedged verdict rather than annihilating
+    the reward, so deontic-retrieval noise (a wrong top-norm) cannot zero an
+    otherwise well-grounded extraction (cf. the v8 symmetric-clamp clamp-to-zero
+    failure mode).
+    """
+    if not 0.0 <= floor <= 1.0:
+        raise ValueError(f"direction floor must be in [0, 1], got {floor}")
+    c = max(0.0, min(1.0, float(consistency)))
+    return floor + (1.0 - floor) * c

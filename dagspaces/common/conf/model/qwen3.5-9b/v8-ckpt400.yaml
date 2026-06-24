@@ -1,0 +1,26 @@
+# @package _global_
+# v8 GRPO redesign — checkpoint-400 adapter (epoch ~1.1, post-breakout onset).
+# Taken AFTER the entropy breakout began (~step 240): entropy ~1.7, IS drifting
+# to ~0.85, KL ~0.53 — the mild/slow re-emergence of the v6 instability
+# fingerprint under mu=2. Paired with v8-ckpt200 (clean) and the SFT base
+# (model=qwen3.5-9b/sft-contentless-v6): if only ckpt400 (not ckpt200) shows
+# reduced abstention on held-out GoldCoin, the movement is likely entropy noise.
+# Source run: multirun/2026-06-22_grpo_redesign_full_v8/15-24-43 (job 725705).
+# See wiki/grpo_training_field_notes/2026-06-22_v8_plan.md.
+model:
+  model_source: /share/pierson/matt/UAIR/multirun/2026-06-22_grpo_redesign_full_v8/15-24-43/0/grpo_only_online_external/outputs/grpo/checkpoint/_merged_sft
+  model_family: qwen3.5
+  lora_path: /share/pierson/matt/UAIR/multirun/2026-06-22_grpo_redesign_full_v8/15-24-43/0/grpo_only_online_external/outputs/grpo/checkpoint/checkpoint-400
+  thinking_mode: off
+  chat_template_kwargs:
+    enable_thinking: false
+  engine_kwargs:
+    max_model_len: 16384
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    enforce_eager: true
+    enable_lora: true
+    max_lora_rank: 64
+  batch_size: 0
+  concurrency: 1

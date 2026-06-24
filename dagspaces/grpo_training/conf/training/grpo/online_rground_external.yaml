@@ -95,7 +95,14 @@ epsilon_high: 0.28
 # Start at 2, not 4: the v6 entropy/IS-collapse fingerprint surfaces fast if
 # μ destabilizes; pairs with beta=0.02 above. trace_metrics.summarize_log_
 # history() surfaces it. See 2026-06-22_v8_plan.md.
-num_iterations: 2
+#
+# v9 2026-06-23: REVERTED to μ=1. v8 showed μ=2 reintroduced the entropy
+# breakout (~step 240, corr(entropy,logp)=+0.96) for no held-out gain — the
+# useful policy movement saturated at the clean ckpt200. With v9's CONCENTRATING
+# reward (directional appropriateness multiplier), the stable μ=1 regime should
+# now produce movement on its own; re-evaluate μ>1 only if movement stalls.
+# See 2026-06-23_v9_plan.md.
+num_iterations: 1
 # ── vLLM importance-sampling correction mode (v5 2026-06-18) ──
 # THE binding constraint behind the v1–v4 over-abstention failures. TRL's
 # default vllm_importance_sampling_mode="sequence_mask" sums the per-token
@@ -162,14 +169,34 @@ judge_max_workers: 16  # concurrent judge HTTP calls (vLLM batches them)
 # R_ground: R = clamp((1-w)*(rank_blend - λ*wrong) + w*app_consistency).
 # Reuses deontic.py (same FORCE_TO_GOLD as the vignette gold labels and the
 # reranker backend's app_weight). 0.0 = legacy/grounding-only.
+# v9: app_weight > 0 acts only as the ON-SWITCH when app_mode="multiplicative"
+# (its magnitude is unused there — the floor sets the strength). Kept at 0.3.
 rground_app_weight: 0.3
+
+# ── Appropriateness direction (v9 2026-06-23) ──
+# "additive" = legacy 0.3 blend: R_ground = (1-w)*grounding + w*app_consistency,
+# so a wrong appropriateness verdict costs only ~0.19 of the composite → the
+# model hedged ("ambiguous") 73% of the time despite a directional governing
+# norm 97% of the time (v8 traces). "multiplicative" = the v9 two-sided reward:
+# R_ground = grounding * direction, direction = app_floor + (1-app_floor)*app_cons.
+# Correct verdict ×1.0, hedge ×0.7, wrong (e.g. a violation called appropriate)
+# ×app_floor. The floor DISCOUNTS rather than zeroes, guarding against deontic
+# retrieval noise. See deontic.direction_multiplier, 2026-06-23_v9_plan.md.
+rground_app_mode: multiplicative
+rground_app_floor: 0.4
 
 # ── Reward composition (Phase 3) ──
 # "gated": R = gate(r_uncert, r_complete, r_consist) × disc(r_context,
 # r_cohere, r_ground). The gating components are saturated post-SFT; in
 # "additive" mode they contribute a near-constant 0.20 offset that dilutes
 # the discriminative signal.
-reward_composition: gated
+# "directional" (v9 2026-06-23): R = gate × content. gate folds the four
+# programmatic well-formedness components {r_uncert, r_complete, r_consist,
+# r_cohere}; content = weight-normalized {r_context (light), r_ground (dominant,
+# already grounding×direction via app_mode above)}. No-flow completions bypass
+# the combine and are scored by the gold-aware abstention path (so the post-hoc
+# abstention_penalty below is redundant → set to 0.0). Two-sided + simpler.
+reward_composition: directional
 
 # ── Unjustified-abstention penalty (2026-06-12) ──
 # Flat amount subtracted from a completion that declares NO information flow
@@ -187,7 +214,11 @@ reward_composition: gated
 # not a flow label, so many gold=NO chunks contain real flows; see
 # scripts/audit_goldno_labels.py. Context-relativity is taught via
 # rground_app_weight + the contentless-curated SFT prior instead.
-abstention_penalty: 0.4
+# v9 2026-06-23: set to 0.0. With reward_composition=directional, no-flow
+# completions are scored directly by no_flow_reward(gold) (gold=T→0.1 wrong,
+# gold=F→0.6 correct, unknown→0.4), which already encodes the two-sided
+# abstention signal — this post-hoc subtraction would double-count.
+abstention_penalty: 0.0
 
 # ── Variance pre-screening (Phase 2) ──
 # Before training, sample num_samples completions per prompt from the SFT

@@ -18,7 +18,11 @@ import random
 from typing import Any, Dict, List, Optional
 
 from .clients import EmbeddingClient, JudgeClient, NormRetriever
-from .deontic import candidate_appropriateness_consistency, governing_norm_force
+from .deontic import (
+    candidate_appropriateness_consistency,
+    direction_multiplier,
+    governing_norm_force,
+)
 from .rewards import _parse_completion
 
 
@@ -157,11 +161,17 @@ class OnlineRGround:
         rank_top_k: int = 5,
         rank_weight: float = 0.5,
         app_weight: float = 0.0,
+        app_mode: str = "additive",
+        app_floor: float = 0.4,
     ):
         if scoring_mode not in ("absolute", "ranked"):
             raise ValueError(f"Unknown rground scoring mode: {scoring_mode!r}")
         if not 0.0 <= app_weight <= 1.0:
             raise ValueError(f"app_weight must be in [0, 1], got {app_weight}")
+        if app_mode not in ("additive", "multiplicative"):
+            raise ValueError(f"Unknown app_mode: {app_mode!r}")
+        if not 0.0 <= app_floor <= 1.0:
+            raise ValueError(f"app_floor must be in [0, 1], got {app_floor}")
         self.embedding_client = embedding_client
         self.judge_client = judge_client
         self.norm_retriever = norm_retriever
@@ -186,6 +196,13 @@ class OnlineRGround:
         # Mirrors RerankerJudgeClient's app_weight (which is blind to direction).
         # 0.0 = legacy (grounding only).
         self.app_weight = float(app_weight)
+        # app_mode (v9): "additive" = legacy 0.3 blend (R = (1-w)·base + w·app_cons);
+        # "multiplicative" = the two-sided directional reward R = base · direction(app_cons),
+        # where direction = app_floor + (1-app_floor)·app_cons. Multiplicative makes a
+        # wrong appropriateness verdict (e.g. a violation called "appropriate") cost a
+        # large fraction of R_ground instead of a diluted additive sliver.
+        self.app_mode = app_mode
+        self.app_floor = float(app_floor)
         self._consecutive_zero_batches = 0
         self._total_calls = 0
         self.last_diagnostics: List[List[Dict[str, Any]]] = []
@@ -793,7 +810,13 @@ class OnlineRGround:
                     # sentinel, which carries no appropriateness labels → neutral).
                     app_cons = candidate_appropriateness_consistency(
                         candidate_texts.get(i, ""), _force)
-                    raw = (1.0 - self.app_weight) * base + self.app_weight * app_cons
+                    if self.app_mode == "multiplicative":
+                        # v9: gate grounding by appropriateness-direction. A wrong
+                        # verdict floors the extraction reward at app_floor; a hedge
+                        # ("ambiguous"/no label → 0.5) costs ~30%; correct keeps full.
+                        raw = base * direction_multiplier(app_cons, self.app_floor)
+                    else:
+                        raw = (1.0 - self.app_weight) * base + self.app_weight * app_cons
                     _hl_app_sum += app_cons
                 else:
                     raw = base

@@ -113,3 +113,30 @@ class TestSingleSourceOfTruth:
         from dagspaces.grpo_training.stages.deontic import FORCE_TO_GOLD
         assert FORCE_TO_GOLD["prohibited"] == "no"
         assert FORCE_TO_GOLD["obligatory"] == "yes"
+
+
+class TestDirectionMultiplier:
+    """v9: affine map consistency∈[0,1] → reward multiplier∈[floor,1]."""
+
+    def test_endpoints_and_midpoint(self):
+        assert d.direction_multiplier(1.0) == pytest.approx(1.0)   # correct verdict
+        assert d.direction_multiplier(0.5) == pytest.approx(0.7)   # hedge (floor 0.4)
+        assert d.direction_multiplier(0.0) == pytest.approx(0.4)   # wrong verdict
+
+    def test_floor_is_configurable(self):
+        assert d.direction_multiplier(0.0, floor=0.0) == pytest.approx(0.0)
+        assert d.direction_multiplier(0.0, floor=0.6) == pytest.approx(0.6)
+        # The correct verdict always reaches 1.0 regardless of floor.
+        assert d.direction_multiplier(1.0, floor=0.6) == pytest.approx(1.0)
+
+    def test_monotone_in_consistency(self):
+        assert (d.direction_multiplier(0.0) < d.direction_multiplier(0.5)
+                < d.direction_multiplier(1.0))
+
+    def test_consistency_clamped(self):
+        assert d.direction_multiplier(1.5) == pytest.approx(1.0)
+        assert d.direction_multiplier(-0.5) == pytest.approx(0.4)
+
+    def test_invalid_floor_rejected(self):
+        with pytest.raises(ValueError):
+            d.direction_multiplier(0.5, floor=1.5)

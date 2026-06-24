@@ -125,6 +125,48 @@ class TestComposition:
         with pytest.raises(ValueError):
             CompositeRewardFunction(weights=WEIGHTS, composition="multiplicative")
 
+    # --- v9 directional composition: R = gate × content -------------------
+    # gate = norm-mean of {r_uncert, r_complete, r_consist, r_cohere} (idx 0,1,2,4);
+    # content = norm-mean of {r_context, r_ground} (idx 3,5).
+
+    def test_directional_is_gate_times_content(self):
+        fn = CompositeRewardFunction(weights=WEIGHTS, composition="directional")
+        # Perfect gate (all four format/coherence components = 1.0) → gate=1.0;
+        # content = weight-normalized mean of r_context=0.5, r_ground=0.5 = 0.5.
+        assert fn._combine([1.0, 1.0, 1.0, 0.5, 1.0, 0.5]) == pytest.approx(0.5)
+
+    def test_directional_cohere_is_in_the_gate(self):
+        # r_cohere (idx 4) moved from discriminative into the gate: zeroing it
+        # must scale the whole reward down, not just drop one additive term.
+        fn = CompositeRewardFunction(weights=WEIGHTS, composition="directional")
+        good_coh = fn._combine([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+        bad_coh = fn._combine([1.0, 1.0, 1.0, 1.0, 0.0, 1.0])
+        assert good_coh == pytest.approx(1.0)
+        # gate drops to (0.10+0.05+0.05)/0.30 = 2/3; content stays 1.0.
+        assert bad_coh == pytest.approx((0.10 + 0.05 + 0.05) / 0.30)
+
+    def test_directional_zero_gate_zeroes_reward(self):
+        fn = CompositeRewardFunction(weights=WEIGHTS, composition="directional")
+        assert fn._combine([0.0, 0.0, 0.0, 1.0, 0.0, 1.0]) == 0.0
+
+    def test_directional_content_ordered_by_grounding(self):
+        # Same (saturated) gate → ordered purely by content; r_ground dominates
+        # r_context within content.
+        fn = CompositeRewardFunction(weights=WEIGHTS, composition="directional")
+        better = fn._combine([1.0, 1.0, 1.0, 0.2, 1.0, 0.9])
+        worse = fn._combine([1.0, 1.0, 1.0, 0.2, 1.0, 0.3])
+        expected_gap = (0.9 - 0.3) * WEIGHTS[5] / (WEIGHTS[3] + WEIGHTS[5])
+        assert better - worse == pytest.approx(expected_gap)
+
+    def test_directional_keeps_r_context(self):
+        # r_context still contributes to content (kept, light): raising it lifts
+        # the reward even with grounding held fixed.
+        fn = CompositeRewardFunction(weights=WEIGHTS, composition="directional")
+        lo = fn._combine([1.0, 1.0, 1.0, 0.0, 1.0, 0.5])
+        hi = fn._combine([1.0, 1.0, 1.0, 1.0, 1.0, 0.5])
+        assert hi > lo
+        assert hi - lo == pytest.approx(WEIGHTS[3] / (WEIGHTS[3] + WEIGHTS[5]))
+
 
 # ---------------------------------------------------------------------------
 # Unjustified-abstention penalty (2026-06-12)
@@ -492,7 +534,8 @@ class _FakeRetrieverWithForce:
         return (norms, [0.9]) if return_scores else norms
 
 
-def _make_ranked_rground(judge, contrastive_lambda=0.5, app_weight=0.0, retriever=None):
+def _make_ranked_rground(judge, contrastive_lambda=0.5, app_weight=0.0, retriever=None,
+                         app_mode="additive", app_floor=0.4):
     from dagspaces.grpo_training.stages.online_rground import OnlineRGround
     return OnlineRGround(
         embedding_client=_FakeEmbeddingClient(),
@@ -507,6 +550,8 @@ def _make_ranked_rground(judge, contrastive_lambda=0.5, app_weight=0.0, retrieve
         rank_top_k=5,
         rank_weight=0.5,
         app_weight=app_weight,
+        app_mode=app_mode,
+        app_floor=app_floor,
     )
 
 
@@ -682,6 +727,103 @@ class TestAppropriatenessBlend:
                 embedding_client=_FakeEmbeddingClient(), judge_client=_FakeRankingJudge(),
                 norm_retriever=_FakeRetriever(), scoring_mode="ranked",
                 ranking_prompt_template="x", app_weight=1.5)
+
+
+class TestAppropriatenessMultiplicative:
+    """v9: app_mode='multiplicative' makes appropriateness a *direction
+    multiplier* on R_ground (floored), so a wrong verdict (e.g. a violation
+    called appropriate) costs a large fraction of the extraction reward instead
+    of the diluted additive sliver that let the model hedge for free."""
+
+    META = {"source_id": "book_a", "prompt_id": "p1",
+            "chunk_text": "Alice whispered her secret to Bob."}
+    # Two-candidate bases (avoids the n_candidates==1 legacy branch), prohibited
+    # norm: cand0 ranks 1 (grounding 0.9, wrong 0.1); cand1 ranks 2 (0.8, 0.2).
+    BASE0 = 0.5 * 1.0 + 0.5 * (0.9 - 0.5 * 0.1)   # 0.925
+    BASE1 = 0.5 * 0.0 + 0.5 * (0.8 - 0.5 * 0.2)   # 0.35
+
+    def _scores(self, app_floor, c0_app, c1_app="inappropriate"):
+        judge = _FakeRankingJudge()
+        rg = _make_ranked_rground(
+            judge, contrastive_lambda=0.5, app_weight=0.3,
+            app_mode="multiplicative", app_floor=app_floor,
+            retriever=_FakeRetrieverWithForce("prohibited"))
+        return rg(completions=[_flow_completion(c0_app), _flow_completion(c1_app)],
+                  prompts=["p"] * 2, metadata_list=[self.META] * 2)
+
+    def test_wrong_verdict_floored(self):
+        # cand0 "appropriate" vs prohibited → app_cons 0.0 → direction 0.4;
+        # cand1 "inappropriate" → app_cons 1.0 → direction 1.0.
+        scores = self._scores(0.4, "appropriate")
+        assert scores[0] == pytest.approx(self.BASE0 * 0.4)
+        assert scores[1] == pytest.approx(self.BASE1 * 1.0)
+
+    def test_floor_zero_annihilates_wrong_verdict(self):
+        scores = self._scores(0.0, "appropriate")
+        assert scores[0] == pytest.approx(0.0)            # direction = 0.0
+
+    def test_hedge_is_discounted_not_free(self):
+        # "ambiguous" → app_cons 0.5 → direction 0.7: hedging costs ~30%.
+        scores = self._scores(0.4, "ambiguous")
+        assert scores[0] == pytest.approx(self.BASE0 * 0.7)
+
+    def test_additive_mode_unchanged(self):
+        # Regression guard: the legacy additive blend is untouched by the new
+        # knobs (app_mode defaults to additive).
+        judge = _FakeRankingJudge()
+        rg = _make_ranked_rground(
+            judge, contrastive_lambda=0.5, app_weight=0.5,
+            retriever=_FakeRetrieverWithForce("prohibited"))
+        scores = rg(completions=[_flow_completion("inappropriate")],
+                    prompts=["p"], metadata_list=[self.META])
+        # n=1 legacy base = clamp(0.9 - 0.5·0.1) = 0.85; additive: 0.5·0.85 + 0.5·1.0
+        assert scores[0] == pytest.approx(0.5 * 0.85 + 0.5 * 1.0)
+
+    def test_invalid_app_mode_rejected(self):
+        from dagspaces.grpo_training.stages.online_rground import OnlineRGround
+        with pytest.raises(ValueError):
+            OnlineRGround(
+                embedding_client=_FakeEmbeddingClient(), judge_client=_FakeRankingJudge(),
+                norm_retriever=_FakeRetriever(), scoring_mode="ranked",
+                ranking_prompt_template="x", app_mode="bogus")
+
+    def test_invalid_app_floor_rejected(self):
+        from dagspaces.grpo_training.stages.online_rground import OnlineRGround
+        with pytest.raises(ValueError):
+            OnlineRGround(
+                embedding_client=_FakeEmbeddingClient(), judge_client=_FakeRankingJudge(),
+                norm_retriever=_FakeRetriever(), scoring_mode="ranked",
+                ranking_prompt_template="x", app_floor=1.5)
+
+
+class TestDirectionalAbstention:
+    """v9 directional mode: no-flow completions bypass the gate×content combine
+    and are scored directly by gold-label correctness (no_flow_reward), with no
+    post-hoc abstention penalty (which would double-count)."""
+
+    # r_ground weight 0 → the no-flow path needs no judge/cache.
+    W = [0.10, 0.05, 0.05, 0.20, 0.10, 0.0]
+
+    def _fn(self, **kw):
+        return CompositeRewardFunction(
+            weights=self.W, composition="directional",
+            prompt_metadata={
+                "pc": {"source_id": "b", "gold_has_exchange": False},
+                "pw": {"source_id": "b", "gold_has_exchange": True},
+                "pu": {"source_id": "b", "gold_has_exchange": None},
+            }, **kw)
+
+    def test_no_flow_scored_by_gold(self):
+        scores = self._fn()(prompts=["pc", "pw", "pu"],
+                            completions=[NO_FLOW_COMPLETION] * 3)
+        assert scores[0] == pytest.approx(0.6)   # correct abstention (gold=False)
+        assert scores[1] == pytest.approx(0.1)   # wrong abstention (gold=True)
+        assert scores[2] == pytest.approx(0.4)   # unknown gold
+
+    def test_no_flow_ignores_post_hoc_penalty(self):
+        scores = self._fn(abstention_penalty=0.4)(
+            prompts=["pw"], completions=[NO_FLOW_COMPLETION])
+        assert scores[0] == pytest.approx(0.1)   # 0.1, not 0.1 - 0.4
 
 
 class _FakeFlatGroundingJudge:

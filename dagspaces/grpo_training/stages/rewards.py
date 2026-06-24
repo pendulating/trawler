@@ -699,7 +699,7 @@ class CompositeRewardFunction:
     ):
         if len(weights) != 6:
             raise ValueError(f"Expected 6 reward weights, got {len(weights)}")
-        if composition not in ("additive", "gated"):
+        if composition not in ("additive", "gated", "directional"):
             raise ValueError(f"Unknown reward composition: {composition!r}")
         if abstention_penalty < 0.0:
             raise ValueError(
@@ -794,6 +794,17 @@ class CompositeRewardFunction:
         discriminative signal instead of adding to it, so a malformed
         completion can't bank partial credit and a well-formed one is
         ranked purely by the discriminative components.
+
+        "directional" (v9): R = gate * content. The gate folds the four
+        programmatic well-formedness/coherence components
+        {r_uncert, r_complete, r_consist, r_cohere} (idx 0,1,2,4); content is
+        the weight-normalized mean of the substantive grounding signals
+        {r_context, r_ground} (idx 3,5). The appropriateness *direction*
+        multiplier is folded into r_ground upstream (online_rground with
+        app_mode="multiplicative"), so a flow whose appropriate/inappropriate
+        verdict contradicts the governing norm is discounted here via a lower
+        r_ground. No-flow completions bypass this combine entirely (scored by
+        the gold-aware abstention path in __call__).
         """
         if self.composition == "gated":
             gate_w = self.weights[:3]
@@ -801,6 +812,14 @@ class CompositeRewardFunction:
             gate = sum(w * c for w, c in zip(gate_w, components[:3])) / (sum(gate_w) or 1.0)
             disc = sum(w * c for w, c in zip(disc_w, components[3:])) / (sum(disc_w) or 1.0)
             return gate * disc
+        if self.composition == "directional":
+            gate_idx = (0, 1, 2, 4)   # r_uncert, r_complete, r_consist, r_cohere
+            content_idx = (3, 5)      # r_context (light), r_ground (dominant)
+            gate_w = sum(self.weights[k] for k in gate_idx) or 1.0
+            content_w = sum(self.weights[k] for k in content_idx) or 1.0
+            gate = sum(self.weights[k] * components[k] for k in gate_idx) / gate_w
+            content = sum(self.weights[k] * components[k] for k in content_idx) / content_w
+            return gate * content
         return sum(w * c for w, c in zip(self.weights, components))
 
     @staticmethod
@@ -1043,14 +1062,23 @@ class CompositeRewardFunction:
                 continue
 
             components = partial_components[i] + [rground_scores[i]]
-            r = self._combine(components)
-            # Unjustified-abstention penalty: the model declared no flow but
-            # gold says one exists. Subtract a flat amount post-composition so
-            # the advantage gap toward extraction deepens (see __init__ note).
-            _abstained_wrongly = self._is_unjustified_abstention(
-                is_no_flow[i], meta.get("gold_has_exchange"))
-            if _abstained_wrongly:
-                r -= self.abstention_penalty
+            if self.composition == "directional" and is_no_flow[i]:
+                # v9: abstention is scored directly by its gold-label correctness
+                # (gold says a flow exists → wrong abstention → low; gold says none
+                # → correct → moderate), bypassing the gate×content combine and the
+                # legacy post-hoc penalty. Two-sided via the gold-reliability axis.
+                r = no_flow_reward(meta.get("gold_has_exchange"))
+                _abstained_wrongly = False
+            else:
+                r = self._combine(components)
+                # Unjustified-abstention penalty (legacy additive/gated modes): the
+                # model declared no flow but gold says one exists. Subtract a flat
+                # amount post-composition so the advantage gap toward extraction
+                # deepens (see __init__ note). Not reached in directional mode.
+                _abstained_wrongly = self._is_unjustified_abstention(
+                    is_no_flow[i], meta.get("gold_has_exchange"))
+                if _abstained_wrongly:
+                    r -= self.abstention_penalty
             scores.append(r)
 
             if do_trace and i < 8:

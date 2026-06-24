@@ -609,6 +609,11 @@ def run_grpo_training_stage(
         # check into R_ground so the reward rewards context-relative judgments,
         # not just topical grounding.
         _rground_app_weight = float(grpo_cfg.get("rground_app_weight", 0.0))
+        # v9: app_mode="multiplicative" turns the appropriateness check into a
+        # two-sided direction multiplier on R_ground (floored at app_floor),
+        # instead of the legacy additive blend. See deontic.direction_multiplier.
+        _rground_app_mode = str(grpo_cfg.get("rground_app_mode", "additive"))
+        _rground_app_floor = float(grpo_cfg.get("rground_app_floor", 0.4))
         if _rground_scoring == "ranked" and not rk_prompt_template:
             raise ValueError(
                 "[grpo_training] rground_scoring='ranked' requires the "
@@ -630,12 +635,15 @@ def run_grpo_training_stage(
             rank_top_k=int(grpo_cfg.get("rank_top_k", 5)),
             rank_weight=float(grpo_cfg.get("rank_weight", 0.5)),
             app_weight=_rground_app_weight,
+            app_mode=_rground_app_mode,
+            app_floor=_rground_app_floor,
         )
         print(f"[grpo_training] Online R_ground enabled "
               f"(embed={embedding_url}, judge={judge_url}, "
               f"scoring={_rground_scoring}, "
               f"contrastive_lambda={_contrastive_lambda}, "
-              f"app_weight={_rground_app_weight})")
+              f"app_weight={_rground_app_weight}, "
+              f"app_mode={_rground_app_mode}, app_floor={_rground_app_floor})")
     elif not use_online_rground and weights[5] > 0.0:
         print(f"[grpo_training] R_ground using cached lookup "
               f"({len(reward_cache)} entries)")
@@ -1153,6 +1161,8 @@ def run_grpo_training_stage(
         "rground_judge_backend": str(grpo_cfg.get("rground_judge_backend", "llm")).lower(),
         "reranker_app_weight": float(grpo_cfg.get("reranker_app_weight", 0.2)),
         "rground_app_weight": float(grpo_cfg.get("rground_app_weight", 0.0)),
+        "rground_app_mode": str(grpo_cfg.get("rground_app_mode", "additive")),
+        "rground_app_floor": float(grpo_cfg.get("rground_app_floor", 0.4)),
         "reward_weights": list(weights),
         "online_rground": use_online_rground,
         "enable_thinking_grpo": enable_thinking_grpo,

@@ -66,7 +66,8 @@ def _reward_signature(reward_fn, temperature: float, max_tokens: int) -> str:
     the scoring *formula* in code (same knobs, different math) would otherwise
     cache-hit on a stale screen — so ``rground_formula_version`` is bumped
     whenever the R_ground computation changes (v8 2026-06-22: symmetric
-    contrastive clamp). See 2026-06-22_v8_plan.md.
+    contrastive clamp; v9 2026-06-23: directional composition + multiplicative
+    appropriateness). See 2026-06-23_v9_plan.md.
     """
     rg = getattr(reward_fn, "online_rground", None)
     return json.dumps({
@@ -78,7 +79,9 @@ def _reward_signature(reward_fn, temperature: float, max_tokens: int) -> str:
         "rank_top_k": getattr(rg, "rank_top_k", None),
         "rank_weight": getattr(rg, "rank_weight", None),
         "app_weight": getattr(rg, "app_weight", None),
-        "rground_formula_version": "v8_symmetric_clamp",
+        "app_mode": getattr(rg, "app_mode", "additive"),
+        "app_floor": getattr(rg, "app_floor", None),
+        "rground_formula_version": "v9_directional",
         "judge_model": getattr(getattr(rg, "judge_client", None),
                                "model_name", None),
         "temperature": temperature,
