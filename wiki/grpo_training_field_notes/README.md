@@ -38,10 +38,12 @@ camera-ready generative stage.
   blend to a *multiplier-with-floor* on R_ground (correct ×1.0, hedge ×0.7, wrong
   ×0.4), and **simplifies** the composite to `gate · content · direction` +
   gold-aware abstention (drops the post-hoc penalty + gated `gate×disc`). μ→1,
-  β=0.02 held. **ckpt-100 ground truth (2026-06-24): all predictions confirmed** —
-  hedge fraction 73.5%→~6% (stable, no v8 breakout), GoldCoin Forbid recall
-  0.35→0.55 vs v8 (best compliance of all arms), ConfAIDE 2a/2b + VLM-GeoPrivacy
-  flat (no out-of-domain regression). **ckpt-200 (2026-06-24): plateau** — every
+  β=0.02 held. **ckpt-100 ground truth (2026-06-24): held-out predictions confirmed** —
+  GoldCoin Forbid recall 0.35→0.55 vs v8, Forbid precision 0.50→0.65, best compliance
+  macro-F1 of all arms, ConfAIDE 2a/2b + VLM-GeoPrivacy flat (no out-of-domain
+  regression). (A training-trace "hedge 73.5%→6% collapse" claim was later
+  **retracted** as a measurement artifact — v8/v9 hedge identically; the win is
+  held-out. See the v9 plan's correction banner.) **ckpt-200 (2026-06-24): plateau** — every
   GoldCoin axis flat-to-down vs ckpt-100 (Forbid recall 0.55→0.50, did NOT climb
   to SFT 0.65), ConfAIDE/GeoPrivacy flat, and the entropy↔IS coupling re-emerged
   in epoch 2 (corr −0.90). **Cancelled at step ~290**; ckpt-100 is the keeper.
