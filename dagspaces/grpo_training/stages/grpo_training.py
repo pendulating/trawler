@@ -614,6 +614,10 @@ def run_grpo_training_stage(
         # instead of the legacy additive blend. See deontic.direction_multiplier.
         _rground_app_mode = str(grpo_cfg.get("rground_app_mode", "additive"))
         _rground_app_floor = float(grpo_cfg.get("rground_app_floor", 0.4))
+        # v10: cost-sensitive floor for a false-permit (a prohibited-governed flow
+        # called "appropriate"). None/absent = symmetric v9 behaviour.
+        _rgafp = grpo_cfg.get("rground_app_floor_prohibit", None)
+        _rground_app_floor_prohibit = float(_rgafp) if _rgafp is not None else None
         if _rground_scoring == "ranked" and not rk_prompt_template:
             raise ValueError(
                 "[grpo_training] rground_scoring='ranked' requires the "
@@ -637,13 +641,15 @@ def run_grpo_training_stage(
             app_weight=_rground_app_weight,
             app_mode=_rground_app_mode,
             app_floor=_rground_app_floor,
+            app_floor_prohibit=_rground_app_floor_prohibit,
         )
         print(f"[grpo_training] Online R_ground enabled "
               f"(embed={embedding_url}, judge={judge_url}, "
               f"scoring={_rground_scoring}, "
               f"contrastive_lambda={_contrastive_lambda}, "
               f"app_weight={_rground_app_weight}, "
-              f"app_mode={_rground_app_mode}, app_floor={_rground_app_floor})")
+              f"app_mode={_rground_app_mode}, app_floor={_rground_app_floor}, "
+              f"app_floor_prohibit={_rground_app_floor_prohibit})")
     elif not use_online_rground and weights[5] > 0.0:
         print(f"[grpo_training] R_ground using cached lookup "
               f"({len(reward_cache)} entries)")
@@ -1163,6 +1169,9 @@ def run_grpo_training_stage(
         "rground_app_weight": float(grpo_cfg.get("rground_app_weight", 0.0)),
         "rground_app_mode": str(grpo_cfg.get("rground_app_mode", "additive")),
         "rground_app_floor": float(grpo_cfg.get("rground_app_floor", 0.4)),
+        "rground_app_floor_prohibit": (
+            float(grpo_cfg["rground_app_floor_prohibit"])
+            if grpo_cfg.get("rground_app_floor_prohibit", None) is not None else None),
         "reward_weights": list(weights),
         "online_rground": use_online_rground,
         "enable_thinking_grpo": enable_thinking_grpo,

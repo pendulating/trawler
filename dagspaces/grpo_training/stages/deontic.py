@@ -176,3 +176,71 @@ def direction_multiplier(consistency: float, floor: float = 0.4) -> float:
         raise ValueError(f"direction floor must be in [0, 1], got {floor}")
     c = max(0.0, min(1.0, float(consistency)))
     return floor + (1.0 - floor) * c
+
+
+def appropriateness_multiplier(
+    model_label: Optional[str],
+    force: Optional[str],
+    floor: float = 0.4,
+    floor_prohibit: Optional[float] = None,
+) -> float:
+    """Cost-sensitive (asymmetric) direction multiplier for one flow (v10).
+
+    Identical to ``direction_multiplier(appropriateness_consistency(label, force),
+    floor)`` *except* it can punish a **false-permit** — the model calling a
+    prohibited/discouraged-governed flow ``appropriate`` — harder than a
+    false-forbid, via ``floor_prohibit``:
+
+      correct verdict (either direction)            → 1.0
+      hedge / "ambiguous" / no directional force    → (1+floor)/2  (0.7 at floor 0.4)
+      false-forbid (said inappropriate, norm obligates) → floor          (0.4)
+      false-permit (said appropriate, norm prohibits)   → floor_prohibit  (0.1)
+
+    The fiction-derived governing norms are ~4:1 appropriate:inappropriate, so
+    under the symmetric v9 floor the EV-optimal verdict when unsure is the
+    permissive one — the measured cause of the 30% Forbid commit-accuracy. A
+    lower ``floor_prohibit`` steepens the within-group gradient on prohibited
+    flows toward the (correct) ``inappropriate`` verdict. ``floor_prohibit=None``
+    reproduces the symmetric v9 multiplier exactly.
+    """
+    fp = floor if floor_prohibit is None else floor_prohibit
+    if not 0.0 <= floor <= 1.0:
+        raise ValueError(f"floor must be in [0, 1], got {floor}")
+    if not 0.0 <= fp <= 1.0:
+        raise ValueError(f"floor_prohibit must be in [0, 1], got {fp}")
+    expected = expected_appropriateness(force)
+    if expected is None or not model_label:
+        return direction_multiplier(NEUTRAL_CONSISTENCY, floor)
+    lab = str(model_label).strip().lower()
+    if lab == "ambiguous":
+        return direction_multiplier(NEUTRAL_CONSISTENCY, floor)
+    if lab == expected:
+        return 1.0
+    if lab in ("appropriate", "inappropriate"):
+        # Wrong direction. A false-permit (model said the *appropriate* label
+        # while the norm prohibits) gets the steeper floor; a false-forbid keeps
+        # the general floor.
+        return fp if expected == "inappropriate" else floor
+    return direction_multiplier(NEUTRAL_CONSISTENCY, floor)
+
+
+def candidate_appropriateness_multiplier(
+    candidate_doc: Any,
+    force: Optional[str],
+    floor: float = 0.4,
+    floor_prohibit: Optional[float] = None,
+) -> float:
+    """Mean cost-sensitive multiplier over a candidate's flows (v10).
+
+    The cost-sensitive map is non-linear in the per-flow verdict, so unlike the
+    v9 path (mean *consistency* then one ``direction_multiplier``) this maps each
+    flow to its multiplier first, then means. Single-flow candidates (the common
+    case) are identical either way. A candidate with no appropriateness labels
+    (e.g. a no-flow declaration) returns the neutral multiplier, so it neither
+    gains nor loses on this axis.
+    """
+    labels = flow_appropriateness_labels(candidate_doc)
+    if not labels:
+        return direction_multiplier(NEUTRAL_CONSISTENCY, floor)
+    vals = [appropriateness_multiplier(lab, force, floor, floor_prohibit) for lab in labels]
+    return sum(vals) / len(vals)

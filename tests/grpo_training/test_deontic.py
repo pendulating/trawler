@@ -140,3 +140,74 @@ class TestDirectionMultiplier:
     def test_invalid_floor_rejected(self):
         with pytest.raises(ValueError):
             d.direction_multiplier(0.5, floor=1.5)
+
+
+class TestAppropriatenessMultiplier:
+    """v10: cost-sensitive (asymmetric) direction multiplier — false-permits
+    (prohibited-governed flow called "appropriate") can floor lower than
+    false-forbids, to counter the ~4:1 appropriate:inappropriate norm prior."""
+
+    def test_correct_verdict_full_reward_either_direction(self):
+        assert d.appropriateness_multiplier("inappropriate", "prohibited") == pytest.approx(1.0)
+        assert d.appropriateness_multiplier("appropriate", "obligatory") == pytest.approx(1.0)
+
+    def test_false_permit_floors_lower_than_false_forbid(self):
+        # false-permit: said "appropriate" on a prohibited-governed flow.
+        fp = d.appropriateness_multiplier(
+            "appropriate", "prohibited", floor=0.4, floor_prohibit=0.1)
+        # false-forbid: said "inappropriate" on an obligatory-governed flow.
+        ff = d.appropriateness_multiplier(
+            "inappropriate", "obligatory", floor=0.4, floor_prohibit=0.1)
+        assert fp == pytest.approx(0.1)
+        assert ff == pytest.approx(0.4)
+        assert fp < ff
+
+    def test_discouraged_is_also_prohibitive(self):
+        assert d.appropriateness_multiplier(
+            "appropriate", "discouraged", floor=0.4, floor_prohibit=0.1) == pytest.approx(0.1)
+
+    def test_hedge_unaffected_by_prohibit_floor(self):
+        assert d.appropriateness_multiplier(
+            "ambiguous", "prohibited", floor=0.4, floor_prohibit=0.1) == pytest.approx(0.7)
+
+    def test_none_floor_prohibit_reproduces_symmetric_v9(self):
+        # floor_prohibit=None must equal direction_multiplier(consistency, floor).
+        for lab, force in [("inappropriate", "prohibited"), ("appropriate", "prohibited"),
+                           ("appropriate", "obligatory"), ("inappropriate", "obligatory"),
+                           ("ambiguous", "prohibited"), ("appropriate", "permitted")]:
+            cons = d.appropriateness_consistency(lab, force)
+            assert d.appropriateness_multiplier(lab, force, floor=0.4) == pytest.approx(
+                d.direction_multiplier(cons, 0.4)), (lab, force)
+
+    def test_invalid_prohibit_floor_rejected(self):
+        with pytest.raises(ValueError):
+            d.appropriateness_multiplier("appropriate", "prohibited", floor_prohibit=1.5)
+
+
+class TestCandidateMultiplier:
+    """Mean cost-sensitive multiplier over a candidate's flows."""
+
+    def test_single_false_permit(self):
+        doc = json.dumps([{"appropriateness": "appropriate"}])  # prohibited → false-permit
+        assert d.candidate_appropriateness_multiplier(
+            doc, "prohibited", floor=0.4, floor_prohibit=0.1) == pytest.approx(0.1)
+
+    def test_means_over_flows(self):
+        doc = json.dumps([
+            {"appropriateness": "inappropriate"},  # correct on prohibited → 1.0
+            {"appropriateness": "appropriate"},    # false-permit          → 0.1
+        ])
+        assert d.candidate_appropriateness_multiplier(
+            doc, "prohibited", floor=0.4, floor_prohibit=0.1) == pytest.approx(0.55)
+
+    def test_no_labels_neutral(self):
+        assert d.candidate_appropriateness_multiplier(
+            "no flows", "prohibited", floor=0.4, floor_prohibit=0.1) == pytest.approx(0.7)
+
+    def test_single_flow_matches_v9_path_when_symmetric(self):
+        # A single-flow candidate under floor_prohibit=None equals the v9
+        # consistency→direction path exactly.
+        doc = json.dumps([{"appropriateness": "appropriate"}])
+        cons = d.candidate_appropriateness_consistency(doc, "prohibited")
+        assert d.candidate_appropriateness_multiplier(doc, "prohibited", floor=0.4) == pytest.approx(
+            d.direction_multiplier(cons, 0.4))

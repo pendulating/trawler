@@ -47,7 +47,11 @@ gradient_checkpointing: true
 bf16: true
 logging_steps: 10
 save_strategy: steps
-save_steps: 100
+# v10 2026-06-24: 100 → 50. Held-out behaviour peaked at the EARLY checkpoint in
+# both v8 (ckpt200, epoch 0.55) and v9 (ckpt100, epoch 0.58) and degraded after;
+# denser checkpoints resolve the peak for kill-at-peak + judge-free GoldCoin
+# checkpoint selection (v9 only had ckpt100/200 to compare).
+save_steps: 50
 
 # KL coefficient to the reference policy. The trainer re-wraps the merged
 # SFT model with a fresh LoRA, and TRL computes reference logprobs by
@@ -184,6 +188,22 @@ rground_app_weight: 0.3
 # retrieval noise. See deontic.direction_multiplier, 2026-06-23_v9_plan.md.
 rground_app_mode: multiplicative
 rground_app_floor: 0.4
+
+# ── Cost-sensitive false-permit floor (v10 2026-06-24) ──
+# The v9 multiplier above is SYMMETRIC: every wrong verdict floors at app_floor
+# (0.4). But the fiction-derived governing norms are ~3.98:1
+# appropriate:inappropriate, so under the symmetric floor the EV-optimal verdict
+# when unsure is the permissive one — the measured cause of the v9 plateau: on
+# prohibited-governed flows the model commits the CORRECT "inappropriate" verdict
+# only 30% of the time and false-permits 53% (diagnostic 2026-06-24, on
+# well-retrieved norms — retrieval-noise ruled out, top-sim 0.68 either way).
+# app_floor_prohibit sets a LOWER floor for a FALSE-PERMIT specifically (model
+# calls a prohibited/discouraged-governed flow "appropriate"); a false-forbid
+# keeps app_floor. This widens the within-group gradient on prohibited flows
+# (0.6 → 0.9) toward the correct verdict. 0.1 (not 0.0) keeps the v9
+# discount-not-annihilate guard. null = symmetric v9 behaviour.
+# See deontic.appropriateness_multiplier, wiki/grpo_training_field_notes/2026-06-24_v10_plan.md.
+rground_app_floor_prohibit: 0.1
 
 # ── Reward composition (Phase 3) ──
 # "gated": R = gate(r_uncert, r_complete, r_consist) × disc(r_context,

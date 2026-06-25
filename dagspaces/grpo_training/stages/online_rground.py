@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from .clients import EmbeddingClient, JudgeClient, NormRetriever
 from .deontic import (
     candidate_appropriateness_consistency,
+    candidate_appropriateness_multiplier,
     direction_multiplier,
     governing_norm_force,
 )
@@ -163,6 +164,7 @@ class OnlineRGround:
         app_weight: float = 0.0,
         app_mode: str = "additive",
         app_floor: float = 0.4,
+        app_floor_prohibit: Optional[float] = None,
     ):
         if scoring_mode not in ("absolute", "ranked"):
             raise ValueError(f"Unknown rground scoring mode: {scoring_mode!r}")
@@ -172,6 +174,9 @@ class OnlineRGround:
             raise ValueError(f"Unknown app_mode: {app_mode!r}")
         if not 0.0 <= app_floor <= 1.0:
             raise ValueError(f"app_floor must be in [0, 1], got {app_floor}")
+        if app_floor_prohibit is not None and not 0.0 <= app_floor_prohibit <= 1.0:
+            raise ValueError(
+                f"app_floor_prohibit must be in [0, 1], got {app_floor_prohibit}")
         self.embedding_client = embedding_client
         self.judge_client = judge_client
         self.norm_retriever = norm_retriever
@@ -203,6 +208,16 @@ class OnlineRGround:
         # large fraction of R_ground instead of a diluted additive sliver.
         self.app_mode = app_mode
         self.app_floor = float(app_floor)
+        # app_floor_prohibit (v10): cost-sensitive floor for a FALSE-PERMIT (the
+        # model calling a prohibited/discouraged-governed flow "appropriate").
+        # None = symmetric v9 behaviour (every wrong verdict floors at app_floor).
+        # When set (<app_floor), a false-permit floors lower than a false-forbid,
+        # steepening the within-group gradient toward the correct "inappropriate"
+        # verdict to counter the ~4:1 appropriate:inappropriate governing-norm
+        # prior (the measured cause of the 30% Forbid commit-accuracy). Only
+        # active in multiplicative app_mode. See deontic.appropriateness_multiplier.
+        self.app_floor_prohibit = (
+            float(app_floor_prohibit) if app_floor_prohibit is not None else None)
         self._consecutive_zero_batches = 0
         self._total_calls = 0
         self.last_diagnostics: List[List[Dict[str, Any]]] = []
@@ -805,6 +820,7 @@ class OnlineRGround:
                         + (1.0 - self.rank_weight) * contrasted,
                     ))
                 app_cons = None
+                app_direction = None
                 if self.app_weight > 0.0:
                     # candidate_texts[i] is the extraction JSON (or the no-flow
                     # sentinel, which carries no appropriateness labels → neutral).
@@ -814,7 +830,18 @@ class OnlineRGround:
                         # v9: gate grounding by appropriateness-direction. A wrong
                         # verdict floors the extraction reward at app_floor; a hedge
                         # ("ambiguous"/no label → 0.5) costs ~30%; correct keeps full.
-                        raw = base * direction_multiplier(app_cons, self.app_floor)
+                        # v10: when app_floor_prohibit is set, a false-permit (a
+                        # prohibited-governed flow called "appropriate") floors
+                        # lower than a false-forbid — a per-flow cost-sensitive
+                        # multiplier (app_cons above is kept for the trace).
+                        if self.app_floor_prohibit is not None:
+                            direction = candidate_appropriateness_multiplier(
+                                candidate_texts.get(i, ""), _force,
+                                self.app_floor, self.app_floor_prohibit)
+                        else:
+                            direction = direction_multiplier(app_cons, self.app_floor)
+                        raw = base * direction
+                        app_direction = direction
                     else:
                         raw = (1.0 - self.app_weight) * base + self.app_weight * app_cons
                     _hl_app_sum += app_cons
@@ -832,6 +859,7 @@ class OnlineRGround:
                     "wrong_grounding": round(wrong_grounding[pos], 4),
                     "norm_force": _force,
                     "app_consistency": round(app_cons, 4) if app_cons is not None else None,
+                    "app_direction": round(app_direction, 4) if app_direction is not None else None,
                     "correct_retrieval_sims": gm.get("correct_sims", []),
                     "correct_norm_snippets": _norm_snippet(gm.get("correct_norms", "[]")),
                     "judge_failed": judge_failed,

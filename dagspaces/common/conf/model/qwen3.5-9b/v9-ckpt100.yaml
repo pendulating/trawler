@@ -1,0 +1,28 @@
+# @package _global_
+# v9 GRPO redesign — INTERMEDIATE checkpoint-100 adapter (epoch ~0.58).
+# v9's two-sided reward (appropriateness direction as a multiplier-with-floor +
+# simplified `gate·content·direction` composition). This is the matched-epoch
+# counterpart to v8-ckpt200 (epoch ~0.55): an apples-to-apples early read of
+# whether the directional reward repairs the v8 "engage/permit" bias that
+# collapsed GoldCoin compliance Forbid recall (0.70 -> 0.35).
+# Training traces at this point: hedge ("ambiguous") fraction fell 73.5% -> ~6%,
+# entropy bounded (no v8-style breakout), reward_trend positive.
+# Source run: multirun/2026-06-23_grpo_redesign_full_v9/20-09-18 (job 810112).
+# See wiki/grpo_training_field_notes/2026-06-23_v9_plan.md.
+model:
+  model_source: /share/pierson/matt/UAIR/multirun/2026-06-23_grpo_redesign_full_v9/20-09-18/0/grpo_only_online_external/outputs/grpo/checkpoint/_merged_sft
+  model_family: qwen3.5
+  lora_path: /share/pierson/matt/UAIR/multirun/2026-06-23_grpo_redesign_full_v9/20-09-18/0/grpo_only_online_external/outputs/grpo/checkpoint/checkpoint-100
+  thinking_mode: off
+  chat_template_kwargs:
+    enable_thinking: false
+  engine_kwargs:
+    max_model_len: 16384
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    enforce_eager: true
+    enable_lora: true
+    max_lora_rank: 64
+  batch_size: 0
+  concurrency: 1
