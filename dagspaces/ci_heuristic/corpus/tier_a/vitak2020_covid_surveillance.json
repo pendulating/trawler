@@ -1,0 +1,231 @@
+{
+  "meta": {
+    "case_id": "vitak2020_covid_surveillance",
+    "source": "Vitak, J., & Zimmer, M. (2020). More Than Just Privacy: Using Contextual Integrity to Evaluate the Long-Term Risks from COVID-19 Surveillance Technologies. Social Media + Society, 6(3). https://doi.org/10.1177/2056305120948250 (PMC7399567)",
+    "practice": "COVID-19 smartphone contact-tracing apps (Google/Apple exposure notification system and government location-tracking variants): health and location data flows for pandemic surveillance",
+    "practice_input": "During the COVID-19 pandemic, governments and technology companies deployed smartphone-based contact tracing apps to slow the virus's spread. The most prominent design, Google and Apple's 'exposure notification system' API, uses Bluetooth to detect when phones come into proximity with the phone of a person who later tests positive, then notifies exposed users through the app; it does not collect location data or send data to centralized databases. Other proposals go further: governments have sought access to smartphone location data to monitor citizen movements during the pandemic, and some countries' apps collect more detailed health or location data. Adoption is framed as a condition for reopening communities and businesses, though roughly 2 billion older phones cannot run the apps. Should this practice continue as-is, be modified, or be rejected?",
+    "contaminated": true,
+    "annotator": "claude-agent (needs human second pass)",
+    "annotation_date": "2026-07-07",
+    "annotator_notes": "Short-form commentary essay (~2,500 words), not a full traversal: steps are compressed and interleaved. Contaminated: published July 2020, open access, heavily cited COVID/CI paper — certainly in training data. s9 judgment call: coded 'modify' rather than 'continue' — the essay's prima facie assessment endorses the Google/Apple design, but the recommendation imposes mandatory minimum policies on the whole practice class ('Such policies, at a minimum, must be in place') and warns that less-protective variants will proliferate; that is continuation-only-under-conditions. s4 judgment call: the only TPs named by label (confidentiality, consent) appear in the framework exposition via generic doctor-patient/company examples, not the contact-tracing analysis; the contact-tracing-specific TP work is compressed ('created transmission principles aligned with users' expectations', 'long-term monitoring' as TP change) — normalized entries for exchange, temporality, aggregation are annotator inferences from the essay's own wording, marked explicit: false. s7 kind judgment call: function creep coded kind=power (state/provider power expansion, post-9/11 program persistence) rather than other(function_creep). Second-pass fields: s7_factors, s9_recommendation.",
+    "source_deviations": [
+      "Essay uses the four-parameter CI formulation (context, actor, attributes, transmission principles) rather than the nine-step decision heuristic; steps 1-5 are compressed into a single parameter analysis, illustrated partly with the authors' prior Fitbit research (Zimmer et al. 2020) instead of the contact-tracing case itself",
+      "s6 prima facie assessment is rendered for two practice variants: government smartphone location tracking (violation — 'a change in actor and transmission principles ... deemed an inappropriate new information flow') and the Google/Apple exposure notification system (no violation); gold s6 codes the focal Google/Apple practice and records the contrast in the justification",
+      "s7/s8 concerns are largely prospective (future function creep, normalization of surveillance, proliferation of less-protective apps) rather than properties of the current information flows",
+      "s8 is gestural: the essay poses the prevailing values/goals/ends question and weighs public health against autonomy and freedom from surveillance, without a systematic ends analysis",
+      "s9 conditions are stated as FIPs-style policy principles (use limitation, data minimization/destruction, transparency and accountability) rather than as modifications to CI parameters"
+    ]
+  },
+  "steps_present": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"],
+  "s1_flows": [
+    {
+      "sender": "app user's smartphone (via Bluetooth)",
+      "recipient": "nearby users' smartphones (contact tracing app)",
+      "subject": "both users (their physical proximity/contact event)",
+      "information_type": "Bluetooth proximity data (physical proximity between phones; no locational data)",
+      "medium": "Bluetooth exchange between phones; no centralized databases",
+      "novelty": "novel flow, deliberately privacy-preserving by design",
+      "evidence": "'Their exposure notification system API uses Bluetooth (rather than more precise location data) to identify other smartphones that come into proximity with the phone of an infected person'; 'the system does not collect or store any locational data, nor does it send data to centralized databases' (Ensuring Appropriate Data Flows section)"
+    },
+    {
+      "sender": "infected person's phone / Google-Apple exposure notification system",
+      "recipient": "exposed contacts (via app notification)",
+      "subject": "infected person (positive status) and the exposed contact",
+      "information_type": "exposure status / health information (that the recipient was in proximity to an infected person)",
+      "medium": "app notification",
+      "novelty": "novel: automated smartphone-mediated version of manual contact tracing (traditionally done by staff canvassing on foot)",
+      "evidence": "'identify other smartphones that come into proximity with the phone of an infected person, then notify them through the app' (Contact Tracing and Privacy Concerns section)"
+    },
+    {
+      "sender": "individuals' smartphones",
+      "recipient": "government officials",
+      "subject": "citizens",
+      "information_type": "location data / citizen movements",
+      "medium": "smartphone location tracking for long-term monitoring",
+      "novelty": "novel flow proposed in early pandemic; deemed inappropriate (change in actor and transmission principles)",
+      "evidence": "'the strong negative reaction to initial media reports of governments seeking to track people's locations via their smartphones ... having that data flow to government officials for long-term monitoring of citizen movements ... was deemed an inappropriate new information flow'"
+    },
+    {
+      "sender": "Google/Apple (app data)",
+      "recipient": "governments",
+      "subject": "the population of app users",
+      "information_type": "aggregate population movement data",
+      "medium": "requested access to app data (resisted by Google/Apple; flow does not occur)",
+      "novelty": "proposed-and-refused flow",
+      "evidence": "'Google/Apple have resisted pressure from governments who want access to app data to build a picture of population movements in aggregate'"
+    }
+  ],
+  "s2_context": {
+    "domain": "public health (pandemic response / epidemic control)",
+    "nested_contexts": [
+      "crisis/emergency governance (norms around acceptable data flows may shift in times of crisis)",
+      "consumer mobile technology use (smartphones, wearables, IoT as the data-collecting substrate)"
+    ],
+    "activities": [
+      "contact tracing: (1) identifying people who had been in contact with an infected person, (2) locating and notifying contacts about their exposure, (3) regularly following up with contacts to monitor for infection",
+      "deploying smartphone apps as technological substitutes for staff-based canvassing"
+    ],
+    "purposes": [
+      "minimize the spread of COVID-19",
+      "notify exposed individuals",
+      "enable the reopening of communities and businesses"
+    ],
+    "values_ends": [
+      "protecting public health amid a global pandemic",
+      "individual privacy (balanced against public health)",
+      "individual autonomy and freedom from surveillance",
+      "citizens' civil liberties"
+    ],
+    "evidence": "Contact Tracing and Privacy Concerns section (WHO 2017 three-step definition); 'What are the prevailing values, goals, and ends within the context of using smartphones for contact tracing?' (Protecting Broader Moral and Political Values section)"
+  },
+  "s3_actors": {
+    "senders": ["app users / infected individuals (via their smartphones)", "Google/Apple (platform holding app data)"],
+    "recipients": ["other app users (exposed contacts)", "Google/Apple", "government officials (rejected recipient for location data; resisted requester for aggregate app data)"],
+    "subjects": ["infected individuals", "their contacts", "citizens whose movements would be monitored"],
+    "nonhuman_roles": [
+      {"entity": "smartphone / contact tracing app (exposure notification API)", "treated_as": "instrument"},
+      {"entity": "Bluetooth proximity sensing", "treated_as": "instrument"},
+      {"entity": "Google/Apple platform", "treated_as": "ambiguous"}
+    ],
+    "evidence": "'Actor refers to the parties involved in a given interaction'; government officials as new actor: 'having that data flow to government officials ... a change in actor'; '[Google/Apple] restricted actors who get access to such information'. Platform coded ambiguous: essay treats device makers both as data senders ('Fitbit sends data ... to various recipients') and as gatekeeping recipients resisting government access"
+  },
+  "s4_transmission_principles": [
+    {
+      "principle": "confidentiality",
+      "source_label": "confidentiality",
+      "explicit": true,
+      "evidence": "'The principle of confidentiality surrounds doctor-patient conversations' (framework exposition, applied to health-data context)"
+    },
+    {
+      "principle": "consent",
+      "source_label": "consent",
+      "explicit": true,
+      "evidence": "'the principle of consent often applies to a company's use of an individual's data' (framework exposition)"
+    },
+    {
+      "principle": "exchange",
+      "source_label": "sharing location to receive services",
+      "explicit": false,
+      "evidence": "'individuals are comfortable sharing their location with Google or Garmin to receive services like navigation and fitness tracking' — service-scoped exchange as the entrenched TP that government monitoring departs from"
+    },
+    {
+      "principle": "temporality",
+      "source_label": "long-term monitoring",
+      "explicit": false,
+      "evidence": "'having that data flow to government officials for long-term monitoring of citizen movements—a change in actor and transmission principles'; also storage duration: 'how long is data stored'"
+    },
+    {
+      "principle": "aggregation",
+      "source_label": "population movements in aggregate",
+      "explicit": false,
+      "evidence": "'governments who want access to app data to build a picture of population movements in aggregate' (resisted flow)"
+    }
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "Individuals share location data with service providers (Google, Garmin) in exchange for services (navigation, fitness tracking), scoped to service provision",
+      "entrenchment_evidence": "'individuals are comfortable sharing their location with Google or Garmin to receive services like navigation and fitness tracking'",
+      "departures": [
+        "same data flowing to government officials for long-term monitoring of citizen movements — change in actor and transmission principles, 'deemed an inappropriate new information flow'"
+      ],
+      "completeness": "entrenched",
+      "evidence": "Ensuring Appropriate Data Flows section"
+    },
+    {
+      "norm_flow": "Personal fitness/health data flows to the device maker and one's health provider are acceptable; flows of the same data to employers or insurance companies are not; more personal identifiers are less shareable than steps",
+      "entrenchment_evidence": "Authors' interview study with staff at two American public universities (Zimmer et al., 2020): 'while our interviewees were comfortable with data being shared with Fitbit or their health provider, they felt sharing data with employers or insurance companies was inappropriate'",
+      "departures": [],
+      "completeness": "entrenched",
+      "evidence": "Ensuring Appropriate Data Flows section (authors' prior Fitbit research used as analogous evidence for context-dependent health-data norms)"
+    },
+    {
+      "norm_flow": "Flows of health and proximity/location data to third parties for public health purposes during a crisis",
+      "entrenchment_evidence": "None — 'in times of crisis, the norms around acceptable data flows may shift'; appropriateness 'will be contextually dependent'",
+      "departures": [],
+      "completeness": "contested",
+      "evidence": "Introduction; abstract"
+    }
+  ],
+  "s6_prima_facie": {
+    "violation": "no",
+    "departed_parameters": [],
+    "justification": "For the focal Google/Apple exposure notification system: no prima facie violation — 'Google/Apple have created transmission principles aligned with users' expectations, limited the attributes of data being used to trace contacts, and restricted actors who get access to such information. In all, their solution maintains the CI of appropriate information flows, even when faced with the pressures of managing a public health crisis.' By contrast, the government location-tracking variant is a prima facie violation (departed parameters: recipient/actor and transmission principle) — 'a change in actor and transmission principles—was deemed an inappropriate new information flow.'",
+    "evidence": "'Our prima facie assessment of the Google/Apple solution suggests sufficient privacy protections are in place' (Protecting Broader Moral and Political Values section); 'This initial analysis provides us a prima facie judgment as to whether a new process significantly violates the entrenched norms within the context'"
+  },
+  "s7_factors": [
+    {
+      "factor": "Long-term loss of individual autonomy: embracing widespread surveillance to address the pandemic may be used to justify wider escalations of health monitoring that impinge on individual autonomy",
+      "kind": "autonomy",
+      "affected_parties": ["citizens / app users"],
+      "direction": "harm",
+      "evidence": "'it risks a long-term loss of autonomy' (abstract); 'embracing such forms of widespread surveillance to address the pandemic might be used to justify wider escalations of health monitoring that impinge on individual autonomy'"
+    },
+    {
+      "factor": "Threat to freedom from surveillance / normalization of mass surveillance: post-9/11 US surveillance policies as a cautionary tale for civil liberties",
+      "kind": "freedom",
+      "affected_parties": ["citizens"],
+      "direction": "harm",
+      "evidence": "'broader moral and political values at play ... including individual autonomy and freedom from surveillance'; 'the widespread surveillance policies enacted in the United States following the September 11 terrorist attacks as a cautionary tale for the normalization of mass surveillance ... to protect citizens' civil liberties (Diaz, 2020; Friedersdorf, 2020)'"
+    },
+    {
+      "factor": "Function creep and entrenchment of state/provider surveillance power: technologies deployed for benign purposes get repurposed for problematic ends; data collection extended beyond what was initially authorized; post-9/11 programs still active two decades later",
+      "kind": "power",
+      "affected_parties": ["citizens", "governments and technology providers (gain)"],
+      "direction": "harm",
+      "evidence": "'engaging in function creep—when a technology deployed for benign purposes slowly gets repurposed for problematic ends'; 'Diaz notes how many post-9/11 surveillance programs are still active today'; 'we are opening pandora's box by embracing any smartphone-based contact tracing solution'"
+    },
+    {
+      "factor": "History of misuse of personal information by technology providers and governments alike, undermining warranted trust in data stewards",
+      "kind": "trust",
+      "affected_parties": ["citizens / data subjects"],
+      "direction": "harm",
+      "evidence": "'Faced with a history of technology providers and governments alike misusing personal information, extending data collection beyond what was initially authorized or envisioned'"
+    },
+    {
+      "factor": "Exclusion of vulnerable populations: as many as 2 billion older mobile phones cannot use contact tracing apps, and those left out include some of the most vulnerable populations",
+      "kind": "equality",
+      "affected_parties": ["vulnerable populations without compatible smartphones"],
+      "direction": "harm",
+      "evidence": "'as many as 2 billion older mobile phones will not be able to use contact tracing apps, and those left out include some of the most vulnerable populations (Bradshaw, 2020)' (raised in Contact Tracing and Privacy Concerns section)"
+    },
+    {
+      "factor": "Large-scale social benefits obtainable through such information sharing: minimizing the spread of COVID-19 and protecting public health",
+      "kind": "other(public_health)",
+      "affected_parties": ["the public / communities"],
+      "direction": "benefit",
+      "evidence": "'the large-scale social benefits that can be obtained through such information sharing' (abstract); 'Clearly, we are attempting to protect public health amid a global pandemic, and we are balancing that goal against individual privacy'"
+    }
+  ],
+  "s8_contextual_meaning": [
+    {
+      "factor_ref": 5,
+      "contextual_end": "protecting public health / minimizing the spread of COVID-19 and enabling reopening",
+      "advances_or_undermines": "advances",
+      "argument": "The apps' purpose is the contact-tracing goal of the public health context — identifying and notifying exposed contacts to minimize disease spread — yielding large-scale social benefits; the Google/Apple design achieves this while maintaining CI",
+      "evidence": "'In all, their solution maintains the CI of appropriate information flows, even when faced with the pressures of managing a public health crisis'; abstract"
+    },
+    {
+      "factor_ref": 0,
+      "contextual_end": "individual autonomy and freedom from surveillance (prevailing values that constrain the pandemic-response context)",
+      "advances_or_undermines": "undermines",
+      "argument": "Even a privacy-preserving implementation risks normalizing widespread health surveillance: not all tracing apps will be as protective as Google/Apple's, and others may collect detailed health data, specific locations, or use face recognition — so the practice class threatens the prevailing values of autonomy and freedom as these technologies proliferate",
+      "evidence": "'CI pushes us to weigh these values when making the final determination of whether the Google/Apple contact tracing is acceptable'; 'we must look beyond near-term privacy-preserving steps taken by Google/Apple, and seriously reflect on possible future impacts on broader moral and political values as these technologies proliferate'"
+    }
+  ],
+  "s9_recommendation": {
+    "decision": "modify",
+    "conditions": [
+      "implement use limitations to avoid function creep",
+      "have strong data minimization and destruction policies",
+      "ensure full transparency and accountability",
+      "these policies 'at a minimum, must be in place' for any contact tracing app"
+    ],
+    "carrying_findings": [
+      "prima facie sufficiency of the Google/Apple privacy protections (s6) — the design itself is acceptable",
+      "function creep and post-9/11 surveillance-permanence risk (s7 power factor) — temporary crisis measures become permanent",
+      "long-term loss of autonomy and normalization of health surveillance as less-protective apps proliferate (s7 autonomy/freedom; s8)",
+      "caution should be taken in violating contextual integrity even in a pandemic (abstract)"
+    ],
+    "evidence": "'We encourage technology developers and policymakers to embrace a set of principles to ensure CI is maintained to the fullest extent. These include implementing use limitations to avoid function creep, having strong data minimization and destruction policies, and ensuring full transparency and accountability. Such policies, at a minimum, must be in place to ensure that any contact tracing app will accord with protecting the broader set of moral and political values that CI compels us to protect.' (final paragraph)"
+  }
+}

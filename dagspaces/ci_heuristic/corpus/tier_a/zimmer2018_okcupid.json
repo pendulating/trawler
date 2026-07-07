@@ -1,0 +1,178 @@
+{
+  "meta": {
+    "case_id": "zimmer2018_okcupid",
+    "source": "Zimmer, M. (2018). Addressing Conceptual Gaps in Big Data Research Ethics: An Application of Contextual Integrity. Social Media + Society, 4(2). https://doi.org/10.1177/2056305118768300",
+    "practice": "2016 public release by researchers (Kirkegaard) of a scraped dataset of ~70,000 OkCupid users' profile data, including usernames and answers to 2,600 profiling questions",
+    "practice_input": "In 2016, a graduate researcher publicly released a dataset of nearly 70,000 users of the online dating site OkCupid. Between November 2014 and March 2015 he collected the data with an automated web scraper, after creating an OkCupid profile to gain access to the site — meaning some harvested profiles may have been visible only to logged-in users. The dataset included usernames, age, gender, sexual orientation, location, personality traits, and answers to the site's 2,600 most popular profiling questions, covering religious and political views, drug use, and sexual preferences. No anonymization was applied and no consent was sought from OkCupid or its users; the release, posted to an open science platform alongside a draft paper, was justified on the grounds that the data was already public. Should this practice continue as-is, be modified, or be rejected?",
+    "contaminated": true,
+    "annotator": "claude-agent (needs human second pass)",
+    "annotation_date": "2026-07-07",
+    "annotator_notes": "Contaminated: published April 2018 (pre-2023), open access, widely cited in internet research ethics — near-certainly in training data; few-shot/rubric use only. Vocabulary note (per guide rule 5): normalized TP 'other(human individual access)' is not in the working vocabulary — Zimmer makes the human-recipient/individual-visit expectation an explicit transmission principle ('the transmission principles assume that other (human) users will access the site to visit individual profiles'); flagging for vocabulary extension. s7 kind 'other(dignity)' likewise flagged. Zimmer's dignity framing in Evaluation I is primed by his earlier Bloustein (1964) dignity-based-harm discussion in the 'Harm' conceptual-gap section; only the Evaluation I content is annotated as s7. Second-pass fields: s7_factors, s9_recommendation.",
+    "source_deviations": [
+      "Step 2 is performed minimally: the prevailing context is named ('online dating site') with no exploration of nested contexts, despite Zimmer's own restatement of the heuristic calling for nested contexts to be considered",
+      "Consent first appears as a violated transmission principle at Step 6 (prima facie: 'He failed to obtain user consent'); Step 4's TP inventory never names consent — evaluative TP content mixed into the prima facie step",
+      "Evaluation I covers autonomy, dignity, and power but does not systematically walk the heuristic's remaining checklist (fairness, justice, democracy) — no explicit statement that those factors were considered and found inapplicable",
+      "Step 9 is rendered as a justifiability verdict ('the violation ... is not justifiable') rather than an explicit continue/modify/reject prescription or conditions for an acceptable variant; coded here as decision=reject with no conditions"
+    ]
+  },
+  "steps_present": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"],
+  "s1_flows": [
+    {
+      "sender": "OkCupid user",
+      "recipient": "OkCupid service (platform)",
+      "subject": "OkCupid user",
+      "information_type": "account and profile information (username, age, gender, sexual orientation, location; answers to profiling questions)",
+      "medium": "account creation / profile forms on the platform",
+      "novelty": "entrenched (inherent flow 1)",
+      "evidence": "Describe Information Flows: 'first, a user creates an account and provides information to the OkCupid service'"
+    },
+    {
+      "sender": "OkCupid user (via platform visibility settings)",
+      "recipient": "search engines and other non-users of the service",
+      "subject": "OkCupid user",
+      "information_type": "limited subset of profile information",
+      "medium": "public web / search-engine indexing",
+      "novelty": "entrenched (inherent flow 2)",
+      "evidence": "Describe Information Flows: 'second, some information is made available to search engines and other non-users of the service'"
+    },
+    {
+      "sender": "OkCupid user",
+      "recipient": "other logged-in OkCupid users who happen to access the profile page",
+      "subject": "OkCupid user",
+      "information_type": "more detailed profile information, including answers to thousands of profiling questions",
+      "medium": "profile page visible within the logged-in platform",
+      "novelty": "entrenched (inherent flow 3)",
+      "evidence": "Describe Information Flows: 'third, more detailed information (such as the answers to thousands of profiling questions) are shared only with other logged-in users of the platform who happen to access another user's profile page'"
+    },
+    {
+      "sender": "OkCupid platform (any user profile accessible to a logged-in account)",
+      "recipient": "Kirkegaard's research database",
+      "subject": "~70,000 OkCupid users",
+      "information_type": "large amounts of profile data (basic profile fields plus answers to the 2,600 most popular match questions)",
+      "medium": "automated web scraper run from a dummy account",
+      "novelty": "novel flow 1 introduced by the practice",
+      "evidence": "Describe Information Flows: 'by creating a dummy account and running his automated script capable of accessing and archiving any user profile, Kirkegaard forced large amounts of profile data to automatically flow into his databases'"
+    },
+    {
+      "sender": "Kirkegaard (researcher)",
+      "recipient": "general public (Open Science Framework and open peer-review forum)",
+      "subject": "~70,000 OkCupid users",
+      "information_type": "full harvested dataset, including usernames and question answers, unanonymized",
+      "medium": "public dataset release accompanying a draft paper",
+      "novelty": "novel flow 2 introduced by the practice",
+      "evidence": "Describe Information Flows: 'by releasing all information harvested by his automated script, profile data flowed outside the closed context of the universe of OkCupid users and out to the general public'"
+    }
+  ],
+  "s2_context": {
+    "domain": "online dating site",
+    "nested_contexts": [],
+    "activities": ["logged-in users viewing other users' profiles"],
+    "purposes": ["finding a potential social or romantic partner"],
+    "values_ends": [],
+    "evidence": "Identify the Prevailing Context: 'the OkCupid service that facilitates logged-in users to view other user profiles to find a potential social or romantic partner, which can be summarized as an \"online dating site\"'"
+  },
+  "s3_actors": {
+    "senders": ["OkCupid users who make their profiles visible to other users"],
+    "recipients": ["OkCupid (the dating service itself)", "other users of the service", "the public, to a lesser extent, via search-engine access to a limited set of profile data"],
+    "subjects": ["OkCupid users who have created accounts and provided profile information"],
+    "nonhuman_roles": [
+      {"entity": "OkCupid platform/service", "treated_as": "recipient"},
+      {"entity": "Kirkegaard's automated web scraper (run from a dummy logged-in account)", "treated_as": "instrument"},
+      {"entity": "search engines", "treated_as": "ambiguous"}
+    ],
+    "evidence": "Identify Information Subjects, Senders, and Recipients: subjects = account-holding users; senders = users making profiles visible; recipients = OkCupid, other users, and the public via search engines; 'Kirkegaard's OkCupid study expanded the scope of the general public's role as recipients'"
+  },
+  "s4_transmission_principles": [
+    {
+      "principle": "reciprocity",
+      "source_label": "sharing of personal profile information with other users on the site also looking for social or romantic relationships",
+      "explicit": true,
+      "evidence": "Identify the Transmission Principles: 'Transmission principles on OkCupid, like with most online dating sites, center on the sharing of personal profile information with other users on the site also looking for social or romantic relationships'"
+    },
+    {
+      "principle": "confidentiality",
+      "source_label": "users can limit visibility to only other logged-in users",
+      "explicit": true,
+      "evidence": "Identify the Transmission Principles: 'users can limit visibility to only other logged-in users, thereby ensuring only other members of the dating site community have access to their profile information'"
+    },
+    {
+      "principle": "secrecy",
+      "source_label": "opting to make certain match-question responses private, and thus unseen to other users",
+      "explicit": true,
+      "evidence": "Identify the Transmission Principles: 'Users can also limit the visibility of their \"match\" questions used to measure compatibility, opting to make certain responses private, and thus unseen to other users'"
+    },
+    {
+      "principle": "other(human individual access)",
+      "source_label": "other (human) users will access the site to visit individual profiles",
+      "explicit": true,
+      "evidence": "Identify the Transmission Principles: 'Overall, the transmission principles assume that other (human) users will access the site to visit individual profiles and identify potential matches for social interaction'"
+    }
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "OkCupid users (senders/subjects) selectively disclose profile information to other human users who happen to visit their profile page (recipients), controlling visibility (logged-in-only profiles; private match answers, some data invisible to all), justified by the shared desire to find social or romantic partners",
+      "entrenchment_evidence": "Detail the Entrenched Information Norms: 'The entrenched information norms within the context of OkCupid focus on users' ability to control the visibility of their profile information, with the expectation that only other humans who happen to visit their page will be able to access their data and that some of their data might remain invisible to all'",
+      "departures": [
+        "creating an account for the sole purpose of harvesting all available profile data (automated collection for research, not to find a social or romantic partner)",
+        "making all profile data visible to his account publicly available"
+      ],
+      "completeness": "entrenched",
+      "evidence": "Detail the Entrenched Information Norms: 'Kirkegaard's OkCupid study appears to disrupt these informational norms by (a) creating an account for the sole purpose of harvesting all available profile data, and (b) making all profile data visible to his account publicly available. His intent was not to find a social or romantic partner, but rather to automatically collect data for research purposes.'"
+    }
+  ],
+  "s6_prima_facie": {
+    "violation": "yes",
+    "departed_parameters": ["recipient", "transmission_principle"],
+    "justification": "Kirkegaard disrupted the informational norms of the online dating context by creating a fake profile account solely to collect user information, using an automated web scraper to harvest the data, and then releasing all profile data to the public. He failed to obtain user consent, ignored that some profile information may have been visible only because he was logged in, and released the data into an environment beyond the expected population of recipients.",
+    "evidence": "Prima Facie Assessment: 'A prima facie assessment of Kirkegaard's OkCupid study reveals a clear violation of contextual integrity.'"
+  },
+  "s7_factors": [
+    {
+      "factor": "Loss of users' ability to maintain control of their information on the platform: potentially private or sensitive data divulged for companionship-seeking has been exposed to the public (no evidence of direct/tangible harm to users, but control was lost)",
+      "kind": "autonomy",
+      "affected_parties": ["OkCupid users"],
+      "direction": "harm",
+      "evidence": "Evaluation I: 'While we have no evidence of users experiencing direct harm ... users did lose their ability to maintain control of their information on the platform. Information originally shared within the contextual norms of an online dating site ... has been exposed to the public, signifying a threat to users' personal autonomy and dignity.'"
+    },
+    {
+      "factor": "Threat to users' dignity from having self-disclosures made within an online dating context stripped out and exposed publicly",
+      "kind": "other(dignity)",
+      "affected_parties": ["OkCupid users"],
+      "direction": "harm",
+      "evidence": "Evaluation I: '...signifying a threat to users' personal autonomy and dignity'"
+    },
+    {
+      "factor": "Shift in power structures within the online dating context: an outsider using a fake account and an automated scraping tool gains access to community data without any intention of contributing, versus honest members of a community of trust sharing under an understanding of mutual exchange",
+      "kind": "power",
+      "affected_parties": ["OkCupid users (community of trust)"],
+      "direction": "harm",
+      "evidence": "Evaluation I: 'Kirkegaard's actions also reveal a shift in the power structures ... Rather than being an honest member of a community of trust—where users share information with the understanding that others are doing the same, with the shared goal of seeking a partner—Kirkegaard represents an outsider who created a fake account simply to gain access to data with an automated scraping tool, without any intention of contributing to the community.'"
+    }
+  ],
+  "s8_contextual_meaning": [
+    {
+      "factor_ref": 2,
+      "contextual_end": "community and trust: OkCupid as a trusted space to share information among members also seeking to find partners",
+      "advances_or_undermines": "undermines",
+      "argument": "Kirkegaard's presence as an imposter to the community of users violated the community principles and expectations of information flows; the broader values of community and trust on the site, and the goals of the OkCupid community, were clearly disrupted by his actions.",
+      "evidence": "Evaluation II: 'the broader values of community and trust on the site were disrupted by his study. The goals of the OkCupid community—to be a trusted space to share information among members also seeking to find partners—were clearly disrupted by Kirkegaard's actions.'"
+    },
+    {
+      "factor_ref": 0,
+      "contextual_end": "mutual exchange among users on equal footing",
+      "advances_or_undermines": "undermines",
+      "argument": "The practice alters the nature of the community from one where users on equal footing share information with an understanding of mutual exchange into a space where users might now feel concerned about their data being harvested and shared outside of the community and its informational norms.",
+      "evidence": "Evaluation II: 'altering the nature of the community from one where users on equal footing share information with an understanding of mutual exchange, into a space where users might now feel concerned about their data being harvested and shared outside of the community'"
+    }
+  ],
+  "s9_recommendation": {
+    "decision": "reject",
+    "conditions": [],
+    "carrying_findings": [
+      "The disruption of informational norms brought no benefit—directly or indirectly—to the users or the context (s7/s8)",
+      "It only degraded the values and goals of the community and its members (s8: community, trust, mutual exchange)",
+      "The verdict stands in striking contrast to the claim that the supposed 'publicness' of the data means little pause is necessary"
+    ],
+    "evidence": "Final Determination: 'Our final determination, based on the above heuristic, is that the violation of contextual integrity by Kirkegaard's actions is not justifiable.'"
+  }
+}

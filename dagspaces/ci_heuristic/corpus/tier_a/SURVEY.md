@@ -10,10 +10,10 @@ exemplars/marginal.
 | # | Case | Practice | Steps | Contamination | Notes |
 |---|------|----------|-------|---------------|-------|
 | 1 | Kumar, Zimmer & Vitak 2024 (CSCW, 10.1145/3653710) | Fitbit PFI → healthcare | all 9 | moderate | ANNOTATED: `kumar2024_fitbit.json` |
-| 2 | Zimmer 2018 (SM+S, 10.1177/2056305118768300) | OkCupid data release / research ethics | 1-6 + 7-8, verdict | high | canonical "already public" rebuttal |
+| 2 | Zimmer 2018 (SM+S, 10.1177/2056305118768300) | OkCupid data release / research ethics | all 9, s9=reject | high | ANNOTATED: `zimmer2018_okcupid.json` (via Wayback) |
 | 3 | Bloch & Bashir 2017/18 (AHFE, 10.1007/978-3-319-60483-1_59) | cardiac implants + remote monitoring | self-labeled 9-step | **low** (obscure venue) | paywalled (Springer chapter) — needs MF library access |
 | 4 | Sar & Al-Saggaf 2014 (Ethics Inf Technol, 10.1007/s10676-013-9329-y) | SNS third-party tracking | heuristic-titled, 1-8 + verdict | moderate | "decision heuristic" in title |
-| 5 | Vitak & Zimmer 2020 (SM+S, 10.1177/2056305120948250) | COVID contact tracing | 1-7 + 9 | high | short-form |
+| 5 | Vitak & Zimmer 2020 (SM+S, 10.1177/2056305120948250) | COVID contact tracing | all 9 (compressed), s6=no, s9=modify | high | ANNOTATED: `vitak2020_covid_surveillance.json` (via PMC) |
 | 6 | Zeide & Nissenbaum 2018 (TRE, 10.1177/1477878518815340) | MOOCs / virtual education | 2,5,7,8 strong | mod-high | best step-8 exemplar; Nissenbaum-authored |
 | 7 | de Groot 2024 (MHCP, 10.1007/s11019-024-10211-0) | genomic data across contexts | 1-9 multi-case | **low-mod** (post-2023, non-US) | ANNOTATED: `degroot2024_genomic_forensic.json` (forensic strand) |
 | 8 | Wernick et al. 2025 (FAccT, arXiv:2506.00218) | algorithmic travel surveillance (FI) | 1-8, s6=incomplete_norms | **low** (2025, non-US) | ANNOTATED: `wernick2025_travel_surveillance.json` |
@@ -31,7 +31,7 @@ exemplars/marginal.
 
 ## Tier 3 — special purpose
 
-17. Skeba & Baumer 2020 (CSCW) — facial recognition; **deliberate partial/misapplication exemplar** for probe (d)
+17. Skeba & Baumer 2020 (CSCW) — facial recognition — ANNOTATED: `skeba2020_facial_recognition.json` (s1,s3-s6; 11 source_deviations = probe-(d) reference material; via Wayback ACM PDF)
 18. Zimmer 2010 — Facebook T3; informal pre-heuristic pair to #2
 19. Mutimukwe et al. 2023 — online proctoring scoping review; marginal
 20. Brehm et al. 2023 — VR classrooms (PrivaCI'23); conceptual-only

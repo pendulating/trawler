@@ -1,0 +1,155 @@
+{
+  "meta": {
+    "case_id": "skeba2020_facial_recognition",
+    "source": "Skeba, P. & Baumer, E.P.S. (2020). Informational Friction as a Lens for Studying Algorithmic Aspects of Privacy. PACM HCI 4(CSCW2), Article 101. https://doi.org/10.1145/3415172 — Case Study 1 (§3, pp. 101:4–101:9), law-enforcement facial recognition strand only",
+    "practice": "Law enforcement (NYPD) use of facial recognition to identify individuals in probe photos against arrest/parole photo repositories",
+    "practice_input": "A practice has become widespread: police departments use facial recognition software to identify individuals. Investigators submit a 'probe photo' — often a still from surveillance footage supplied by witnesses, victims, or other sources — and the system matches the face against a repository of arrest and parole photographs. One large department's public guidelines permit this for six purposes (identifying crime suspects, missing persons, the deceased, the incapacitated, arrestees without valid identification, or imminent threats to public safety), state that a match is 'merely a lead; it is not probable cause,' and restrict results to an approved law-enforcement database with access limited to authorized users. In practice, officers have also matched probes against juveniles' arrest photos, edited probe images, and used a third-party service that searches social-media photos. Should this practice continue as-is, be modified, or be rejected?",
+    "contaminated": true,
+    "annotator": "claude-agent (needs human second pass)",
+    "annotation_date": "2026-07-07",
+    "annotator_notes": "Full text obtained (ACM PDF via Wayback Machine capture 2023-03-14 of dl.acm.org/doi/pdf/10.1145/3415172). Contaminated: 2020 CSCW paper, well within training data. This is the corpus's canonical PARTIAL/CONTESTED exemplar: the source performs only the descriptive half of the heuristic and then argues CI cannot express the concerns it cares most about. Vocabulary note: s4 uses normalized TP 'probable cause' — not in the guide's working vocabulary, but the paper itself lists 'probable cause conditions for law enforcement' as a canonical TP example (§2.1); flag for guide vocabulary extension. Annotator disagreement (not gold): the paper's inarticulability claims target CI's five-parameter norm-violation test, not the full 9-step decision heuristic — steps 7–8 (moral/political factors weighed against contextual values) are designed to capture exactly the chilling-effect, disparate-impact, and power-asymmetry concerns the paper deems inexpressible in CI; the paper never engages the augmented heuristic of Nissenbaum 2010 ch.7 despite citing Nissenbaum 2019. Also note the paper reads CI parameters off the NYPD's written policy document rather than eliciting entrenched social norms — defensible as a description of prescribed institutional norms, but a methodological shortcut. Second-pass fields: s5 completeness labels, s6 violation call (yes vs. incomplete_norms — see justification), source_deviations list.",
+    "source_deviations": [
+      "Performs only the descriptive half of the heuristic: specifies the five parameters (Fig. 1), identifies norm departures and violations (s5/s6), but never articulates the law-enforcement context's values/ends (s2 absent), never weighs moral/political factors in CI terms (s7 absent), never evaluates against contextual ends (s8 absent), and issues no continue/modify/reject recommendation (s9 absent) — the paper pivots to informational friction instead.",
+      "Explicit claim: a 'third class of privacy concerns... are difficult to articulate either in terms of incorrectly defined CI parameters or in terms of violation of those parameters' (§3.1, p. 101:7) — the paper treats parameter misspecification and parameter violation as the entirety of CI's expressive repertoire.",
+      "Explicit claim (chilling effects): concerns about stifled free speech and assembly 'cannot easily be articulated in the language of CI... since [they] are based more on perceptions about possible actions than on any discrete act that might constitute a violation' (§3.2, p. 101:7); 'the threat of abuse, even if it does not occur, may be enough to constitute an encroachment on civil rights' (p. 101:8).",
+      "Explicit claim (false positives): 'CI could be used to argue that such an arrest violates multiple parameters (at least subject and transmission principle). However, it cannot account for the larger privacy impacts caused by the possibility of such a false-positive resulting in an arrest' — harm accrues before any discrete violation occurs (p. 101:8).",
+      "Explicit claim (disparate racial impact): 'Formulating this disparity in terms of CI would be difficult at best' because it 'emerges from the larger historical context which leads to a biased dataset,' i.e. arrest-photo repositories over-represent Black and Hispanic citizens, so harms arise 'even whenever [systems] are being used in accordance with contextual norms' (pp. 101:8–9).",
+      "Explicit claim (no severity gradation): CI's binary violation logic treats matching against arrest records, driver's-license databases, and social-media photos as 'equally objectionable,' whereas each constitutes a successively greater friction reduction — 'while CI would frame all of these as violations, IF enables us to see some as more significant than others' (p. 101:9).",
+      "Explicit claim (systemic residue): 'informational friction reveals that some privacy implications from this technology are inevitable, even when all the parameters of contextual integrity are satisfied' (p. 101:9); the 'perpetual line-up' harm persists 'regardless of guidelines, safeguards, and promises.'",
+      "General strain claims applied to both case studies: CI 'may struggle in the face of unprecedented practices and associated data flows that defy any easy comparison with preexisting practice' (quoting Nissenbaum 2019) and 'requires a clear, binary distinction to be made between acceptable and unacceptable data practices' (§4.2, pp. 101:11–12); CI is 'pointwise' where IF is 'systemic' (§5, p. 101:15).",
+      "Concedes CI's proper scope in §5.1: 'if there do exist clear cultural norms which apply to a given privacy context, CI can be used to codify those norms'; 'When the goal of a privacy analysis is to say how an information practice should be conducted... CI is likely the more appropriate framework' (p. 101:16) — and floats fusing IF with CI's parameters as future work.",
+      "Mixing: the moral/political factor material (free speech, discrimination, power, trust) IS present in the paper but is done in the informational-friction sections (§3.2), not as CI step 7 — literature evidence that human analysts stop CI at the descriptive half and route evaluation through a different framework.",
+      "Reads the five parameters off a published institutional policy (NYPD guidelines) rather than from entrenched contextual norms, then assesses the policy against norms — a two-layer move (policy-as-specified vs. norms, practice vs. policy) the heuristic does not natively distinguish."
+    ]
+  },
+  "steps_present": ["s1", "s3", "s4", "s5", "s6"],
+  "s1_flows": [
+    {
+      "sender": "witnesses, victims, or other reliable sources (providing the probe image)",
+      "recipient": "NYPD internal chain of command: investigator requesting FR analysis, Real Time Crime Center-Facial Identification Section (RTCC-FIS) supervisor and investigator",
+      "subject": "individuals within the NYPD's jurisdiction submitted for facial recognition analysis for six enumerated reasons (crime suspect; missing person/crime victim/witness; deceased; incapacitated; arrestee without valid ID; imminent threat to health or public safety)",
+      "information_type": "probe image compared against photo repository of arrest and parole photographs; resulting identity match",
+      "medium": "facial recognition software matching probe photos (often surveillance-footage stills) against the NYPD repository",
+      "novelty": "novel automated identification practice, codified in publicly released departmental guidelines; at least 1 in 4 US state/local police departments have access, ~117 million American adults enrolled",
+      "evidence": "Fig. 1, p. 101:6 (parameter-by-parameter reading of NYPD guidelines [14]/[54]); §3 p. 101:4–5 on prevalence [34]"
+    },
+    {
+      "sender": "NYPD (crime-scene surveillance footage as probe source)",
+      "recipient": "NYPD investigators",
+      "subject": "juvenile offenders (minors with arrest photos)",
+      "information_type": "crime-scene surveillance footage matched against arrest photos of juvenile offenders",
+      "medium": "facial recognition matching",
+      "novelty": "revealed 2019; guidelines' subject parameter prescribes no age limit, leaving minors targetable",
+      "evidence": "§3.1, p. 101:5: 'the NYPD had been comparing surveillance footage from crime scenes to arrest photos of juvenile offenders [36]'"
+    },
+    {
+      "sender": "NYPD investigators (probe images, with case-specific approval by Chief of Detectives or Deputy Commissioner, Intelligence and Counterterrorism)",
+      "recipient": "NYPD investigators / approving executives",
+      "subject": "individuals outside the arrest/parole repository — general public appearing in driver's-license databases, social media accounts, public records",
+      "information_type": "probe images matched against photos outside the arrest photo repository",
+      "medium": "facial recognition matching against external repositories under the guidelines' exception clause",
+      "novelty": "exception to the arrest-photos-only rule; public backlash and dissenting legal scholarship",
+      "evidence": "Fig. 1 information-type exception quote, p. 101:6; §3.1 pp. 101:6–7 [1], [34 p.116]"
+    },
+    {
+      "sender": "'rogue' NYPD officers (submitting probe photos)",
+      "recipient": "Clearview AI (controversial third-party provider) and, via its results, the officers",
+      "subject": "individuals appearing in social media and public-record photos",
+      "information_type": "probe photos matched against Clearview AI's repository of social media and public record photos",
+      "medium": "third-party facial recognition service",
+      "novelty": "first denied then admitted by NYPD; violates the department's own guidelines",
+      "evidence": "§3.1, p. 101:7: 'a clear violation of the recipient and information type parameters specified in their own guidelines' [60], [33]"
+    },
+    {
+      "sender": "NYPD detectives (edited or substituted probe images)",
+      "recipient": "RTCC-FIS / investigators",
+      "subject": "suspects whose surveillance images are poor quality (e.g., robbery suspect resembling actor Woody Harrelson)",
+      "information_type": "edited probe photos and celebrity 'doppelganger' images substituted for the surveillance still",
+      "medium": "facial recognition matching on manipulated input",
+      "novelty": "admitted practice; guidelines allow only a still image obtained from surveillance footage",
+      "evidence": "§3.1, p. 101:7 and fn. 3: 'Such actions violate the information type parameter' [33]"
+    }
+  ],
+  "s3_actors": {
+    "senders": [
+      "witnesses, victims, or other reliable sources (probe image providers)",
+      "NYPD investigators/detectives submitting probes",
+      "'rogue' officers submitting probes to Clearview AI"
+    ],
+    "recipients": [
+      "investigator requesting FR analysis",
+      "RTCC-FIS supervisor and investigator (internal chain of command)",
+      "Chief of Detectives / Deputy Commissioner, Intelligence and Counterterrorism (exception approvals)",
+      "Clearview AI (third-party provider, unsanctioned)"
+    ],
+    "subjects": [
+      "individuals submitted for FR analysis under the six enumerated reasons",
+      "individuals with arrest or parole photos in the NYPD repository (disproportionately Black and Hispanic citizens)",
+      "juvenile offenders",
+      "general public in outside repositories (driver's licenses, social media) — ~117 million American adults in the 'perpetual line-up'",
+      "peaceful protesters captured by surveillance cameras"
+    ],
+    "nonhuman_roles": [
+      {"entity": "facial recognition software/algorithm", "treated_as": "instrument"},
+      {"entity": "arrest and parole photo repository (law-enforcement database)", "treated_as": "instrument"},
+      {"entity": "surveillance cameras / crime-scene footage", "treated_as": "instrument"},
+      {"entity": "Clearview AI (third-party matching service)", "treated_as": "recipient"}
+    ],
+    "evidence": "Fig. 1, p. 101:6; §3.1 p. 101:7 (Clearview as recipient-parameter violation); §3.2 pp. 101:7–9 (protesters, repository demographics, perpetual line-up [34])"
+  },
+  "s4_transmission_principles": [
+    {
+      "principle": "probable cause",
+      "source_label": "A facial recognition match is merely a lead; it is not probable cause.",
+      "explicit": true,
+      "evidence": "Fig. 1 Transmission Principles, p. 101:6, quoting NYPD guidelines [54]; §2.1 lists 'probable cause conditions for law enforcement' as a canonical TP"
+    },
+    {
+      "principle": "need",
+      "source_label": "May only be used in the six cases listed under the Subject parameter",
+      "explicit": true,
+      "evidence": "Fig. 1 Transmission Principles, p. 101:6 (purpose restriction to the six enumerated identification needs)"
+    },
+    {
+      "principle": "confidentiality",
+      "source_label": "Data is stored in a designated, and approved, law enforcement database, and access is restricted to authorized users",
+      "explicit": true,
+      "evidence": "Fig. 1 Transmission Principles, p. 101:6"
+    }
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "Police compare probe images only against repositories of arrest (and parole) photos, so that only individuals with criminal records are candidate matches; persons without arrest photos are 'significantly less affected'",
+      "entrenchment_evidence": "Police use of photos outside criminal-record repositories (driver's license databases, social media) 'have garnered both public backlash [1] and dissenting opinions from legal scholars [34, p.116]. These reactions support a contextual norm that only arrest photos should be considered candidate matches.'",
+      "departures": [
+        "guidelines' exception clause permitting matches outside the repository with executive approval",
+        "unsanctioned Clearview AI matching against social media and public records",
+        "proposed/actual use of driver's-license databases"
+      ],
+      "completeness": "contested",
+      "evidence": "§3.1, pp. 101:6–7"
+    },
+    {
+      "norm_flow": "Minors are not acceptable subjects for facial recognition analysis",
+      "entrenchment_evidence": "2019 revelation of juvenile-arrest-photo matching 'drew the consternation of civil rights activists and elected officials who objected to the technology being used on minors'; the guidelines' subject parameter prescribes no age, so the norm is unreflected in policy",
+      "departures": [
+        "NYPD comparison of crime-scene surveillance footage to arrest photos of juvenile offenders"
+      ],
+      "completeness": "contested",
+      "evidence": "§3.1, p. 101:5 [36]"
+    },
+    {
+      "norm_flow": "Law-enforcement identification of members of the public via facial recognition generally: whether, when, and against whom it is appropriate",
+      "entrenchment_evidence": "No settled norm: the paper 'utilizes Contextual Integrity to paint the debate as a clash between norms, with the police desiring different contextual norms than members of the public who object'; public divided (56% express some/great trust, Pew 2019); jurisdictions range from outright bans to unregulated adoption — 'the unsettled nature of the debate'",
+      "departures": [],
+      "completeness": "contested",
+      "evidence": "§3 intro, pp. 101:4–5 [80], [15], [34]; §3 framing, p. 101:5"
+    }
+  ],
+  "s6_prima_facie": {
+    "violation": "yes",
+    "departed_parameters": ["subject", "information_type", "recipient", "transmission_principle"],
+    "justification": "The source finds prima facie violations in two classes. Class 1 — parameters as specified in the NYPD guidelines fail to conform to contextual norms: the subject parameter prescribes no age (permitting juvenile targeting) and the information-type exception permits matching outside arrest repositories, both contrary to norms evidenced by public/activist/legal-scholar reaction; remedy proposed is revising the parameter specification. Class 2 — actual departmental practice violates the guidelines' own prescribed norms: Clearview AI use is 'a clear violation of the recipient and information type parameters'; edited probes/celebrity doppelgangers 'violate the information type parameter'; a false-positive-driven arrest 'violates multiple parameters (at least subject and transmission principle)'. The source simultaneously asserts a third class of concerns (chilling effects, pre-violation harms, disparate impact, severity gradation, systemic 'perpetual line-up' effects) that cannot be expressed as either misspecification or violation — the analysis deliberately terminates here and proceeds under informational friction rather than continuing to steps 7–9 (see meta.source_deviations). Backdrop norms are contested (s5), so the violation finding attaches to the specific departing flows, not to a settled context-wide judgment.",
+    "evidence": "§3.1, pp. 101:5–7; §3.2, p. 101:8 (false-positive parameters); third-class claim at p. 101:7"
+  }
+}
