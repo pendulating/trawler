@@ -14,6 +14,7 @@ from typing import Dict, List, Tuple
 _STOPWORDS = {
     "the", "a", "an", "their", "its", "his", "her", "of", "for", "to", "and",
     "or", "in", "on", "with", "by", "that", "this", "who", "which", "s",
+    "are", "is", "into", "via",
 }
 
 # Common actor/TP synonym groups: normalization collapses within a group.
@@ -28,6 +29,9 @@ _SYNONYMS = {
     "notice": {"notice", "notification", "informed", "transparency"},
     "company": {"company", "corporation", "firm", "business"},
     "insurer": {"insurer", "insurance"},
+    "disclose": {"disclose", "disclosure", "disclosing", "disclosed", "disclosures"},
+    "share": {"share", "sharing", "shared"},
+    "record": {"record", "recording", "recorded", "records"},
 }
 _CANON = {w: k for k, ws in _SYNONYMS.items() for w in ws}
 

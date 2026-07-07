@@ -1,0 +1,12 @@
+# @package _global_
+# L3 + deliberative structures at the collective steps (Phase 3):
+#   s5: norm-elicitation ensemble (population expectations -> convergence
+#       stats -> synthesized S5 artifact)
+#   s7: stakeholder panel (structure: ensemble | chain | debate;
+#       include_marginalized=false is the McDonald-Forte ablation arm)
+#   s8: contextual-values analyst   s9: juror-style moderator
+ladder:
+  level: l5
+  s5_n_personas: 10
+  s7_structure: ensemble
+  include_marginalized: true

@@ -41,6 +41,8 @@ def _reconstruct_states(traverse_df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
         artifact = json.loads(row["artifact_json"])
         state = states.setdefault(cid, {})
         step = str(row["step"])
+        if ":" in step:
+            continue  # per-member deliberation rows; only merged artifacts score
         if step != "monolithic":
             state[step] = artifact
             continue
