@@ -1,0 +1,134 @@
+{
+  "meta": {
+    "case_id": "kumar2024_fitbit",
+    "source": "Kumar, P.C., Zimmer, M., & Vitak, J. (2024). A Roadmap for Applying the Contextual Integrity Framework in Qualitative Privacy Research. PACM HCI 8(CSCW1), Article 219. https://doi.org/10.1145/3653710",
+    "practice": "Wearable fitness tracker (Fitbit) personal fitness information (PFI) flows into the health care context",
+    "practice_input": "A practice has become widespread: people wear consumer fitness trackers (e.g., Fitbit) that automatically and continuously generate personal fitness information (PFI) about their bodies and activities — step counts, heart rate, calories burned, frequency and duration of physical activity and sleep. The device syncs with a cloud platform run by the device maker, from which the wearer can view their data; the platform also has social features. Increasingly, this PFI flows into health care: wearers may tell their doctor about their activity, show their dashboard during appointments, or have the data transmitted into electronic medical record systems; device makers have partnered with insurance companies, employers, and government health programs to integrate PFI, sometimes tied to premium discounts or penalties. Should this practice continue as-is, be modified, or be rejected?",
+    "contaminated": true,
+    "annotator": "claude+MF (machine-extracted from source text; needs human second pass on s7 checklist + s9)",
+    "annotation_date": "2026-07-06",
+    "annotator_notes": "Conservatively flagged contaminated (CSCW April 2024; likely in training data). The paper IS the roadmap paper, so its traversal is maximally faithful to the heuristic — best-case gold. Second-pass fields: s7_factors, s9_recommendation.",
+    "source_deviations": [
+      "Source deliberately situates 'purpose' in Step 2 (context) rather than Step 4 (TP), argued against Frik et al.'s broader TP reading — this is our normative reference, not a deviation, but models trained on other sources may follow Frik et al.",
+      "Steps 1-5 draw on interview data unavailable to a model given only the practice description; gold s4 TP list is therefore a superset target (coverage, not exact match)"
+    ]
+  },
+  "steps_present": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"],
+  "s1_flows": [
+    {
+      "sender": "patient (Fitbit user)",
+      "recipient": "doctor",
+      "subject": "patient (Fitbit user)",
+      "information_type": "personal fitness information (PFI)",
+      "medium": "verbal disclosure in conversation",
+      "novelty": "extension of existing practice (discussing exercise/sleep with doctor)",
+      "evidence": "Step 5 example: 'people can disclose PFI (e.g., tell their doctor their step count)'"
+    },
+    {
+      "sender": "patient (Fitbit user)",
+      "recipient": "doctor",
+      "subject": "patient (Fitbit user)",
+      "information_type": "PFI (granular device data)",
+      "medium": "showing the Fitbit dashboard during an appointment",
+      "novelty": "novel form introduced by the device/platform intermediary",
+      "evidence": "Step 5 example: 'show PFI (e.g., pull up their Fitbit dashboard during a doctor's appointment)'"
+    },
+    {
+      "sender": "Fitbit (company/platform)",
+      "recipient": "doctor / electronic medical record system",
+      "subject": "patient (Fitbit user)",
+      "information_type": "PFI (granular, continuous, automated)",
+      "medium": "automated transmission / sync into EMR",
+      "novelty": "novel: automated, continuous, device-driven transmission",
+      "evidence": "Step 5 example: 'transmit PFI (e.g., sync a Fitbit with an electronic medical record system)'; Fitbit Care / Google Healthcare API integrations"
+    },
+    {
+      "sender": "Fitbit (company/platform)",
+      "recipient": "health insurance company",
+      "subject": "patient (Fitbit user)",
+      "information_type": "PFI",
+      "medium": "automated transmission, sometimes tied to incentives/penalties",
+      "novelty": "novel recipient class for continuous PFI",
+      "evidence": "Steps 3/6/7 examples; Fitbit partnerships with insurers, Medicare/Medicaid"
+    }
+  ],
+  "s2_context": {
+    "domain": "health care",
+    "nested_contexts": ["employment (US employer-provided insurance creates healthcare/employment overlap)"],
+    "activities": ["doctors collecting patient data in electronic medical records during appointments", "patients discussing exercise/sleep with doctors", "insurers processing claims"],
+    "purposes": ["monitoring patients' health", "offering guidance or advice to treat medical problems", "processing claims", "setting coverage or policy rates"],
+    "values_ends": ["alleviating physical suffering", "curing illness", "promoting the health of individuals and collectives", "care (in tension with efficiency)", "equity/provision according to need (contested)"],
+    "evidence": "Step 2 example; Step 8 example quoting Nissenbaum [64:134] and [66:227]"
+  },
+  "s3_actors": {
+    "senders": ["patient (Fitbit user)", "Fitbit (company)"],
+    "recipients": ["doctors", "health insurance companies", "medical researchers", "employers"],
+    "subjects": ["Fitbit user", "possibly others wearing the device (child, or non-persons: a dog)"],
+    "nonhuman_roles": [
+      {"entity": "Fitbit device", "treated_as": "instrument"},
+      {"entity": "Fitbit platform/company", "treated_as": "sender"}
+    ],
+    "evidence": "Step 3 example: subject and sender often the same; Fitbit-as-sender when company discloses; device-on-dog/child multiple-subjects edge case"
+  },
+  "s4_transmission_principles": [
+    {"principle": "need", "source_label": "Need", "explicit": false, "evidence": "'If my doctor specifically needs it for my care, then I would be willing to provide it'"},
+    {"principle": "voluntary", "source_label": "Voluntary", "explicit": false, "evidence": "'If I chose to share it with my doctor, that's okay. But I want that to be my decision.'"},
+    {"principle": "notice", "source_label": "Notice", "explicit": false, "evidence": "'I would like to have the doctor say, Hey, this is why I want to do this...'"},
+    {"principle": "consent", "source_label": "Consent", "explicit": false, "evidence": "'If a doctor asks me, I will provide it... not them asking Fitbit without my permission'"},
+    {"principle": "exchange", "source_label": "Exchange", "explicit": false, "evidence": "'There'd have to be a clear benefit to me'"},
+    {"principle": "mandatory", "source_label": "Mandatory", "explicit": false, "evidence": "'Insurance companies, nope, unless somehow I'm required to tell them'"},
+    {"principle": "ephemerality", "source_label": "Ephemerality", "explicit": false, "evidence": "'more uncomfortable with it being in a file'"},
+    {"principle": "desire", "source_label": "Desire", "explicit": false, "evidence": "'if they wanted to know for whatever reason they can'"},
+    {"principle": "secrecy", "source_label": "Secrecy", "explicit": false, "evidence": "'if it were my doctor and only my doctor'"},
+    {"principle": "anonymity", "source_label": "Anonymity", "explicit": false, "evidence": "'I hope they [insurance] wouldn't track me directly'"},
+    {"principle": "aggregation", "source_label": "Aggregation", "explicit": false, "evidence": "'maybe not the activity but the summary'"}
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "Patients (senders) choosing (TP: voluntary) to provide PFI (information type) about themselves (subjects) to doctors (recipients) who need it (TP: need)",
+      "entrenchment_evidence": "Interviewees treat discussing exercise/sleep with doctors as unremarkable; health-communication literature: 'the communication of relevant information is a central element of health care'",
+      "departures": [
+        "information type: automated, continuous, far more granular device data vs. conversational summaries",
+        "new flow forms via the Fitbit intermediary: disclose vs. show vs. transmit",
+        "automation of transmission (auto-sync, third-party links, EMR/insurer integrations)",
+        "additional recipients: insurance companies, employers",
+        "additional TPs in play: ephemerality, aggregation"
+      ],
+      "completeness": "entrenched",
+      "evidence": "Step 5 example"
+    }
+  ],
+  "s6_prima_facie": {
+    "violation": "yes",
+    "departed_parameters": ["sender", "recipient", "subject", "information_type", "transmission_principle"],
+    "justification": "Automated transmission of device-generated PFI for providing health care departs from the entrenched voluntary/need-based conversational flow: data accuracy is questionable (hurricane/stairs anecdote; device on dog/child), and automation deprives patients of the opportunity to contextualize the data and participate in decision-making about their own health. Presumption favors the entrenched practice.",
+    "evidence": "Step 6 example: 'the automatic aspect of that...seems odd'; 'automated transmission... could pose a prima facie violation of contextual integrity'"
+  },
+  "s7_factors": [
+    {"factor": "Foreclosure of patients' 'situated objectivity' — automated flows remove the chance to interpret PFI within lived experience before it enters medical decision-making", "kind": "autonomy", "affected_parties": ["patients"], "direction": "harm", "evidence": "Step 7 example, citing Pols' mechanical vs. situated objectivity"},
+    {"factor": "Coercion via insurance incentives (discounts) and penalties (higher premiums) tied to PFI transmission", "kind": "coercion", "affected_parties": ["policyholders"], "direction": "harm", "evidence": "Step 7 example, citing Loi et al."},
+    {"factor": "Exacerbated information asymmetry between subjects and insurers, tilting power toward insurance companies (pattern-mining expertise + cross-subscriber data)", "kind": "information_asymmetry", "affected_parties": ["policyholders", "insurers"], "direction": "harm", "evidence": "Step 7 example"},
+    {"factor": "Potential discrimination based on sleep/exercise patterns", "kind": "discrimination", "affected_parties": ["policyholders, esp. marginalized groups"], "direction": "harm", "evidence": "'I would have a problem with [the insurance company] trying to discriminate [against] me based on how much sleep I get'"},
+    {"factor": "Behavioral-tracking premium structures reflect income rather than risk — wealthier policyholders get discounts, poorer pay more; essential services costing more for those least able to afford them", "kind": "justice", "affected_parties": ["low-income policyholders"], "direction": "harm", "evidence": "Step 7 example, citing Bridges [13:146]"},
+    {"factor": "Some individuals benefit (demonstrating preventative care, discounts) while the trend disadvantages others — individual benefit vs. collective harm", "kind": "equality", "affected_parties": ["active/wealthy users (benefit)", "marginalized (harm)"], "direction": "mixed", "evidence": "'I'm probably going to be on the beneficiary side... but I know that it'll also really disadvantage a lot of people'"}
+  ],
+  "s8_contextual_meaning": [
+    {"factor_ref": 4, "contextual_end": "care / equitable provision of health care", "advances_or_undermines": "undermines", "argument": "If PFI-linked pricing makes it harder for people to pay for coverage and get treatment, it obstructs the healthcare context's core value of care — the practice orients subjects toward market-based incentives rather than health-care benefits", "evidence": "Step 8 example"},
+    {"factor_ref": 0, "contextual_end": "patient participation in managing illness (doctor-patient relationship)", "advances_or_undermines": "undermines", "argument": "Automated flows threaten patients' sense of autonomy within the doctor-patient relationship, where contextualizing information is part of care", "evidence": "Step 8 example conclusion"},
+    {"factor_ref": 5, "contextual_end": "prevention and diagnosis (promoting health)", "advances_or_undermines": "mixed", "argument": "The a-fib detection pattern — device notifies the user, who chooses to consult a doctor — advances diagnostic ends while conforming to the entrenched voluntary norm; it shows the practice CAN serve contextual ends when the transmission principle is preserved", "evidence": "Step 8 example, a-fib illustration"}
+  ],
+  "s9_recommendation": {
+    "decision": "modify",
+    "conditions": [
+      "PFI should NOT automatically flow to insurance companies (potential for exacerbating inequality)",
+      "PFI flow into health care should be something patients individually pursue with their doctors (voluntary, patient-initiated)",
+      "Doctors should not mandate PFI flows of patients"
+    ],
+    "carrying_findings": [
+      "inequality exacerbation via income-reflecting premium structures (s7 justice factor)",
+      "undermining of the care value when coverage/treatment become harder to obtain (s8)",
+      "autonomy preserved when flows remain patient-initiated — the balance that 'maintains the integrity of the healthcare context while permitting those who value fitness tracking to integrate it on their terms' (s9)"
+    ],
+    "evidence": "Step 9 example, final paragraph"
+  }
+}

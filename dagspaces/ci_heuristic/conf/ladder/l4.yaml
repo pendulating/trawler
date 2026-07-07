@@ -1,0 +1,6 @@
+# @package _global_
+# L3 + one worked exemplar (MUST be a contaminated Tier A gold file; the
+# renderer refuses held-out cases).
+ladder:
+  level: l4
+  exemplar_path: ${oc.env:TRAWLER_PROJECT_ROOT,.}/dagspaces/ci_heuristic/corpus/tier_a/kumar2024_fitbit.json

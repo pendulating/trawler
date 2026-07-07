@@ -1,0 +1,6 @@
+# @package _global_
+# Tier C only — the Part 1 imaging practices (E5 traversals).
+cases:
+  tiers: [c]
+  include_contaminated: false
+  corpus_root: ""

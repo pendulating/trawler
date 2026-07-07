@@ -1,0 +1,46 @@
+# Top-level Hydra config for the ci_heuristic dagspace: CI decision-heuristic
+# traversal harness (Part 2 of "Tracing Norms Around the Imaging of Public
+# Space", CVPR 2027). Design: planning/ci-heuristic-llm-experiments.md in the
+# umbrella repo.
+
+defaults:
+  - _self_
+  - pipeline: traverse_eval
+  - model: qwen3-8b/instruct
+  - ladder: l3
+  - cases: pilot
+
+experiment:
+  name: ci_heuristic
+
+runtime:
+  output_root: null
+  debug: false
+  sample_n: null
+  job_memory_gb: 64
+
+# Greedy decoding: traversal comparisons across ladder levels/models must not
+# confound scaffolding effects with sampling noise.
+sampling_params:
+  seed: 1
+  temperature: 0.0
+  max_tokens: 2048
+
+wandb:
+  enabled: true
+  project: ci-heuristic
+  entity: ""
+  group: ""
+  table_sample_rows: 1000
+  single_run: true
+
+hydra:
+  searchpath:
+    - pkg://dagspaces.common.conf
+  job:
+    name: ${experiment.name}
+  run:
+    dir: ${oc.env:HYDRA_RUN_DIR,outputs}/${now:%Y-%m-%d}_${experiment.name}/${now:%H-%M-%S}
+  sweep:
+    dir: ${oc.env:HYDRA_SWEEP_DIR,multirun}/${now:%Y-%m-%d}_${experiment.name}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

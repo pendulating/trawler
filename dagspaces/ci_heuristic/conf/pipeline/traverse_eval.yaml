@@ -1,0 +1,27 @@
+# @package _global_
+# Load cases -> traverse at the configured ladder level. Scoring stages
+# (extraction/prima-facie/probes) attach downstream as they land (Phase 4).
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/ci_heuristic
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_cases:
+        stage: load_cases
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_cases/dataset.parquet
+      traverse:
+        stage: traverse
+        depends_on:
+          - load_cases
+        inputs:
+          dataset: load_cases.dataset
+        outputs:
+          dataset: outputs/traverse/dataset.parquet
+        launcher: slurm_gpu_1x

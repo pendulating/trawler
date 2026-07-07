@@ -1,0 +1,4 @@
+# @package _global_
+# Full heuristic text in context, single completion.
+ladder:
+  level: l1

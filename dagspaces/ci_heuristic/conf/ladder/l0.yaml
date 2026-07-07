@@ -1,0 +1,4 @@
+# @package _global_
+# Zero-shot verdict, no heuristic in context.
+ladder:
+  level: l0

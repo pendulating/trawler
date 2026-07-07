@@ -1,0 +1,6 @@
+# @package _global_
+# Held-out evaluation: contaminated Tier A cases excluded.
+cases:
+  tiers: [a, b, c]
+  include_contaminated: false
+  corpus_root: ""

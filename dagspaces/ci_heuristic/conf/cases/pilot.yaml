@@ -1,0 +1,6 @@
+# @package _global_
+# Pilot: Tier A (incl. contaminated, for smoke/dev only) + Tier C.
+cases:
+  tiers: [a, c]
+  include_contaminated: true
+  corpus_root: ""

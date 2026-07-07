@@ -1,0 +1,4 @@
+# @package _global_
+# Step-wise chain with structured state, no guiding questions.
+ladder:
+  level: l2

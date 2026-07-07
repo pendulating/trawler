@@ -123,6 +123,22 @@ See [howto/geoprivacy-hypotheticals.md](howto/geoprivacy-hypotheticals.md) for r
 
 ---
 
+## `ci_heuristic` — CI decision-heuristic traversal (CVPR 2027)
+
+**Purpose**: Can LLMs work *through* Nissenbaum's 9-step CI decision heuristic — praxis, not just endpoint verdicts? Runs cases through a scaffolding ladder (L0 zero-shot verdict → L4 stepwise chain + guiding questions + worked exemplar; L5 deliberative pending) and persists per-step artifacts for scoring. Part 2 companion to `vlm_geoprivacy_aug`; E5 joins them on capture-device ids.
+
+**Entrypoint**: `python -m dagspaces.ci_heuristic.cli ladder=l3 cases=pilot model=qwen3-8b/instruct`
+
+**Config groups**: `ladder={l0..l4}`, `cases={pilot, held_out, tier_c}`. Greedy decoding pinned (scaffolding effects must not confound with sampling noise). Corpus + gold schema + annotation guide: `dagspaces/ci_heuristic/corpus/`.
+
+**Chain mechanics**: 9 sequential *batched* rounds; each case's step-k prompt embeds its own accumulated state; per-step guided decoding (`schemas.py`); steps 1–5 carry a descriptive firewall ("do not evaluate yet"); parse failures degrade rather than abort. ⚠ In-process vLLM reloads the engine per round — use server mode (`model.server_url`) for real runs.
+
+**Gold corpus**: Tier A published expert traversals (`corpus/tier_a/`, see `SURVEY.md` for the annotation queue), Tier B synthetic single-departure vignettes (pending), Tier C the Part 1 imaging practices (`corpus/tier_c/practices.yaml`).
+
+**W&B project**: `ci-heuristic`.
+
+---
+
 ## `confaide` — ConfAIde tiers 1–2
 
 **Purpose**: Probe disclosure/withholding under contextual constraints. Tiers 1–2 include human annotations for correlation analysis.

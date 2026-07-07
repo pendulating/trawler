@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CI heuristic gold traversal (Tier A)",
+  "type": "object",
+  "required": ["meta", "steps_present"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["case_id", "source", "practice", "contaminated"],
+      "properties": {
+        "case_id": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "source": {"type": "string", "description": "Full citation"},
+        "practice": {"type": "string", "description": "One-line practice description"},
+        "practice_input": {"type": "string", "description": "The practice description fed to models (verbatim traversal input)"},
+        "contaminated": {"type": "boolean", "description": "true => few-shot/rubric use only, never held-out"},
+        "annotator": {"type": "string"},
+        "annotation_date": {"type": "string"},
+        "annotator_notes": {"type": "string"},
+        "source_deviations": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Places the source itself deviates from the heuristic (mixing steps, skipping, misapplication) — data for probe comparisons"
+        }
+      }
+    },
+    "steps_present": {
+      "type": "array",
+      "items": {"type": "string", "enum": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"]},
+      "description": "Steps the source actually performs; scorers run only on these"
+    },
+    "s1_flows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sender", "recipient", "subject", "information_type"],
+        "properties": {
+          "sender": {"type": "string"},
+          "recipient": {"type": "string"},
+          "subject": {"type": "string"},
+          "information_type": {"type": "string"},
+          "medium": {"type": "string"},
+          "novelty": {"type": "string"},
+          "evidence": {"type": "string", "description": "Quote/page ref in source"}
+        }
+      }
+    },
+    "s2_context": {
+      "type": "object",
+      "properties": {
+        "domain": {"type": "string"},
+        "nested_contexts": {"type": "array", "items": {"type": "string"}},
+        "activities": {"type": "array", "items": {"type": "string"}},
+        "purposes": {"type": "array", "items": {"type": "string"}},
+        "values_ends": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "string"}
+      }
+    },
+    "s3_actors": {
+      "type": "object",
+      "properties": {
+        "senders": {"type": "array", "items": {"type": "string"}},
+        "recipients": {"type": "array", "items": {"type": "string"}},
+        "subjects": {"type": "array", "items": {"type": "string"}},
+        "nonhuman_roles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "entity": {"type": "string"},
+              "treated_as": {"type": "string", "enum": ["sender", "recipient", "instrument", "ambiguous"]}
+            }
+          }
+        },
+        "evidence": {"type": "string"}
+      }
+    },
+    "s4_transmission_principles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["principle"],
+        "properties": {
+          "principle": {"type": "string", "description": "Normalized form (see guide vocabulary)"},
+          "source_label": {"type": "string", "description": "The source's own wording"},
+          "explicit": {"type": "boolean"},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "s5_norms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["norm_flow", "completeness"],
+        "properties": {
+          "norm_flow": {"type": "string"},
+          "entrenchment_evidence": {"type": "string"},
+          "departures": {"type": "array", "items": {"type": "string"}},
+          "completeness": {"type": "string", "enum": ["entrenched", "contested", "incomplete"]},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "s6_prima_facie": {
+      "type": "object",
+      "required": ["violation"],
+      "properties": {
+        "violation": {"type": "string", "enum": ["yes", "no", "incomplete_norms"]},
+        "departed_parameters": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["sender", "recipient", "subject", "information_type", "transmission_principle"]}
+        },
+        "justification": {"type": "string"},
+        "evidence": {"type": "string"}
+      }
+    },
+    "s7_factors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["factor", "kind"],
+        "properties": {
+          "factor": {"type": "string"},
+          "kind": {
+            "type": "string",
+            "description": "autonomy | freedom | power | justice | equality | fairness | democracy | discrimination | information_asymmetry | coercion | trust | other(<label>)"
+          },
+          "affected_parties": {"type": "array", "items": {"type": "string"}},
+          "direction": {"type": "string", "enum": ["harm", "benefit", "mixed"]},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "s8_contextual_meaning": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["contextual_end"],
+        "properties": {
+          "factor_ref": {"type": "integer", "description": "Index into s7_factors"},
+          "contextual_end": {"type": "string"},
+          "advances_or_undermines": {"type": "string", "enum": ["advances", "undermines", "mixed"]},
+          "argument": {"type": "string"},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "s9_recommendation": {
+      "type": "object",
+      "required": ["decision"],
+      "properties": {
+        "decision": {"type": "string", "enum": ["continue", "modify", "reject"]},
+        "conditions": {"type": "array", "items": {"type": "string"}},
+        "carrying_findings": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "string"}
+      }
+    }
+  }
+}

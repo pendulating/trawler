@@ -1,0 +1,105 @@
+# Tier C — the Part 1 imaging practices as heuristic inputs.
+#
+# One practice description per capture-device variant, keyed by the SAME ids
+# as dagspaces/vlm_geoprivacy_aug/conf/hypotheticals/capture_devices.yaml so
+# E5 can join traversal verdicts against Part 1 shift metrics.
+#
+# Each description states: (1) the device and who operates it, (2) the capture
+# manner, (3) bystander notice, (4) the downstream flow under analysis —
+# imagery shared online and processed by AI models capable of inferring
+# location (the practice whose normative status Part 1's Q7 probes). Wording
+# deliberately parallels the Part 1 frames (same manipulated CI parameters)
+# extended from a single photo to a deployed practice.
+#
+# ci_params mirror the Part 1 variant metadata (sender / instrument /
+# transmission_principle / recipient).
+
+practices:
+  - id: smartphone
+    dimension: capture_device
+    practice_input: >-
+      A new social practice has become widespread: people photograph public
+      streets, squares, and storefronts with their smartphones, deliberately
+      aiming the camera and choosing the moment of capture. Bystanders can
+      generally see the phone being pointed. The photographs — which
+      incidentally capture passers-by, vehicles, and location-revealing
+      details — are shared on public online platforms, where they can be
+      viewed by strangers and processed by AI models capable of inferring the
+      precise location where each photo was taken.
+    ci_params:
+      sender: handheld photographer
+      instrument: smartphone
+      transmission_principle: deliberate capture, visible aiming
+
+  - id: smart_glasses
+    dimension: capture_device
+    practice_input: >-
+      A new social practice is emerging: people wear camera-equipped smart
+      glasses that record continuously as they walk through public streets,
+      squares, and storefronts, with no shutter action at any particular
+      moment of capture. People nearby may not realize the glasses contain a
+      camera. Captured frames — which incidentally include passers-by,
+      vehicles, and location-revealing details — are uploaded to the wearer's
+      cloud account and can be shared on public online platforms, where they
+      can be viewed by strangers and processed by AI models capable of
+      inferring the precise location where each frame was captured.
+    ci_params:
+      sender: passerby (wearer)
+      instrument: smart glasses
+      transmission_principle: continuous ambient capture, weak notice
+
+  - id: camera_earphones
+    dimension: capture_device
+    practice_input: >-
+      A new social practice is emerging: people wear wireless earphones with
+      built-in cameras that record continuously as they move through public
+      streets, squares, and storefronts, with no shutter action at any
+      particular moment of capture. The earphones have no visible recording
+      indicator, so bystanders are unlikely to know a camera is present at
+      all. Captured frames — which incidentally include passers-by, vehicles,
+      and location-revealing details — are uploaded to the wearer's cloud
+      account and can be shared on public online platforms, where they can be
+      viewed by strangers and processed by AI models capable of inferring the
+      precise location where each frame was captured.
+    ci_params:
+      sender: passerby (wearer)
+      instrument: camera earphones
+      transmission_principle: covert ambient capture, no notice
+
+  - id: dashcam
+    dimension: capture_device
+    practice_input: >-
+      A widespread practice continues to grow: private vehicles carry
+      dashcams that record the road and its surroundings continuously
+      whenever the vehicle is in use, with no shutter action at any
+      particular moment of capture. People on the street are generally
+      unaware that any particular vehicle is recording them. Captured footage
+      — which incidentally includes pedestrians, other vehicles, and
+      location-revealing details — is retained by the driver and is
+      increasingly shared on public online platforms, where it can be viewed
+      by strangers and processed by AI models capable of inferring the
+      precise location where each frame was captured.
+    ci_params:
+      sender: vehicle driver
+      instrument: dashcam
+      transmission_principle: continuous vehicular capture, no notice
+
+  - id: delivery_robot
+    dimension: capture_device
+    practice_input: >-
+      A new commercial practice is expanding: fleets of autonomous sidewalk
+      delivery robots navigate public streets using onboard cameras that
+      record their surroundings continuously as they travel. The footage is
+      transmitted to the company that operates the robots, which retains it
+      for navigation, safety review, and product development. Pedestrians can
+      see the robots but receive no indication that they are being recorded.
+      Captured frames — which incidentally include passers-by, vehicles, and
+      location-revealing details — may be reviewed by company staff, shared
+      with third parties or law enforcement on request, and processed by AI
+      models capable of inferring the precise location where each frame was
+      captured.
+    ci_params:
+      sender: robot operating company
+      instrument: delivery robot navigation camera
+      recipient: robot operating company
+      transmission_principle: continuous machine capture, corporate transmission, no notice
