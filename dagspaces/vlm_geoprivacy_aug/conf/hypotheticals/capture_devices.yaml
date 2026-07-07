@@ -70,7 +70,7 @@ hypotheticals:
     - id: dashcam
       dimension: capture_device
       frame: >-
-        This photo is a frame from a dashcam mounted in a private vehicle.
+        This photo is a frame from a dashcam mounted in a personal vehicle.
         The dashcam records the road and its surroundings continuously
         whenever the vehicle is in use, with no shutter action at the moment
         of capture. People in view are generally unaware that any particular
