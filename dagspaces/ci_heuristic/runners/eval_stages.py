@@ -105,3 +105,30 @@ class TPProbeRunner(StageRunner):
             outputs={"dataset": out_path},
             metadata={"rows": len(result_df), "metrics": metrics},
         )
+
+
+class ScoreTraversalRunner(StageRunner):
+    stage_name = "score_traversal"
+
+    def run(self, context: Any) -> StageResult:
+        import json
+
+        from ..stages.score_traversal import score_traversals
+
+        traverse_df = pd.read_parquet(context.inputs["dataset"])
+        cases_df = pd.read_parquet(context.inputs["cases"])
+
+        metrics, per_case_df = score_traversals(traverse_df, cases_df)
+
+        metrics_json_path = os.path.join(context.output_dir, "metrics.json")
+        with open(metrics_json_path, "w") as f:
+            json.dump(metrics, f, indent=2, default=str)
+
+        out_path = context.output_paths["dataset"]
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        per_case_df.to_parquet(out_path, index=False)
+
+        return StageResult(
+            outputs={"dataset": out_path, "metrics_json": metrics_json_path},
+            metadata={"rows": len(per_case_df), "metrics": metrics},
+        )

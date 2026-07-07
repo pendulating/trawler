@@ -25,3 +25,13 @@ pipeline:
         outputs:
           dataset: outputs/traverse/dataset.parquet
         launcher: slurm_gpu_1x
+      score_traversal:
+        stage: score_traversal
+        depends_on:
+          - traverse
+          - load_cases
+        inputs:
+          dataset: traverse.dataset
+          cases: load_cases.dataset
+        outputs:
+          dataset: outputs/score_traversal/per_case.parquet
