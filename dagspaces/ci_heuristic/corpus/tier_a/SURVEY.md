@@ -26,8 +26,8 @@ exemplars/marginal.
 12. Huang & Bashir 2015 (ASIS&T) — DTC genetic testing policies; low-mod contamination
 13. King 2019 (CSCW) — DTC genetics users; mod-high
 14. Kumar et al. 2020 (M&C) — children's password sharing — ANNOTATED: `kumar2020_passwords.json` (s2-s5,s7,s8; family-context primary, cross-context s5 variation)
-15. Martens et al. 2021 (Tech in Society) — contact tracing/triage (BE); non-US comparator to #5
-16. Tran et al. 2025 (AIES, arXiv:2508.06760) — LLM chatbot data sharing; low contamination, modern practice
+15. Martens et al. 2021 (Tech in Society) — ANNOTATED: `martens2021_contact_tracing.json` (s1,s3-s5; measured norms; contaminated=false)
+16. Tran et al. 2025 (AIES, arXiv:2508.06760) — ANNOTATED: `tran2025_chatbot_norms.json` (s1,s3-s5; only AI-context measured norms; contaminated=false)
 
 ## Tier 3 — special purpose
 
@@ -39,6 +39,6 @@ exemplars/marginal.
 Extra leads: PrivaCI 2023 short case studies (Napoli & Chiasson remote healthcare;
 Marmorato et al. older adults, CA) — very low contamination, limited depth.
 
-**Corpus status (2026-07-07)**: 10 gold files — kumar2024 (exemplar), degroot2024 + wernick2025 (uncontaminated, held-out), zimmer2018, vitak2020, sar2014 (full 9-step), zeide2018 (s1-s8, step-8-rich), bowser2017 + kumar2020 (honest partials), skeba2020 (misapplication exemplar). Outcome coverage: reject x3, modify x2, no x1, incomplete_norms x1, absent x3.
+**Corpus status (2026-07-07, final batch)**: 12 gold files (4 uncontaminated held-out: degroot2024, wernick2025, martens2021, tran2025) — kumar2024 (exemplar), degroot2024 + wernick2025 (uncontaminated, held-out), zimmer2018, vitak2020, sar2014 (full 9-step), zeide2018 (s1-s8, step-8-rich), bowser2017 + kumar2020 (honest partials), skeba2020 (misapplication exemplar). Outcome coverage: reject x3, modify x2, no x1, incomplete_norms x1, absent x3.
 
 **Remaining candidates** (annotate opportunistically): #3 Bloch & Bashir (paywalled — needs MF library access), #10 Sanfilippo 2020, #12 Huang & Bashir 2015, #13 King 2019, #15 Martens 2021 (PMC OA), #16 Tran 2025 (arXiv). Target of 10-15 incl. Kumar: MET at 10.

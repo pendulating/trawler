@@ -1,0 +1,204 @@
+{
+  "meta": {
+    "case_id": "tran2025_chatbot_norms",
+    "source": "Tran, S., Lu, H., Slaughter, I., Herman, B., Dangol, A., Fu, Y., Chen, L., Gebreyohannes, B., Howe, B., Hiniker, A., Weber, N., & Wolfe, R. (2025). Understanding Privacy Norms Around LLM-Based Chatbots: A Contextual Integrity Perspective. Proceedings of AAAI/ACM AIES 2025. arXiv:2508.06760",
+    "practice": "ChatGPT conversation data shared by the chatbot provider with varied third-party recipients (big tech, hospitals, government, insurers, researchers, foundations) in varied jurisdictions for varied purposes, under varied transmission principles (consent/notice, anonymization, PII removal)",
+    "practice_input": "OpenAI's ChatGPT logs users' conversations — including discussions of personal health and wellness, mental health, personal finances, work, social life and relationships, and legal or ethical questions — and these conversation records can be shared beyond the user-chatbot exchange. Recipients may include big tech companies, hospitals, government agencies, insurance companies, university researchers, and charitable foundations, based in the United States, the European Union, or China. Stated purposes range from training future AI models, creating public research datasets, and improving user experience, to fighting terrorism, assessing mental health, personalizing advertising, predicting human behavior, and studying AI risks to society. Sharing may occur with advance consent, with mere notification, or without the user being informed; conversations may or may not be anonymized, and personally identifying information may or may not be removed before sharing. Should this data-sharing practice continue as-is, be modified, or be rejected?",
+    "contaminated": false,
+    "annotator": "claude-agent (needs human second pass)",
+    "annotation_date": "2026-07-07",
+    "annotator_notes": "This is the corpus's only AI-context practice with empirically MEASURED norms: s5 entries are survey-measured acceptability findings (factorial vignette experiment, N=300 ChatGPT users, 9,000 vignette judgments, linear mixed models), not doctrinally derived entrenched norms. Entrenchment evidence therefore reports LMM coefficients and descriptive statistics: absence of consent/notice lowered appropriateness by 4.15 points (t=-5.46, p<.001), PII non-removal by 2.03 (t=-3.48, p<.001), non-anonymization by 1.36 (t=-2.36, p<.001), while Role, Purpose, Content Type, and Location had no discernible effects — i.e., only procedural transmission principles shift acceptability; recipient/purpose/context do not. Judgment calls for second pass: (1) anonymization and PII removal are both normalized to 'anonymity' with distinct source_labels (working vocabulary has no closer term for PII removal); (2) the sender in vignettes is implicit (passive voice) and annotated as the chatbot provider; (3) Location is treated as a recipient attribute, not a separate CI parameter; (4) completeness codes — norm A 'contested' (privacy paradox: high sensitivity + disbelief in confidentiality, yet intimate disclosure), norm B 'incomplete' (paper's own 'emerging norms' framing: users fall back on baseline procedural principles rather than context-differentiated norms), norm C 'contested' (chatbot-history-for-personalization marginally accepted while all other exchanges rejected); (5) s2 marked absent even though the Content Type factor gestures at nested life contexts. contaminated=false per instruction: published August 2025, past most model cutoffs.",
+    "source_deviations": [
+      "The paper is a factorial vignette survey experiment measuring norms, not a 9-step CI heuristic traversal; the step mapping here is annotator-imposed. It cites CI's five parameters but operationalizes seven vignette factors (Role, Location, Purpose, Content Type, Consent/Awareness, Anonymity, Privacy/PII) without explicitly mapping all five parameters.",
+      "The sender parameter is left implicit throughout: vignettes use the passive voice ('Your ChatGPT conversations were shared with...'), so the sharing party (the chatbot provider) is never named or manipulated.",
+      "The Location factor (US/EU/China) is a recipient attribute (jurisdiction) with no direct CI-parameter analog; Purpose is likewise varied as a factor rather than derived from a context analysis.",
+      "No s2 context analysis: the design deliberately abstracts across life contexts (health, work, legal, social) via the Content Type factor rather than analyzing any single context's activities, purposes, and values.",
+      "No s6 prima facie verdict: the authors stop short of declaring current practices a CI violation; they instead report a privacy-paradox gap (users doubt confidentiality yet disclose intimately) and null contextual effects.",
+      "Discussion-level evaluative material resembles s7/s9 content but is never performed as heuristic steps: pervasive distrust ('participants view chatbot data sharing as problematic, regardless of content, recipient, or stated purpose'), inadequacy of notice-and-consent ('traditional notice-and-consent paradigms... may be inadequate for addressing chatbot privacy concerns'), 72.7% concern about personal information being misused by AI, and a policy recommendation ('the public would benefit from a systematic policy approach that establishes procedures around consent, anonymization, and handling of PII in chatbot data') — no factor weighing against contextual ends and no continue/modify/reject decision.",
+      "Agentic-AI implications are prospective, beyond the studied practice: agentic AI systems 'depend upon extensive sensitive user data that users seem unwilling to trade', and $200/month in value 'is insufficient for unrestricted agentic data access' — flagged as a deployment-assumption challenge, not analyzed as a flow."
+    ]
+  },
+  "steps_present": ["s1", "s3", "s4", "s5"],
+  "s1_flows": [
+    {
+      "sender": "ChatGPT user",
+      "recipient": "ChatGPT / OpenAI (LLM-based chatbot and its provider)",
+      "subject": "the user (their health, mental health, finances, relationships, work, legal matters)",
+      "information_type": "conversational disclosures: 47.0% of respondents used ChatGPT for health and wellness advice, 35.3% for personal finances, 26.7% for mental health support, 12.7% for legal guidance",
+      "medium": "typed conversations with the chatbot, logged by the provider",
+      "novelty": "antecedent first-party flow the studied practice presupposes; 82% of respondents rate chatbot conversations sensitive or highly sensitive — more than email or social media posts, less than text and phone conversations",
+      "evidence": "Results, Table 10 (usage topics); Figure 2 (sensitivity ranking); Table 4 (respondents disagreed that conversations 'will remain private', mean 40.0, t=-6.9, p<.01)"
+    },
+    {
+      "sender": "chatbot provider (implicit; vignettes use passive voice)",
+      "recipient": "big tech company (based in US, EU, or China)",
+      "subject": "the ChatGPT user",
+      "information_type": "user's ChatGPT conversations (varied: all conversations; job/work; social life and personal relationships; personal health and wellness; legal or ethical guidance)",
+      "medium": "conversation records shared as data, varied over 8 purposes and 3 consent/awareness x 2 anonymity x 2 PII-removal transmission-principle levels",
+      "novelty": "hypothetical vignette flow in a 7x3x8x5x3x2x2 factorial design",
+      "evidence": "Methods, vignette template: 'Your ChatGPT conversations were shared with a(n) <Role> based in <Location> for the purpose of <Purpose>...'; Role factor levels"
+    },
+    {
+      "sender": "chatbot provider (implicit; vignettes use passive voice)",
+      "recipient": "hospital (based in US, EU, or China)",
+      "subject": "the ChatGPT user",
+      "information_type": "user's ChatGPT conversations (varied over 5 content-type levels)",
+      "medium": "conversation records shared as data under varied purposes and transmission principles",
+      "novelty": "hypothetical vignette flow; hospital was the baseline Role level in the LMMs",
+      "evidence": "Methods, Role factor; Results, Table 9 (baseline levels: Hospital, US, improving user experience, all conversations, advance consent)"
+    },
+    {
+      "sender": "chatbot provider (implicit; vignettes use passive voice)",
+      "recipient": "government agency (based in US, EU, or China)",
+      "subject": "the ChatGPT user",
+      "information_type": "user's ChatGPT conversations (varied over 5 content-type levels)",
+      "medium": "conversation records shared as data under varied purposes (incl. fighting terrorism) and transmission principles",
+      "novelty": "hypothetical vignette flow",
+      "evidence": "Methods, Role and Purpose factor levels"
+    },
+    {
+      "sender": "chatbot provider (implicit; vignettes use passive voice)",
+      "recipient": "insurance company (based in US, EU, or China)",
+      "subject": "the ChatGPT user",
+      "information_type": "user's ChatGPT conversations (varied over 5 content-type levels)",
+      "medium": "conversation records shared as data under varied purposes and transmission principles",
+      "novelty": "hypothetical vignette flow",
+      "evidence": "Methods, Role factor levels"
+    },
+    {
+      "sender": "chatbot provider (implicit; vignettes use passive voice)",
+      "recipient": "university computer science researcher (based in US, EU, or China)",
+      "subject": "the ChatGPT user",
+      "information_type": "user's ChatGPT conversations (varied over 5 content-type levels)",
+      "medium": "conversation records shared as data under varied purposes (incl. creating a public dataset for AI research, studying AI risks to society) and transmission principles",
+      "novelty": "hypothetical vignette flow",
+      "evidence": "Methods, Role and Purpose factor levels"
+    },
+    {
+      "sender": "chatbot provider (implicit; vignettes use passive voice)",
+      "recipient": "university social science researcher (based in US, EU, or China)",
+      "subject": "the ChatGPT user",
+      "information_type": "user's ChatGPT conversations (varied over 5 content-type levels)",
+      "medium": "conversation records shared as data under varied purposes and transmission principles",
+      "novelty": "hypothetical vignette flow",
+      "evidence": "Methods, Role factor levels"
+    },
+    {
+      "sender": "chatbot provider (implicit; vignettes use passive voice)",
+      "recipient": "charitable foundation (based in US, EU, or China)",
+      "subject": "the ChatGPT user",
+      "information_type": "user's ChatGPT conversations (varied over 5 content-type levels)",
+      "medium": "conversation records shared as data under varied purposes and transmission principles",
+      "novelty": "hypothetical vignette flow",
+      "evidence": "Methods, Role factor levels"
+    },
+    {
+      "sender": "ChatGPT user (via connected applications and devices)",
+      "recipient": "chatbot provider (OpenAI/ChatGPT)",
+      "subject": "the ChatGPT user",
+      "information_type": "email contents, search/browsing history, device data, social media data, and chatbot conversation history, integrated into the chatbot",
+      "medium": "cross-application data integration in exchange for personalization or a free premium subscription valued at $200/month",
+      "novelty": "prospective exchange flow (RQ3); only chatbot conversation history was marginally accepted (means 62.9 personalization / 61.1 premium); email (16.6/24.7), device data (21.4/26.7), search history (34.9) and social media integration (post popularity 26.6, content moderation 32.6) were rejected",
+      "evidence": "Results, Tables 6-8 (personalization, premium-subscription, and integration ratings)"
+    }
+  ],
+  "s3_actors": {
+    "senders": [
+      "ChatGPT users (original disclosers of conversation content)",
+      "chatbot provider (OpenAI/ChatGPT platform) — the implicit sharing party in all vignettes, never named (passive voice)"
+    ],
+    "recipients": [
+      "ChatGPT / OpenAI (first-party recipient of user disclosures)",
+      "big tech company",
+      "hospital",
+      "government agency",
+      "insurance company",
+      "university computer science researcher",
+      "university social science researcher",
+      "charitable foundation",
+      "each third-party recipient varied as based in the United States, the European Union, or China",
+      "prospective agentic AI systems (Discussion: systems that 'depend upon extensive sensitive user data')"
+    ],
+    "subjects": [
+      "the ChatGPT user (survey respondent) — conversations about their personal health and wellness, mental health, personal finances, social life and relationships, job/work, and legal or ethical questions"
+    ],
+    "nonhuman_roles": [
+      {"entity": "ChatGPT (LLM-based chatbot)", "treated_as": "ambiguous"},
+      {"entity": "future AI models trained on conversation data (Purpose: 'training future AI models')", "treated_as": "recipient"},
+      {"entity": "agentic AI systems executing actions on users' behalf (prospective)", "treated_as": "recipient"}
+    ],
+    "evidence": "Methods: Role factor (7 levels) and Location factor (3 levels); vignette template 'Your ChatGPT conversations were shared with a(n) <Role> based in <Location>...'; participants: N=300 US-resident adults using ChatGPT at least monthly, recruited via CloudResearch Connect; Discussion (agentic AI)"
+  },
+  "s4_transmission_principles": [
+    {
+      "principle": "consent",
+      "source_label": "asked for consent in advance of the data being collected",
+      "explicit": true,
+      "evidence": "Consent/Awareness factor, level 1 (baseline in LMMs); Methods vignette template 'You were <Consent/Awareness>.'"
+    },
+    {
+      "principle": "notice",
+      "source_label": "informed that your data was collected (vs. not informed)",
+      "explicit": true,
+      "evidence": "Consent/Awareness factor, levels 2-3; Results, Table 9: not informing users decreased appropriateness by 4.15 points (t=-5.46, p<.001) and increased concern by 2.42 points (t=3.34, p<.001)"
+    },
+    {
+      "principle": "anonymity",
+      "source_label": "conversations were anonymized before being shared",
+      "explicit": true,
+      "evidence": "Anonymity factor (anonymized / not anonymized); Results, Table 9: non-anonymized data reduced appropriateness by 1.36 points (t=-2.36, p<.001); concern effect marginal (p=.06)"
+    },
+    {
+      "principle": "anonymity",
+      "source_label": "personally identifying information from your conversations was automatically removed",
+      "explicit": true,
+      "evidence": "Privacy/PII factor (automatically removed / not removed); Results, Table 9: PII non-removal decreased appropriateness by 2.03 points (t=-3.48, p<.001) and increased concern by 2.33 points (t=3.98, p<.001)"
+    },
+    {
+      "principle": "exchange",
+      "source_label": "exchange access to personal data for personalization or a free premium subscription valued at $200/month",
+      "explicit": true,
+      "evidence": "Results, Tables 6-8; Discussion: 'developers may need to reconsider user willingness to exchange access to personal data for more advanced AI features'; '$200.00 in value is insufficient for unrestricted agentic data access'"
+    },
+    {
+      "principle": "confidentiality",
+      "source_label": "belief that conversations with chatbots like ChatGPT will remain private",
+      "explicit": false,
+      "evidence": "Table 4: respondents disagreed that their conversations 'will remain private' (mean 40.0, t=-6.9, p<.01) — an expected-but-doubted confidentiality constraint on the first-party flow, not a manipulated vignette factor"
+    }
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "Users (senders/subjects) disclose intimate information — health, mental health, finances, relationships, legal matters — to the chatbot (recipient) in one-on-one conversation, treating the exchange as sensitive and quasi-confidential (TP: confidentiality, implicit)",
+      "entrenchment_evidence": "MEASURED: 82% of respondents rated chatbot conversations sensitive or highly sensitive — more sensitive than email messages or social media posts, less than text and phone conversations (significantly different from all information types except browsing history); yet 47.0% used ChatGPT for health and wellness advice, 35.3% for personal finances, 26.7% for mental health support, 12.7% for legal guidance",
+      "departures": [
+        "users disclose despite disbelief in confidentiality: respondents 'disagreed... that they believe their conversations with chatbots like ChatGPT will remain private' (mean 40.0) — an attitude-behavior privacy paradox",
+        "72.7% expressed concern about personal information being misused by AI"
+      ],
+      "completeness": "contested",
+      "evidence": "Figure 2 (sensitivity); Table 10 (usage topics); Tables 4-5 (trust and concern items)"
+    },
+    {
+      "norm_flow": "Chatbot provider (sender) shares users' conversation data (information type, subjects: users) with any third-party recipient for any stated purpose only under procedural safeguards: advance consent or at minimum notice, anonymization, and PII removal (TPs)",
+      "entrenchment_evidence": "MEASURED (LMMs over 9,000 vignette judgments): only transmission-principle factors shifted acceptability — no notice: appropriateness -4.15 (t=-5.46, p<.001), concern +2.42 (t=3.34, p<.001); PII not removed: appropriateness -2.03 (t=-3.48, p<.001), concern +2.33 (t=3.98, p<.001); not anonymized: appropriateness -1.36 (t=-2.36, p<.001). Role, Purpose, Content Type, and Location showed no statistically discernible effects on either dependent variable — no 'benevolence paid to ostensibly responsible actors such as university researchers or charitable foundations'",
+      "departures": [
+        "sharing without informing the user at all (largest measured acceptability penalty)",
+        "sharing non-anonymized conversations",
+        "sharing with personally identifying information retained",
+        "the null contextual effects are themselves a departure from CI-derived expectations: 'participants view chatbot data sharing as problematic, regardless of content, recipient, or stated purpose, particularly when exchanges occur without informed consent'"
+      ],
+      "completeness": "incomplete",
+      "evidence": "Results, Table 9; Discussion: 'for an emerging technology like LLM-based chatbots, users judge information exchanges based on well understood governing principles' — baseline procedural expectations applied in lieu of context-differentiated norms; Abstract/Introduction frame the study as measuring 'emerging privacy norms for sharing chatbot data'"
+    },
+    {
+      "norm_flow": "User (sender/subject) grants the chatbot provider (recipient) access to personal data from other applications and devices — email, search history, device data, social media — in exchange for personalization or premium features (TP: exchange)",
+      "entrenchment_evidence": "MEASURED: exchange uniformly rejected across incentives — for personalization: search history 34.9, email 16.6, device data 21.4; for a free $200/month premium subscription: email 24.7, device data 26.7 (results 'consistent'); social-media integration opposed (post popularity 26.6, content moderation 32.6). Only chatbot conversation history itself was marginally accepted (62.9 personalization; 61.1 premium)",
+      "departures": [
+        "the one marginal acceptance: re-using the user's own chatbot history within the chatbot for personalization or premium features",
+        "agentic-AI data access assumed by developers: systems 'depend upon extensive sensitive user data that users seem unwilling to trade'"
+      ],
+      "completeness": "contested",
+      "evidence": "Results, Tables 6-8; Discussion: '$200.00 in value is insufficient for unrestricted agentic data access'; 'developers may need to reconsider user willingness to exchange access to personal data for more advanced AI features'"
+    }
+  ]
+}

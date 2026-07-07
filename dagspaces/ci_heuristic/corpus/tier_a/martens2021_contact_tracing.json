@@ -1,0 +1,122 @@
+{
+  "meta": {
+    "case_id": "martens2021_contact_tracing",
+    "source": "Martens, M., De Wolf, R., Vandendriessche, K., Evens, T., & De Marez, L. (2021). Applying contextual integrity to digital contact tracing and automated triage for hospitals during COVID-19. Technology in Society, 67, 101748. https://doi.org/10.1016/j.techsoc.2021.101748 (open access: https://pmc.ncbi.nlm.nih.gov/articles/PMC8448401/)",
+    "practice": "Digital contact tracing during COVID-19: smartphone location/proximity data (GPS, GSM, Bluetooth) collected by government or app-developing companies and processed for pandemic-control goals of varying individual impact",
+    "practice_input": "During the COVID-19 pandemic, governments and companies (e.g., Google, Apple, or local developers) deploy digital contact tracing applications on citizens' smartphones. The app collects data about citizens' movements and encounters — precise GPS location, coarser GSM cell-tower location, or Bluetooth proximity signals registering nearby phones — and processes it for public-health goals: suggesting a 14-day quarantine to individuals who came into contact with an infected person, restricting individuals' access to certain locations, or estimating the spread of the virus at a societal level. Participation reaches large parts of the population, and the system partially automates decisions previously made by human contact tracers. The practice is introduced as a temporary crisis measure, but the infrastructure could persist after the pandemic. Should this practice continue as-is, be modified, or be rejected?",
+    "contaminated": false,
+    "annotator": "claude-agent (needs human second pass)",
+    "annotation_date": "2026-07-07",
+    "annotator_notes": "Contamination call: published 2021 (pre-cutoff) but in Technology in Society — a niche venue for CI work — by a Belgian (Ghent/imec-mict-UGent) team studying Flanders; it is one of many COVID contact-tracing privacy surveys, not a canonical or heavily-cited CI text, so contaminated=false per the prefer-obscure-venues policy; flip to true if a citation check shows it is canonical. Completeness judgments for s5 are annotator calls: means sit near the scale midpoint with large SDs (~1.4-1.5), so data-type and goal norms are coded 'contested' rather than 'entrenched' even where a mean exceeds 3; only the societal-goal norm (estimating spread, M=3.77, and d=1.62 vs the high-impact goal) approaches entrenchment but is kept 'contested' given post-pandemic decline. TP vocabulary: 'purpose' added to the working vocabulary (logged in ANNOTATION_GUIDE.md) — the source folds purpose into transmission principles ('methods and purposes'), as many empirical CI operationalizations do. The task brief called this Apthorpe-style, but the paper does not cite Apthorpe and describes itself as supplementary to vignette studies — it uses direct Likert appropriateness items, not factorial vignettes. Second-pass fields: s5 completeness codes, s4 normalization of 'goals' as purpose, contamination call.",
+    "source_deviations": [
+      "The paper is an empirical measurement of CI parameters (survey, paired-sample t-tests), not a 9-step heuristic traversal; the step mapping here is annotator-imposed.",
+      "Only two CI parameters are varied and measured — information types and goals/purposes. The authors state the survey 'could not include direct questions concerning the appropriateness of actors and other transmission principles' due to length constraints; actors appear only as fixed background framing.",
+      "The paper operationalizes transmission principles loosely as 'methods and purposes' of data processing, folding purpose-of-use into the TP parameter rather than treating TPs strictly as constraints on flow.",
+      "Second strand not annotated here: automated triage for hospitals (data types: age, gender, medical self-assessment questionnaire, medical history, ICU occupancy; goals from individual care suggestions to denying hospital access to societal ICU-occupancy estimation; finding: only gender rated significantly less appropriate among data types; H1b, H2b, H3b confirmed). H4 (cross-context): comparable goals were rated differently between the contact tracing and triage contexts — evidence for context-dependence of norms, but still descriptive.",
+      "No s2 domain analysis: the health/crisis context is framed via surveillance-studies literature (dataveillance, data colonialism, panopticon) and an ADM definition, without analysis of the context's roles, activities, values, and ends.",
+      "No s6 prima facie verdict: means and hypothesis tests are reported but never converted into a violation/no-violation judgment on any specific flow.",
+      "No s7/s8: power and surveillance concerns appear in the theory section as literature framing, not as a factor-by-factor moral/political analysis of this practice.",
+      "No s9 continue/modify/reject verdict. Policy-relevant findings stop short of a decision: (a) 'transparent communication on the underlying ideas and goals is necessary when digital contact tracing and automated triage systems are rolled out'; (b) warning that temporary measures established during a crisis can become permanent and reduce citizens' privacy — the measured post-pandemic drop in appropriateness supports sunsetting; (c) citizens are willing to share personal data if they consider the specific context appropriate, so design and regulation should incorporate public expectations (citizen-centered governance) rather than assume blanket refusal or blanket acceptance."
+    ]
+  },
+  "steps_present": ["s1", "s3", "s4", "s5"],
+  "s1_flows": [
+    {
+      "sender": "citizen (via their smartphone)",
+      "recipient": "government or companies developing the contact tracing application (Google, Apple, local company)",
+      "subject": "the citizen (their movements and whereabouts)",
+      "information_type": "precise GPS location data",
+      "medium": "digital contact tracing application on the citizen's smartphone",
+      "novelty": "novel pandemic-response ADM practice: digitizes traditionally human-performed contact tracing, partially delegating decisions to automated models",
+      "evidence": "§2.3.1: digital contact tracing uses smartphone data — precise GPS, coarser GSM, or proximity-based Bluetooth — to log social contacts; §3.2 measures ('To what extent do you agree with the use of [GPS data] for digital contact tracing'); actors: government or companies developing the application"
+    },
+    {
+      "sender": "citizen (via their smartphone)",
+      "recipient": "government or companies developing the contact tracing application (Google, Apple, local company)",
+      "subject": "the citizen (their coarse whereabouts)",
+      "information_type": "coarser GSM cell-tower location data",
+      "medium": "digital contact tracing application / mobile network data",
+      "novelty": "novel pandemic-response ADM practice",
+      "evidence": "§2.3.1 (GPS vs coarser GSM vs Bluetooth as the data-type options); §3.2 survey items"
+    },
+    {
+      "sender": "citizen (via their smartphone)",
+      "recipient": "government or companies developing the contact tracing application (Google, Apple, local company)",
+      "subject": "the citizen and the people they encounter (proximate contacts whose devices are logged)",
+      "information_type": "Bluetooth proximity data (encounters between nearby devices)",
+      "medium": "digital contact tracing application; decentralized protocols (DP3T, Apple/Google exposure notification API) as possible designs",
+      "novelty": "novel pandemic-response ADM practice; decentralized designs can notify exposed users 'without actually tracing social contacts'",
+      "evidence": "§2.3.1: proximity-based Bluetooth data; DP3T and the Apple/Google API notify users of exposure without centrally tracing contacts; §3.2 survey items"
+    }
+  ],
+  "s3_actors": {
+    "senders": [
+      "citizens / smartphone users whose devices log location or proximity data"
+    ],
+    "recipients": [
+      "government",
+      "companies developing the contact tracing application (Google, Apple, local company)"
+    ],
+    "subjects": [
+      "citizens using the app (movements, whereabouts, quarantine status)",
+      "the citizen's social contacts (people whose encounters with the user are logged via proximity data)"
+    ],
+    "nonhuman_roles": [
+      {"entity": "smartphone sensors and radios (GPS, GSM, Bluetooth)", "treated_as": "instrument"},
+      {"entity": "contact tracing app / automated decision-making system (issues quarantine suggestions, access restrictions)", "treated_as": "ambiguous"},
+      {"entity": "decentralized protocol infrastructure (DP3T, Apple/Google exposure notification API)", "treated_as": "instrument"}
+    ],
+    "evidence": "§1 (ADM defined as 'procedures in which decisions are partially or completely delegated to automatically executed decision-making models'); §2.3.1 (actors accessing data: government or companies developing the application, i.e. Google, Apple, local company); Limitations: the survey could not directly measure appropriateness of actors — actor roles are described, not empirically varied"
+  },
+  "s4_transmission_principles": [
+    {
+      "principle": "purpose",
+      "source_label": "goals (transmission principles as 'methods and purposes' of processing): suggesting a 14-day quarantine (low individual impact), limiting access to certain locations (high individual impact), estimating the spread of the virus (societal)",
+      "explicit": true,
+      "evidence": "§2.2 (CI parameters: actors, information types, and 'transmission principles (methods and purposes)'); §3.2 goal items; H2a: significant differences between goal types by impact level"
+    },
+    {
+      "principle": "temporality",
+      "source_label": "temporal dimension of appropriateness: during vs. after the COVID-19 pandemic",
+      "explicit": true,
+      "evidence": "§2.3.3 ('norms are constantly in the process of becoming'; H3a/H3b: appropriateness of data types and goals differs during versus after COVID-19); §3.2: respondents who said they would answer differently post-COVID re-answered the items hypothetically"
+    },
+    {
+      "principle": "anonymity",
+      "source_label": "decentralised privacy-preserving proximity tracing (DP3T): notifying exposed users without actually tracing social contacts",
+      "explicit": true,
+      "evidence": "§2.1/§2.3.1: DP3T and the Apple/Google API offer decentralized designs that notify users of exposure 'without actually tracing social contacts' — raised as background design constraint, not empirically varied in the survey"
+    }
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "During the pandemic, citizens' coarse or proximity-based data (GSM cell-tower location, Bluetooth encounters) may flow from their smartphones to government/app operators for digital contact tracing; precise GPS location is a departure",
+      "entrenchment_evidence": "Measured appropriateness (5-point Likert, N=1,708, weighted Flanders sample, April 2020): GSM M=3.38 (SD=1.41), Bluetooth M=3.16 (SD=1.50), GPS M=2.99 (SD=1.55); GSM vs GPS t(1707)=17.196, p<.001, d=0.26; H1a confirmed — respondents differentiate significantly between data types, with precise GPS deemed least appropriate",
+      "departures": [
+        "use of precise GPS location data (least appropriate of the three data types)",
+        "continuing any of these data flows after the pandemic ends (all data types drop below or near the scale midpoint post-COVID)"
+      ],
+      "completeness": "contested",
+      "evidence": "§4 Results (data-type comparisons, during COVID); means near the scale midpoint with SDs ~1.4-1.5 indicate substantial disagreement across respondents"
+    },
+    {
+      "norm_flow": "During the pandemic, contact tracing data may be processed for the societal goal of estimating the spread of the virus, and (more weakly) for low-individual-impact goals such as suggesting a 14-day quarantine; processing for high-individual-impact goals such as limiting individuals' access to locations is a departure",
+      "entrenchment_evidence": "Measured appropriateness during COVID: estimating spread M=3.77 (SD=1.37) > quarantine suggestion M=3.42 (SD=1.40) > limiting location access M=2.57 (SD=1.47); the societal vs high-impact contrast is very large (d=1.62); H2a confirmed — goals with high individual impact are rated less appropriate than societal ones",
+      "departures": [
+        "using contact tracing data to limit individuals' access to certain locations (M=2.57, below the scale midpoint)",
+        "pursuing any of these goals after the pandemic ends"
+      ],
+      "completeness": "contested",
+      "evidence": "§4 Results (goal comparisons, during COVID); §5 Discussion (high-impact individual goals perceived as far less appropriate than low-impact suggestions or societal estimation)"
+    },
+    {
+      "norm_flow": "The same contact tracing flows (all data types, all goals) continuing after the COVID-19 pandemic",
+      "entrenchment_evidence": "Respondents anticipate significantly lower appropriateness post-pandemic for every data type and goal: GPS 2.99→2.54 (d=0.30), Bluetooth 3.16→2.65 (d=0.24), GSM 3.38→2.98 (d=0.28); limiting access 2.57→2.21 (d=0.25), quarantine suggestion 3.42→3.06 (d=0.26), estimating spread 3.77→3.51 (d=0.19); H3a and H3b confirmed — the informational norms are crisis-bound and time-sensitive",
+      "departures": [
+        "treating pandemic-era acceptance as a stable post-crisis norm ('temporary measures established during a crisis become permanent and reduce citizens' privacy')"
+      ],
+      "completeness": "incomplete",
+      "evidence": "§4 Results (during vs after comparisons); §2.3.3 (normative transformation: 'norms are constantly in the process of becoming'); §5 Discussion (temporal element and mission-creep concern)"
+    }
+  ]
+}

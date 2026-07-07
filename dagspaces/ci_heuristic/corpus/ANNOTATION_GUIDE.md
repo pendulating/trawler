@@ -27,7 +27,14 @@ gold-only fields). One JSON file per case in `tier_a/`.
    - Working TP vocabulary (extend as needed, log additions here):
      confidentiality, secrecy, need, voluntary, notice, consent, exchange,
      mandatory/compulsion, entitlement, dessert, reciprocity, anonymity,
-     aggregation, ephemerality, temporality, mutuality, desire.
+     aggregation, ephemerality, temporality, mutuality, desire,
+     purpose (added for martens2021_contact_tracing — empirical CI studies
+     often fold purpose-of-use into the TP parameter. NOTE: this records
+     SOURCE practice for extraction scoring only; our normative reference
+     (Kumar et al., Nissenbaum 2019) situates purpose with context (s2), and
+     probe (c) still flags purpose-language in MODEL s4 outputs as a
+     misapplication. Gold files using this entry must log the source's
+     loose TP reading in source_deviations — martens2021 does.)
 6. **Factor checklists (s7/s8)**: enumerate each moral/political factor the
    source raises as `{factor, kind, affected_parties, direction}` — these are
    the recall targets for coverage scoring. `kind` from: autonomy, freedom,
