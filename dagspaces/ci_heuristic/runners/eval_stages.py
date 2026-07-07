@@ -79,3 +79,29 @@ class TraverseRunner(StageRunner):
             outputs={"dataset": out_path},
             metadata={"rows": len(result_df), "metrics": metrics},
         )
+
+
+class TPProbeRunner(StageRunner):
+    stage_name = "tp_probe"
+
+    def run(self, context: Any) -> StageResult:
+        from ..stages.tp_probe import run_tp_probe
+
+        input_path = context.inputs["dataset"]
+        df = pd.read_parquet(input_path)
+
+        result_df = run_tp_probe(df, context.cfg)
+
+        out_path = context.output_paths["dataset"]
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        result_df.to_parquet(out_path, index=False)
+
+        metrics = {
+            "n_cases": int(len(result_df)),
+            "parseable_rate": round(float((result_df["parse_status"] != "unparseable").mean()), 6),
+            "mean_conditions": round(float(result_df["n_conditions"].mean()), 6),
+        }
+        return StageResult(
+            outputs={"dataset": out_path},
+            metadata={"rows": len(result_df), "metrics": metrics},
+        )

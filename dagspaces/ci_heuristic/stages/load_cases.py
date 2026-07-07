@@ -61,18 +61,29 @@ def _load_tier_c(corpus_root: str) -> List[dict]:
     ]
 
 
+# Tier B label/flow columns carried through for scorers and the TP probe.
+TIER_B_EXTRA_COLS = [
+    "context_key", "departed_parameter", "prima_facie", "multi_tp",
+    "sender_is_subject", "norm_statement", "flow_statement",
+]
+
+
 def _load_tier_b(corpus_root: str) -> List[dict]:
     rows = []
     for path in sorted(glob.glob(os.path.join(corpus_root, "tier_b", "*.parquet"))):
         df = pd.read_parquet(path)
         for _, r in df.iterrows():
-            rows.append({
+            row = {
                 "case_id": str(r["case_id"]),
                 "tier": "b",
                 "practice_input": str(r["practice_input"]),
                 "contaminated": False,
                 "gold_path": path,
-            })
+            }
+            for col in TIER_B_EXTRA_COLS:
+                if col in df.columns:
+                    row[col] = r[col]
+            rows.append(row)
     return rows
 
 

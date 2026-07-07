@@ -83,7 +83,11 @@ def _generate_round(
     round_df["_sys"] = [p[0] for p in sys_usr]
     round_df["_usr"] = [p[1] for p in sys_usr]
 
-    sp_base = OmegaConf.to_container(getattr(cfg, "sampling_params", {}) or {}, resolve=True)
+    sp_node = getattr(cfg, "sampling_params", None)
+    if OmegaConf.is_config(sp_node):
+        sp_base = OmegaConf.to_container(sp_node, resolve=True)
+    else:
+        sp_base = dict(sp_node or {})
     guided = {"guided_decoding": {"json": schema_model.model_json_schema()}}
 
     def preprocess(row: Dict[str, Any]) -> Dict[str, Any]:

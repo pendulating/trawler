@@ -1,0 +1,26 @@
+# @package _global_
+# Standalone TP-elicitation probe (E2): load cases -> 'fine IF ___' probe.
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/ci_heuristic
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_cases:
+        stage: load_cases
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_cases/dataset.parquet
+      tp_probe:
+        stage: tp_probe
+        depends_on:
+          - load_cases
+        inputs:
+          dataset: load_cases.dataset
+        outputs:
+          dataset: outputs/tp_probe/dataset.parquet
+        launcher: slurm_gpu_1x

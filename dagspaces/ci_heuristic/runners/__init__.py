@@ -16,11 +16,13 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
     if _STAGE_REGISTRY is None:
         from .eval_stages import (
             LoadCasesRunner,
+            TPProbeRunner,
             TraverseRunner,
         )
 
         _STAGE_REGISTRY = {
             "load_cases": LoadCasesRunner(),
             "traverse": TraverseRunner(),
+            "tp_probe": TPProbeRunner(),
         }
     return _STAGE_REGISTRY.copy()
