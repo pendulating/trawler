@@ -11,16 +11,16 @@ exemplars/marginal.
 |---|------|----------|-------|---------------|-------|
 | 1 | Kumar, Zimmer & Vitak 2024 (CSCW, 10.1145/3653710) | Fitbit PFI → healthcare | all 9 | moderate | ANNOTATED: `kumar2024_fitbit.json` |
 | 2 | Zimmer 2018 (SM+S, 10.1177/2056305118768300) | OkCupid data release / research ethics | 1-6 + 7-8, verdict | high | canonical "already public" rebuttal |
-| 3 | Bloch & Bashir 2017/18 (AHFE, 10.1007/978-3-319-60483-1_59) | cardiac implants + remote monitoring | self-labeled 9-step | **low** (obscure venue) | priority: low-contamination full traversal |
+| 3 | Bloch & Bashir 2017/18 (AHFE, 10.1007/978-3-319-60483-1_59) | cardiac implants + remote monitoring | self-labeled 9-step | **low** (obscure venue) | paywalled (Springer chapter) — needs MF library access |
 | 4 | Sar & Al-Saggaf 2014 (Ethics Inf Technol, 10.1007/s10676-013-9329-y) | SNS third-party tracking | heuristic-titled, 1-8 + verdict | moderate | "decision heuristic" in title |
 | 5 | Vitak & Zimmer 2020 (SM+S, 10.1177/2056305120948250) | COVID contact tracing | 1-7 + 9 | high | short-form |
 | 6 | Zeide & Nissenbaum 2018 (TRE, 10.1177/1477878518815340) | MOOCs / virtual education | 2,5,7,8 strong | mod-high | best step-8 exemplar; Nissenbaum-authored |
-| 7 | de Groot 2024 (MHCP, 10.1007/s11019-024-10211-0) | genomic data across contexts | 1-9 multi-case | **low-mod** (post-2023, non-US) | priority |
-| 8 | Wernick et al. 2025 (FAccT, arXiv:2506.00218) | algorithmic travel surveillance (FI) | 1-7 | **low** (2025, non-US) | priority: uncontaminated |
+| 7 | de Groot 2024 (MHCP, 10.1007/s11019-024-10211-0) | genomic data across contexts | 1-9 multi-case | **low-mod** (post-2023, non-US) | ANNOTATED: `degroot2024_genomic_forensic.json` (forensic strand) |
+| 8 | Wernick et al. 2025 (FAccT, arXiv:2506.00218) | algorithmic travel surveillance (FI) | 1-8, s6=incomplete_norms | **low** (2025, non-US) | ANNOTATED: `wernick2025_travel_surveillance.json` |
 
 ## Tier 2 — solid partials (steps 1-6)
 
-9. Bowser et al. 2017 (CSCW) — citizen science; rare 7-8 content; mod-high contamination
+9. Bowser et al. 2017 (CSCW) — citizen science — ANNOTATED: `bowser2017_citizen_science.json` (s2-s5,s7,s8; honest partial)
 10. Sanfilippo et al. 2020 (JASIST) — disaster apps; strong s1/s4-s6 flow gold
 11. Apthorpe et al. 2018 (IMWUT) — smart home IoT; parameter gold; HIGH contamination (canonical); also the step-5 population-validation target for Phase 3
 12. Huang & Bashir 2015 (ASIS&T) — DTC genetic testing policies; low-mod contamination

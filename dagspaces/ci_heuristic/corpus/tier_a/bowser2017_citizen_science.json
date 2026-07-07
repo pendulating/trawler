@@ -1,0 +1,259 @@
+{
+  "meta": {
+    "case_id": "bowser2017_citizen_science",
+    "source": "Bowser, A., Shilton, K., Preece, J., & Warrick, E. (2017). Accounting for Privacy in Citizen Science: Ethical Research in a Context of Openness. Proceedings of CSCW 2017, 2124-2136. https://doi.org/10.1145/2998181.2998305",
+    "practice": "Location-based citizen-science projects sharing volunteer-contributed data (incl. geolocation and personal information) with researchers, other volunteers, and the public at large",
+    "practice_input": "A practice is widespread in citizen science: location-based projects (e.g., the bird-observation platform eBird) recruit public volunteers to collect and submit scientific observations — species checklists, environmental measurements, photographs — accompanied by metadata including exact geo-location, date and time, volunteer name or username, and contact information. Projects share these contributions with the professional researchers who coordinate them, with other registered volunteers, and often with the public at large: many projects publish full datasets openly online, sometimes in near real time, downloadable by anyone without restriction. Data may also be re-used by other research projects, by government agencies, and on social media. Volunteers are unpaid; participation is voluntary and motivated by scientific, social, and environmental goals. Should this open data-sharing practice continue as-is, be modified, or be rejected?",
+    "contaminated": true,
+    "annotator": "claude-agent (needs human second pass)",
+    "annotation_date": "2026-07-07",
+    "annotator_notes": "Partial traversal, annotated per instruction: s2-s5 solid, genuine s7-s8 content (the openness value of the scientific/citizen-science context is the paper's central s8 move), no crisp s6 or s9 — steps marked absent rather than inventing verdicts. The paper's headline claim ('citizen science information flows are contextually appropriate') is a conclusion reached through value analysis, not a prima facie norm-departure assessment. Reciprocity and anonymity confirmed as explicitly named transmission principles (Results, 'Information flows and transmission principles'; Protecting Privacy section). A power-balance benefit ('public contribution... could shift power balances') appears in the Discussion but concerns extending the citizen-science model to social computing research, not the annotated practice — excluded from s7. Second-pass fields: s7 factor checklist, s4 normalization choices (temporality for delayed publication; voluntary as implicit).",
+    "source_deviations": [
+      "The paper organizes analysis by Nissenbaum's four contextual variables (Who/Roles; What/Information; How/Flows and transmission principles; Why/Uses, norms, and values) used as a qualitative codebook — not by the 9-step CI decision heuristic; the step mapping here is annotator-imposed.",
+      "s1-style flow description is distributed across Background and Results at the class level (project types, governance models) and never stated as crisp (sender, recipient, subject, info-type, TP) tuples — s1 marked absent.",
+      "No prima facie assessment (s6): the paper never identifies which parameters of an entrenched norm a flow breaches; it moves directly from describing norms to weighing threats and values.",
+      "No s9 verdict: the 'Implications for Data Flows & Technology Design' section offers conditional design recommendations (location fuzzing/cloaking, minimizing personal information collection, flexible/co-designed data flows, advanced notice, volunteer training, community consultation in ethics review) but never issues a continue/modify/reject decision on the practice.",
+      "Evaluative material (threats, values) is interleaved with descriptive material throughout the Results; e.g., the 'Data uses, norms, and values' section mixes s2 values content with s5 entrenchment evidence."
+    ]
+  },
+  "steps_present": ["s2", "s3", "s4", "s5", "s7", "s8"],
+  "s2_context": {
+    "domain": "citizen science (public participation in scientific research)",
+    "nested_contexts": [
+      "formal education (classroom-based participation by children and students)",
+      "government/regulatory (agencies using citizen science data for regulatory enforcement or forecasting)",
+      "social media (project Facebook groups, promotional sharing)",
+      "local community life (place-based projects, indigenous communities)"
+    ],
+    "activities": [
+      "observation and species identification",
+      "classification or tagging",
+      "data entry and measurement",
+      "specimen/sample collection",
+      "geolocation and photography",
+      "data analysis (in collaborative/co-created projects)",
+      "project coordination, data validation, and open publication of datasets"
+    ],
+    "purposes": [
+      "producing scientific research (from species distribution to the spread of infectious disease)",
+      "informing conservation policy and land management decisions",
+      "stewardship and natural resource management",
+      "education and outreach",
+      "action/intervention in local concerns"
+    ],
+    "values_ends": [
+      "openness ('the whole attitude towards it is open source') — the dominant ethic of the context",
+      "sharing and contribution to the greater good, perceived as 'sharing and contribution... rather than a perception of taking'",
+      "opening traditionally closed science and policy systems to greater public participation",
+      "learning and access to knowledge",
+      "socialization, community inclusion, and communal norms of participation",
+      "attribution and recognition of volunteers' contributions"
+    ],
+    "evidence": "Background 'Citizen Science' subsections (Who/Roles; What/Information; How; Why/Uses, norms, and values); Results 'Data uses, norms, and values': 'I think the whole attitude towards it is open source. We're doing this to share it with anyone and everyone so it can be used to benefit bird conservation in any way' (PC 11); Discussion: values and norms 'make data collection a perception of sharing and contribution within a broad community... rather than a perception of taking'"
+  },
+  "s3_actors": {
+    "senders": [
+      "citizen science volunteers (public contributors)",
+      "project coordinators / projects (when publishing or re-sharing contributed data)"
+    ],
+    "recipients": [
+      "project coordinators / professional researchers",
+      "other volunteers (all registered volunteers, or direct collaborators)",
+      "the public at large (open datasets accessible to anyone with an Internet connection, e.g., eBird's 'Explore a Region')",
+      "third-party re-users: other research projects and scientists, government agencies (regulatory enforcement, forecasting), social media audiences",
+      "IRB staffers and researchers on ethics review boards"
+    ],
+    "subjects": [
+      "volunteers themselves (location, name/username, contact information, routines and patterns of behavior)",
+      "children who participate (e.g., through classroom-based projects)",
+      "non-human species observed, incl. threatened and endangered species (location as sensitive information)"
+    ],
+    "nonhuman_roles": [
+      {"entity": "GPS-enabled smartphones, DIY hardware and software sensors, mobile apps", "treated_as": "instrument"},
+      {"entity": "project data platform/website (e.g., eBird)", "treated_as": "ambiguous"}
+    ],
+    "evidence": "Results 'Roles': 'Our study began by abstracting two user groups: project coordinators... and lay citizen science volunteers. In reality this distinction is not so clear' (coordinators are volunteers, volunteers are professional scientists); heterogeneous volunteers incl. families, indigenous communities, retirees, students, teachers; 'Participants also identified stakeholders not directly involved in citizen science activities': other projects/scientists, government agencies, IRB staffers"
+  },
+  "s4_transmission_principles": [
+    {
+      "principle": "reciprocity",
+      "source_label": "principle of reciprocity",
+      "explicit": true,
+      "evidence": "Results 'Information flows and transmission principles': 'many citizen science project coordinators establish a principle of reciprocity by making all contributed data openly available. As Project Coordinator 11 describes, \"you can download the whole dataset straight from the website, free of charge and with no restrictions to it\"'"
+    },
+    {
+      "principle": "anonymity",
+      "source_label": "improved data anonymization; location fuzzing or cloaking; anonymous identification",
+      "explicit": true,
+      "evidence": "'coordinators need to reconsider whether they should implement transmission principles such as improved data anonymization'; Protecting Privacy: '\"fuzzy data\"... desensitize or de-specify the exact location' (PC 8); coordinators 'may assign each volunteer an anonymous identification'"
+    },
+    {
+      "principle": "temporality",
+      "source_label": "transmission constraints: delayed publication",
+      "explicit": true,
+      "evidence": "'some transmission constraints may be placed on citizen science data, such as when publication is delayed by a short period of time, typically a single day, to avoid real-time identification of volunteers' locations'"
+    },
+    {
+      "principle": "confidentiality",
+      "source_label": "guarantee confidentiality by altering data before publication",
+      "explicit": true,
+      "evidence": "Background 'How/Information flows and transmission principles': 'projects might guarantee confidentiality by altering data before publication'"
+    },
+    {
+      "principle": "consent",
+      "source_label": "volunteers consent to share data (with coordinators, other volunteers, or third parties)",
+      "explicit": true,
+      "evidence": "'In simple information flows typical of many contributory projects, volunteers consent to share data primarily or exclusively with a project coordinator for direct use in research. In other projects and governance models, volunteers also consent to share data with other volunteers... or, with third parties'"
+    },
+    {
+      "principle": "voluntary",
+      "source_label": "at each volunteer's individual discretion",
+      "explicit": false,
+      "evidence": "third-party sharing occurs 'at each volunteer's individual discretion'; volunteers 'select the information flow with which they feel most comfortable' (multiple data-submission modalities); participation itself is unpaid and voluntary"
+    },
+    {
+      "principle": "notice",
+      "source_label": "data policies posted to project websites",
+      "explicit": true,
+      "evidence": "Awareness of Privacy: 'information on key facets of participation — particularly the types of data collected, and relevant information flows — is posted to a project's website. But data policies are often opaque, or insufficiently documented'; no focus-group volunteer reported reading them"
+    }
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "Volunteers (senders) voluntarily contribute observations with geolocation metadata (information type) about their own activities and locations (subjects) to project coordinators / professional scientists (recipients) for direct use in research (TPs: consent, voluntary)",
+      "entrenchment_evidence": "'Citizen science is predicated on a novel information flow: the direct exchange of data, analysis, and other information between professional scientists and public volunteers' — an entrenched, centuries-old field norm; 'Scientists are considered trusted experts, and sharing data with scientists aligns with Nissenbaum's understanding of appropriate roles for data sharing'; 'trust with scientists — you give your email, you trust that they're not going to sell it' (V 2)",
+      "departures": [
+        "technological change from paper-and-pencil sheets to real-time mobile upload of geolocated observations",
+        "GPS precision removes the observer's ability to 'blend into the landscape' — 'nowadays with GPS... we'd have to identify the location of the station... as close as the technology will allow' (PC 3)",
+        "improved connectivity enables streaming/constant location access rather than single geo-referenced observations (PC 12; V 2)"
+      ],
+      "completeness": "entrenched",
+      "evidence": "Results 'Information flows and transmission principles'; 'In long-term projects, information flows and transmission principles change over time, particularly as the technological affordances available to a project change'"
+    },
+    {
+      "norm_flow": "Projects/coordinators (senders) publish contributed data including volunteer location (information type, subjects: volunteers) openly to other volunteers and the public at large (recipients) under reciprocity, sometimes subject to delay, fuzzing, or confidentiality-preserving alteration (TPs)",
+      "entrenchment_evidence": "Citizen science 'is dominated by an ethic of openness'; volunteers 'view open information flows as appropriate because full access to data matches their expectations of citizen science as a source of learning'; 'while a few project coordinators suggested that privacy includes the right to be left alone, not a single volunteer raised this point'; 'the norms of participation are communal'; volunteers even find 'bragging rights in broad information dissemination' (V 1)",
+      "departures": [
+        "sharing information about children — 'you shouldn't share a child's name, bottom line' (V 8)",
+        "real-time publication that identifies volunteers' current locations ('broadcasting exactly where you are')",
+        "exposing locations of private property or areas volunteers do not wish to open up (V 10)",
+        "constant location tracking via always-on apps, as opposed to single geo-referenced observations (V 2)"
+      ],
+      "completeness": "entrenched",
+      "evidence": "Results 'Data uses, norms, and values' and 'Accounting for Privacy in Citizen Science'; 'Despite a general emphasis on openness and data sharing, participants did express concerns over sharing certain types of data'"
+    },
+    {
+      "norm_flow": "Volunteers submit data with the expectation that it will be used for a specific scientific purpose, such as answering a scientific research question or informing species management",
+      "entrenchment_evidence": "'Volunteers often submit data with the expectation that it will be used for a specific purpose'; 'parameters for acceptable re-use are sometimes documented in data policies'; some coordinators re-contact volunteers to ask about new uses ('are you OK with this going up on Facebook?' PC 7)",
+      "departures": [
+        "re-use of data in other research projects",
+        "sharing on social media for communication or promotion",
+        "projects sharing data in new ways 'without altering policies or informing volunteers'"
+      ],
+      "completeness": "incomplete",
+      "evidence": "Results 'Other potential privacy threats'"
+    }
+  ],
+  "s7_factors": [
+    {
+      "factor": "Precise and/or real-time location disclosure threatens volunteers' personal safety and security: anyone can click a data point ('if you have sampled at your house, your house shows up'), track routines, or learn of absences ('this is my last report for the next week because I'm going out of town')",
+      "kind": "other(personal_safety_security)",
+      "affected_parties": ["volunteers"],
+      "direction": "harm",
+      "evidence": "Results 'Location privacy': 'broadcasting exactly where you are leads to a number of personal safety concerns' (PC 12); V 6; PC 3; V 4 ('I found this one guy where I can track every single place he goes. And his house.')"
+    },
+    {
+      "factor": "Violations of personal autonomy generated by pervasive location data collection",
+      "kind": "autonomy",
+      "affected_parties": ["volunteers"],
+      "direction": "harm",
+      "evidence": "Introduction: 'The potential privacy risks generated by such data range from violations of personal autonomy...'"
+    },
+    {
+      "factor": "Algorithmic discrimination enabled by increased tracking",
+      "kind": "discrimination",
+      "affected_parties": ["volunteers"],
+      "direction": "harm",
+      "evidence": "Introduction: '...to algorithmic discrimination enabled by increased tracking [Dwork & Mulligan]'"
+    },
+    {
+      "factor": "Location privacy risks fall disproportionately on vulnerable populations — 'illegal migrants' and 'kids' — and are exacerbated when activities are done 'repeatedly and predictably', supporting inferences about routines",
+      "kind": "justice",
+      "affected_parties": ["undocumented migrants", "children", "volunteers with predictable routines"],
+      "direction": "harm",
+      "evidence": "Results 'Location privacy' (PC 10; PC 13; V 9); s5 departure 'you shouldn't share a child's name, bottom line' (V 8)"
+    },
+    {
+      "factor": "Triangulation of observer location with personal information (full names on community attribution pages, self-identification in comments or project Facebook groups) enables re-identification of volunteers",
+      "kind": "other(re_identification)",
+      "affected_parties": ["volunteers"],
+      "direction": "harm",
+      "evidence": "Results 'Triangulating location and personal information'; 'we have on our website a community attribution page... you would be listed as [Lauren N., Virginia, USA]' (PC 6); Facebook identification-number exchange (PC 1)"
+    },
+    {
+      "factor": "Opaque, incomplete, or unread data policies prevent volunteers from understanding how their information is collected and shared, leaving projects with knowledge volunteers lack",
+      "kind": "information_asymmetry",
+      "affected_parties": ["volunteers"],
+      "direction": "harm",
+      "evidence": "'incomplete or poorly articulated data policies prevent volunteers from understanding how information is collected and shared'; 'when focus group participants were asked whether they typically read citizen science data policies, not a single one answered affirmatively'"
+    },
+    {
+      "factor": "Purpose creep: data collected for one scientific purpose is re-used in other contexts (other research projects, social media promotion) sometimes without altering policies or informing volunteers",
+      "kind": "other(secondary_use)",
+      "affected_parties": ["volunteers"],
+      "direction": "harm",
+      "evidence": "Results 'Other potential privacy threats'"
+    },
+    {
+      "factor": "Trust in scientists as experts, plus attribution, feedback, and communication, underwrite volunteers' willingness to take 'a calculated risk' in sharing personal data",
+      "kind": "trust",
+      "affected_parties": ["volunteers", "project coordinators"],
+      "direction": "benefit",
+      "evidence": "'trust with scientists — you give your email, you trust that they're not going to sell it' (V 2); 'Most people are actually quite chuffed to see their name on there' (PC 11); 'When I do get feedback... that helps keep me involved'"
+    },
+    {
+      "factor": "Openness broadens participation in traditionally closed science and policy systems, including 'younger folks, less well-off folks, and various socioeconomic groups that don't participate in citizen science enough'",
+      "kind": "democracy",
+      "affected_parties": ["the public", "underrepresented socioeconomic groups"],
+      "direction": "benefit",
+      "evidence": "Results 'Data uses, norms, and values' (PC 12); Background: 'a valued mechanism for opening traditionally closed science and policy systems to greater public participation'"
+    },
+    {
+      "factor": "Openly sharing locations of threatened and endangered species risks 'potentially opening [species] up to poaching'",
+      "kind": "other(species_protection)",
+      "affected_parties": ["threatened and endangered species", "conservation goals"],
+      "direction": "harm",
+      "evidence": "Results 'Location privacy': 'threatened and endangered species' locations' (V 11); 'potentially opening [species] up to poaching' (PC 8)"
+    }
+  ],
+  "s8_contextual_meaning": [
+    {
+      "factor_ref": 8,
+      "contextual_end": "openness — opening traditionally closed science to broad public participation",
+      "advances_or_undermines": "advances",
+      "argument": "Open, unrestricted data flows are the realization of the context's dominant value: volunteers and coordinators 'share and promote openness and data sharing over protecting privacy', and the context's values make data collection 'a perception of sharing and contribution within a broad community of volunteers, project coordinators, and the interested public, rather than a perception of taking'. Restricting flows in the name of privacy would cut against the ethic that defines the context — openness explains why data-sharing here is contextually appropriate despite pervasive collection.",
+      "evidence": "Abstract ('an example of contextually-appropriate data sharing'); Discussion; Conclusion: 'in general, citizen science information flows are contextually appropriate'"
+    },
+    {
+      "factor_ref": 0,
+      "contextual_end": "producing scientifically usable data for research, conservation policy, and land management",
+      "advances_or_undermines": "mixed",
+      "argument": "Precise location is what gives the data scientific value — 'In order to make the data of any value, it has to be known where the data's coming from' (PC 4) — so geolocated open flows directly advance the context's research ends. But real-time location access can chill the participation those ends depend on: 'if we deploy the same technology here, I think there will be more concerns about volunteer participation and a real time access to location data' (PC 12). Protective transmission principles (delay, fuzzing) mediate the tension.",
+      "evidence": "Results 'Location privacy' (PC 4); 'Information flows and transmission principles' (PC 12)"
+    },
+    {
+      "factor_ref": 7,
+      "contextual_end": "learning, socialization, and community inclusion among volunteers",
+      "advances_or_undermines": "advances",
+      "argument": "Open information flows encourage learning ('having access to raw data might spark some other question towards the project'), and data transparency helps volunteers find each other and recruit others ('hey there's someone down the street that's interested in this too... tell them everything we're doing anyway. And invite them to come do it with us'). Because socialization and community inclusion are core motivations, 'the norms of participation are communal' — volunteers are not joining to be left alone.",
+      "evidence": "Results 'Accounting for Privacy in Citizen Science' (V 7; V 1)"
+    },
+    {
+      "factor_ref": 9,
+      "contextual_end": "conservation and stewardship of the species being studied",
+      "advances_or_undermines": "undermines",
+      "argument": "Openly publishing exact locations of threatened and endangered species undermines the very conservation ends the projects serve (poaching risk). Location fuzzing restores alignment: it 'desensitize[s] or de-specif[ies] the exact location of a threatened and endangered species' while keeping area-level data open — and volunteers note the same mechanism protects them ('to give people the idea, well this is the area, without saying come on over to my house', V 3) — showing that adjusting the transmission principle can preserve both openness and the contextual ends.",
+      "evidence": "Results 'Protecting Privacy in Citizen Science' (PC 8; V 3)"
+    }
+  ]
+}

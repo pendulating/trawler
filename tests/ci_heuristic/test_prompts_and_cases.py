@@ -81,8 +81,13 @@ class TestLoadCases:
 
     def test_held_out_excludes_contaminated(self):
         df = load_cases(tiers=["a", "c"], include_contaminated=False)
-        assert "kumar2024_fitbit" not in set(df["case_id"])  # flagged contaminated
-        assert (df["tier"] == "c").all()
+        ids = set(df["case_id"])
+        # contaminated Tier A gold never appears held-out...
+        assert "kumar2024_fitbit" not in ids
+        assert "bowser2017_citizen_science" not in ids
+        # ...but post-cutoff uncontaminated Tier A cases do
+        assert "degroot2024_genomic_forensic" in ids
+        assert "wernick2025_travel_surveillance" in ids
 
     def test_tier_c_keys_match_part1_variant_ids(self):
         df = load_cases(tiers=["c"])

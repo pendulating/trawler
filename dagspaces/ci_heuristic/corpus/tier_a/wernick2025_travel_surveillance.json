@@ -1,0 +1,299 @@
+{
+  "meta": {
+    "case_id": "wernick2025_travel_surveillance",
+    "source": "Wernick, A., Medlar, A., Söderholm, S., & Głowacka, D. (2025). Evaluating the Contextual Integrity of False Positives in Algorithmic Travel Surveillance. In Proceedings of the 2025 ACM Conference on Fairness, Accountability, and Transparency (FAccT '25), Athens, Greece. https://doi.org/10.1145/3715275.3732139 (arXiv:2506.00218)",
+    "practice": "Algorithmic pre-screening of air passengers' PNR data under the EU PNR Directive as implemented in Finland, focusing on the flow of false positives (innocent passengers) into law-enforcement scrutiny",
+    "practice_input": "EU law (the Passenger Name Record Directive), implemented in Finland by national act, requires airlines to transmit passenger name records — 19 categories of personal data including names, all payment information, itineraries, and identity documents — for every passenger on extra-EU flights to a governmental Passenger Information Unit before departure or arrival. The unit automatically screens these records against police, customs, border-guard and Schengen databases and against secret pre-determined criteria to identify potential terrorists and serious criminals. A police officer manually reviews every automated hit; verified matches go to competent authorities, who may stop and examine passengers at the airport. Because true offenders are extremely rare, even a highly accurate system flags far more innocent travelers than criminals; their personal information is examined without their knowledge, and they learn of it only if stopped. Member states may extend the same screening to sea travel. Should this practice continue as-is, be modified, or be rejected?",
+    "contaminated": false,
+    "annotator": "claude-agent (needs human second pass)",
+    "annotation_date": "2026-07-07",
+    "annotator_notes": "FAccT June 2025 / arXiv May 2025 — past most training cutoffs, so contaminated=false. Second-pass fields: s7 factor checklist, s6 verdict coding, steps_present boundary for s8. Judgment calls: (1) s6 coded 'incomplete_norms' — the paper never declares the PNR system a CI violation; it argues the false-positive dimension is normatively unsettled (base rate fallacy unaddressed by PNRD/CJEU, actual FPR secret) and elicits the missing norm empirically (legitimate FPR thresholds: 14.7% air, 9.7% sea). An alternative reading — 'no violation for air travel' from the high perceived-legitimacy result — was rejected because the authors themselves hedge it (normalcy-bias confound, unknown actual FPR, individual-focus limitation). (2) s9 coded absent: the paper issues process/communication recommendations but no continue/modify/reject verdict on the practice. (3) s4 vocabulary extensions logged: 'non-discrimination' (Art. 6(4) targeted/proportionate/specific criteria constraint) and 'human verification' (human-in-the-loop as a condition on the PIU-to-authorities flow) — neither fits the working TP vocabulary; both are conditions the source explicitly frames as constraints on transmission. (4) s7 factor 8 (individual-focus of CI and rights approaches) is meta-level critique the paper applies to its own framework; retained because the source raises it as a moral-political consideration about mass surveillance's collective effects.",
+    "source_deviations": [
+      "By explicit choice (§2.1) the paper uses CI descriptively, not evaluatively, as a complement to the EU rights-based approach — so steps 6–8 are transformed: the prima facie test is operationalized as an empirical threshold-elicitation survey (at what false-positive count does the flow breach perceived contextual integrity?) rather than an analyst judgment.",
+      "Adds a non-standard fifth attribute, 'Incomplete Flows' (after Shvartzshnaider et al.), because the system's transmission properties are secret and cannot be fully described — flows about the flows are annotated as first-class objects (§2.1, §2.6).",
+      "Entrenched norms are read off legal instruments (PNRD, LED, GDPR, AI Act, Finnish Act 657/2019, CJEU Ligue des Droits Humains) rather than observed social practice; the survey then tests public alignment with the legal norms (§2.1: 'legal norms are essential to the description of CI parameters').",
+      "Evaluative content (steps 7–8 material) is distributed across §1 (introduction), §2 (background) and §6 (discussion) instead of being performed as discrete heuristic steps.",
+      "Stops short of step 9: recommendations are addressed to regulators and system producers (communicate base-rate-fallacy risks, inform the public of false positive rates, evaluate the AI Act's accuracy norms) — never a continue/modify/reject verdict on the PNR practice itself."
+    ]
+  },
+  "steps_present": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"],
+  "s1_flows": [
+    {
+      "sender": "air carriers (airlines)",
+      "recipient": "Passenger Information Unit (PIU) of the member state",
+      "subject": "all passengers on extra-EU flights (and targeted intra-EU flights when strictly necessary)",
+      "information_type": "PNR data: 19 categories of personal data, incl. passenger names, all forms of payment information, and advance passenger information (identity document, nationality); sensitive categories prohibited",
+      "medium": "mandatory delivery into the PIU's database on the state of departure, landing, or stop-over",
+      "novelty": "legally mandated mass flow (PNRD Art. 1, Art. 8); originated in the US post-9/11 and gradually adopted in the EU",
+      "evidence": "§2.2–2.5: 'air carriers must deliver the PNR data to the PIU's database on the state of departure, landing, or, under certain conditions, the state of the stop-over (Art. 8)'; PNRD Annex I (§2.4)"
+    },
+    {
+      "sender": "PIUs of other EU member states",
+      "recipient": "Passenger Information Unit (PIU)",
+      "subject": "passengers",
+      "information_type": "PNR data",
+      "medium": "inter-PIU transfer under the PNRD",
+      "novelty": "networked cross-border extension of the national flow",
+      "evidence": "§2.3: PIUs 'receive the PNR data from air carriers or PIUs of other member states'"
+    },
+    {
+      "sender": "Passenger Information Unit (PIU)",
+      "recipient": "competent authorities (police, customs, border guard) and, upon request, Europol",
+      "subject": "passengers identified by a positive match (true and false positives)",
+      "information_type": "PNR data of identified persons or the results of processing that data; when automated processing is used, only the human-verified result (which also conveys 'the need for further inspection' of the person)",
+      "medium": "transfer for investigation of involvement in terrorism or serious crime (PNRD Art. 6(6), Art. 7, Art. 10)",
+      "novelty": "algorithmically triaged flow; the paper's focus is that this flow inevitably carries large numbers of innocent passengers (base rate fallacy)",
+      "evidence": "§2.3, §2.5.1: 'The PIU must transfer the PNR data of persons identified or the result of processing the PNR data of any positive match to competent authorities'; 'the PIU shall only transmit a verified result'"
+    },
+    {
+      "sender": "state registers and open sources (police databases, criminal record, Population Information System, MyKanta health records, credit register, social media, online news)",
+      "recipient": "law enforcement officers performing manual verification",
+      "subject": "flagged passengers — in the false-positive case, innocent travelers",
+      "information_type": "broader personal information examined to reclassify automated hits into true and false positives",
+      "medium": "manual examination during human-in-the-loop verification; may culminate in stopping the passenger at the airport",
+      "novelty": "the paper's central flow: a thorough examination of an innocent person's personal information, conducted without their knowledge",
+      "evidence": "§4.1.3 vignette: 'The personal information of flagged passengers was then manually examined by law enforcement officers to reclassify them into true positives... and false positives (innocent passengers)'; Q10 items a–g (Table 1)"
+    },
+    {
+      "sender": "air carriers (via privacy notice)",
+      "recipient": "passengers (data subjects)",
+      "subject": "passengers",
+      "information_type": "information about the processing of their personal data: collection of PNR data, transfer to the PIU, and data-subject rights",
+      "medium": "airline privacy notice (GDPR Arts. 12–13; PNRD Rec. 29); after transfer, LED provisions apply and access rights can be restricted on public/national security grounds",
+      "novelty": "incomplete flow: notice is generic; individuals become aware of surveillance only if stopped at the airport",
+      "evidence": "§2.6.1; §2.6.2: 'Individual passengers become aware of surveillance only if they are stopped at the airport. The initial scrutiny... following an automated, positive hit is concealed from them.'"
+    },
+    {
+      "sender": "PIU / law enforcement authorities / system producers",
+      "recipient": "passengers and the general public",
+      "subject": "the PNR system's operation (assessment criteria, software functioning, false positive rates) and, downstream, the flagged passengers",
+      "information_type": "pre-determined assessment criteria, the software's functioning, and rates of false positives and negatives",
+      "medium": "withheld: kept secret under Art. 15 LED, Finnish Act on Openness Sec. 24(1)(5), and AI Act confidentiality provisions; reporting obligations (PNRD Art. 19) exclude false positive rates",
+      "novelty": "incomplete flow (the paper's added 'Incomplete Flows' attribute): the transmission properties of the algorithmic system are impossible to describe from outside",
+      "evidence": "§2.1, §2.6.2: 'The detailed functioning of the software used by the authorities is considered secret in Finland'; 'the pre-determined assessment criteria against which the PNR data are evaluated are not public'"
+    }
+  ],
+  "s2_context": {
+    "domain": "cross-border travel surveillance for law enforcement — the PNR system as legally mandated by the EU PNR Directive and implemented in Finland by Act 657/2019; the PNRD's scope of application defines the relevant context within the broad framework of air travel surveillance",
+    "nested_contexts": [
+      "air travel (mandatory screening of all extra-EU flights; selected intra-EU flights only when strictly necessary against a genuine and present or foreseeable terrorist threat)",
+      "sea travel (permitted extension of PNR analysis to other transport — the paper's exemplar of function creep, referencing Belgium)",
+      "Finland's high-trust institutional context (high trust in police and authorities; second-lowest corruption perception rate in the world)"
+    ],
+    "activities": [
+      "airlines transmitting PNR data before departure/arrival",
+      "PIU automated pre-screening of PNR data against databases (police, border guard, customs, Schengen Information System) and pre-determined criteria",
+      "manual (human-in-the-loop) review of every automated positive hit",
+      "competent authorities stopping and examining flagged passengers at the airport"
+    ],
+    "purposes": [
+      "prevention, detection, investigation and prosecution of terrorist offences and serious crimes",
+      "identifying persons who require further examination by competent authorities (triage)"
+    ],
+    "values_ends": [
+      "public security / ensuring safety during travel",
+      "fundamental rights: privacy and data protection (Arts. 7–8 CFREU), non-discrimination (Art. 21), effective judicial remedy (Art. 47)",
+      "proportionality — rights limited only on the basis of proportionality and public security",
+      "the privacy–security trade-off as the context's operative value tension"
+    ],
+    "evidence": "§2.2 ('The PNRD's scope of application defines the relevant context'); §1.1–1.2; §2.2 on Finnish trust; §3.3/§4 framing the privacy–security trade-off"
+  },
+  "s3_actors": {
+    "senders": [
+      "air carriers (senders of information, PNRD Art. 8)",
+      "PIUs of other member states",
+      "PIU (when sending data or processing results onward)"
+    ],
+    "recipients": [
+      "Passenger Information Units (PIUs) — the authorities responsible for PNR data processing",
+      "competent authorities: police, customs, border guard (PNRD Art. 6(6), Art. 7)",
+      "Europol (upon request, PNRD Art. 10)"
+    ],
+    "subjects": [
+      "information subject: a passenger on an extra-EU flight or a flight/other mode of transport within the EU (PNRD Arts. 1-2, 3(4))",
+      "false positives: innocent passengers flagged by the system — the paper's focal subject class"
+    ],
+    "nonhuman_roles": [
+      {"entity": "PNR screening software (incl. potential self-learning AI systems under the AI Act)", "treated_as": "instrument"},
+      {"entity": "databases compared against (police, border guard, customs, Schengen Information System)", "treated_as": "instrument"}
+    ],
+    "evidence": "§2.3 (explicit sender/recipient/subject assignments); §2.5.2 and §1.1 on the algorithmic system's role and opacity"
+  },
+  "s4_transmission_principles": [
+    {
+      "principle": "mandatory",
+      "source_label": "air carriers must deliver the PNR data to the PIU's database (PNRD Art. 8); analysis of PNR data of all passengers of extra-EU flights required (Art. 1)",
+      "explicit": true,
+      "evidence": "§2.5.1; §2.2"
+    },
+    {
+      "principle": "temporality",
+      "source_label": "detailed rules on the content, format, and timing of PNR data sharing; assessment conducted before the passenger's scheduled arrival or departure",
+      "explicit": true,
+      "evidence": "§2.5.1"
+    },
+    {
+      "principle": "need",
+      "source_label": "reasonable suspicion / need for further inspection: the result should not be transmitted where the PIU does not have a reasonable suspicion of the person's involvement in terrorist offences or serious crime; the PIU also produces information about 'the need for further inspection' of the relevant persons",
+      "explicit": true,
+      "evidence": "§2.5.2; §2.4"
+    },
+    {
+      "principle": "notice",
+      "source_label": "passengers have a right to be informed about the processing of their personal data by the airlines (GDPR Arts. 12–13; PNRD Rec. 29); right of access under LED Art. 14, restrictable on public and national security grounds (Art. 15)",
+      "explicit": true,
+      "evidence": "§2.6.1"
+    },
+    {
+      "principle": "secrecy",
+      "source_label": "the methods, procedures and criteria for the automated processing are opaque and can be kept secret on the grounds of law enforcement and national security (Art. 15 LED); the software's detailed functioning is secret in Finland (Act on Openness Sec. 24(1)(5)); the AI Act maintains the confidentiality of law-enforcement AI systems",
+      "explicit": true,
+      "evidence": "§1.1; §2.6.2"
+    },
+    {
+      "principle": "non-discrimination",
+      "source_label": "the assessment must be executed in a non-discriminatory manner with criteria that are targeted, proportionate, and specific (PNRD Art. 6(4)); criteria defined to minimise the risk of false positives (Rec. 7)",
+      "explicit": true,
+      "evidence": "§2.5.2 (vocabulary extension — logged in annotator_notes)"
+    },
+    {
+      "principle": "human verification",
+      "source_label": "human-in-the-loop: a human must check any positive result from the automated analysis before competent authorities act on it; when relying on automated processing, the PIU shall only transmit a verified result",
+      "explicit": true,
+      "evidence": "§2.5.1–2.5.2; §1.2 (vocabulary extension — logged in annotator_notes)"
+    }
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "Air carriers mandatorily transmit PNR data of extra-EU air passengers to the state PIU for algorithmic pre-screening; human-verified hits flow to police, customs and border guard for preventing terrorism and serious crime",
+      "entrenchment_evidence": "Legally mandated and CJEU-endorsed with safeguards (PNRD; Ligue des Droits Humains); 'air travel is routinely surveilled, and passengers can be expected to have become accustomed to relinquishing some of their privacy in favour of safety and security'; survey: consistently higher acceptance of passenger-data use, automated analysis, and its consequences in air travel; Finns highly tolerant of false positives (legitimate FPR 14.7% for air travel)",
+      "departures": [
+        "the base rate fallacy: even at 99.9% accuracy the system is expected to produce 500,000 false positives per year within the EU — a statistical property no debiasing removes, unaddressed by the PNRD, the CJEU, or the AI Act",
+        "secrecy of the pre-determined assessment criteria and software, blocking observation and contestation",
+        "potential move from database comparison to self-learning AI systems (permitted by the AI Act under conditions, in tension with the CJEU's guardrails)"
+      ],
+      "completeness": "entrenched",
+      "evidence": "§2.2, §5.3–5.4, §6"
+    },
+    {
+      "norm_flow": "The same algorithmic pre-screening applied to sea travel (ferry passengers), as EU law permits and Belgium exemplifies",
+      "entrenchment_evidence": "Respondents found automated computer analysis and its consequences less acceptable in sea travel in every aspect investigated; significantly lower legitimate false-positive threshold (9.7% vs 14.7%) despite identical repercussions",
+      "departures": [
+        "extension of surveillance methods from air to sea travel — the paper reads lower acceptance as possible resistance to function creep"
+      ],
+      "completeness": "contested",
+      "evidence": "§2.2, §5.3–5.4, §6: 'The lower acceptance rate of sea travel surveillance may reflect resistance to \"function creep\" from air to sea travel'"
+    },
+    {
+      "norm_flow": "Flow of innocent (falsely flagged) passengers' personal information into detailed manual police examination, concealed from the person",
+      "entrenchment_evidence": "No settled norm exists: neither the directive nor the CJEU addresses the base rate fallacy; false positive rates are secret and excluded from reporting obligations; the public cannot be expected to estimate abstract quantities like a 'false positive rate' — the study exists to elicit this missing norm (first to quantify passengers' privacy expectations for PNR false positives)",
+      "departures": [
+        "innocent subjects are scrutinized under a norm that presupposes reasonable suspicion",
+        "the flow happens without the subject's knowledge, and awareness arises only if stopped at the airport"
+      ],
+      "completeness": "incomplete",
+      "evidence": "§1.1–1.2, §2.6.2, §3.1, §6"
+    }
+  ],
+  "s6_prima_facie": {
+    "violation": "incomplete_norms",
+    "departed_parameters": ["subject", "transmission_principle"],
+    "justification": "The paper argues false positives expose innocent passengers to interference with their fundamental rights — an innocent person's information flows into detailed law-enforcement examination without the reasonable suspicion the legal norm presupposes and without their knowledge — yet it never declares the PNR system a violation. Instead it holds that whether the practice breaches contextual integrity depends on the number of false positives relative to a threshold that neither EU law nor the CJEU defines and that the affected public had never been asked about; the actual system's false positive rate is secret, so no definitive comparison is possible. The study's contribution is to estimate empirically the threshold 'beyond which, the number of false positives breaches individuals' perception of contextual integrity' — finding surprisingly high legitimate thresholds (14.7% air, 9.7% sea), i.e., the elicited norm tolerates the flows in air travel while the sea-travel extension is contested.",
+    "evidence": "§1.3, §3.1–3.3, §5.3, §6"
+  },
+  "s7_factors": [
+    {
+      "factor": "Base rate fallacy: because terrorists and serious criminals are exceptionally rare, even a system with a very low false-positive rate flags far more innocent passengers than actual threats (~500,000 false positives/year EU-wide at 99.9% accuracy); no debiasing removes this statistical property",
+      "kind": "fairness",
+      "affected_parties": ["innocent passengers (false positives)"],
+      "direction": "harm",
+      "evidence": "§1.1: 'a surveillance system with a very low false positive rate will flag far more innocent passengers (false positives) than actual terrorists'; §6"
+    },
+    {
+      "factor": "Interference with the fundamental rights to privacy and data protection of millions of EU citizens (Arts. 7–8 CFREU), and with non-discrimination and effective judicial remedy (Arts. 21, 47) for those flagged",
+      "kind": "other(fundamental_rights)",
+      "affected_parties": ["all screened passengers", "flagged passengers (esp. false positives)"],
+      "direction": "harm",
+      "evidence": "§1.1: 'a form of mass surveillance that interferes with the fundamental rights to privacy and data protection of millions of EU citizens'; §6: 'exposing their targets to violations of rights to privacy, data protection, non-discrimination and effective judicial remedy'"
+    },
+    {
+      "factor": "Discriminatory bias: AI for predictive policing may expose subjects to discriminatory biases (training data reflecting historical biases and societal inequalities); the prohibition on sensitive data categories has questioned effectiveness; the CJEU's reliance on human verification to mitigate discriminatory results is 'based on legal fiction' since it ignores the base rate fallacy and non-discriminatory false positives",
+      "kind": "discrimination",
+      "affected_parties": ["flagged passengers", "groups reflected in biased training data / ethnic minorities"],
+      "direction": "harm",
+      "evidence": "§1.1–1.2; §2.4; §1.2: 'the CJEU's measures to ensure algorithmic accountability and fairness of the PNR system are based on legal fiction'"
+    },
+    {
+      "factor": "Multi-layered opacity and information asymmetry: processing is invisible to passengers, assessment criteria and software are secret, AI-based grounds for stopping a person can be unexplainable — making the system impossible to observe, contest, or hold to account, and interfering with the right to an effective judicial remedy",
+      "kind": "information_asymmetry",
+      "affected_parties": ["passengers (data subjects)", "the general public"],
+      "direction": "harm",
+      "evidence": "§1.1: 'The PNR system is also subject to multiple layers of opacity, making it difficult to observe and interfere with'; §2.6.2; §3.1"
+    },
+    {
+      "factor": "Excessive state power and function creep: surveillance methods adopted in one context gradually and imperceptibly expand into new domains (specific flights to all flights; air travel to sea travel); survey probes whether pre-screening of all passengers is 'an excessive use of state power' (Q9)",
+      "kind": "power",
+      "affected_parties": ["travelers", "society at large"],
+      "direction": "harm",
+      "evidence": "§1.1: 'the PNR system is vulnerable to function creep'; Table 1 Q9; §6: lower sea-travel acceptance 'may reflect resistance to function creep'"
+    },
+    {
+      "factor": "Trust between citizens and state: Finns' high trust in police and expectations of legitimate government data use underwrite the high tolerance of false positives; conversely the survey probes whether use of passenger data signals that 'the state does not trust me' (Q5); thresholds may differ in contexts with lower trust in police and public authorities or higher degrees of ethnic diversity",
+      "kind": "trust",
+      "affected_parties": ["Finnish public", "publics of lower-trust or more diverse societies"],
+      "direction": "mixed",
+      "evidence": "§2.2; Table 1 Q5; §6: 'This high rate may be explained by the Finnish population's high trust in law enforcement authorities'"
+    },
+    {
+      "factor": "Normalcy bias: respondents may minimise the personal risks of privacy violations they see as unlikely to impact their own lives ('this is something that happens to other people'), which could confound the elicited threshold and raises questions about people's capacity to account for privacy harms that happen to others",
+      "kind": "other(normalcy_bias)",
+      "affected_parties": ["false positives (whose harms are discounted by the majority)"],
+      "direction": "harm",
+      "evidence": "§6: 'respondents' preferences with respect to false positives could also be confounded by normalcy bias... it is a limitation that affects both rights-based and contextual integrity-based approaches'"
+    },
+    {
+      "factor": "Public security benefit: surveillance is deemed necessary for law enforcement to prevent and detect terrorism and other serious crimes; respondents placed more emphasis on identifying criminal threats than on the privacy of innocent passengers",
+      "kind": "other(security)",
+      "affected_parties": ["the traveling public", "society at large"],
+      "direction": "benefit",
+      "evidence": "Abstract; §5.3: 'Respondents placed more emphasis on identifying criminal threats for air travel than sea travel (25.83 versus 22.10 false positives)'"
+    },
+    {
+      "factor": "Individualist blind spot: both the CI framework and rights-based approaches focus on the individual and may not fully account for the systemic and collective effects of mass surveillance, nor for all power relations present in the context",
+      "kind": "other(collective_effects)",
+      "affected_parties": ["society at large"],
+      "direction": "harm",
+      "evidence": "§6: 'both the CI and rights-based approaches focus on the individual... and, as a result, may not fully account for the systemic and collective effects of mass surveillance'"
+    }
+  ],
+  "s8_contextual_meaning": [
+    {
+      "factor_ref": 7,
+      "contextual_end": "public security — prevention and detection of terrorism and serious crime in cross-border travel",
+      "advances_or_undermines": "advances",
+      "argument": "Within the entrenched air-travel surveillance context, the flows are perceived to serve the context's safety ends: faced with the privacy–security trade-off, respondents accepted even very high false-positive counts as legitimate (legitimate FPR ~14.7% for air travel), prioritising the identification of criminal threats over the privacy of innocent passengers — a result the authors attribute to entrenched surveillance of air travel and Finland's high-trust culture",
+      "evidence": "§5.3–5.4; §6: 'even faced with a trade-off between privacy and security, even very high false positive counts were perceived as legitimate'"
+    },
+    {
+      "factor_ref": 0,
+      "contextual_end": "fundamental-rights legitimacy of EU travel surveillance (privacy, data protection, non-discrimination, effective remedy, proportionality)",
+      "advances_or_undermines": "undermines",
+      "argument": "The rights-based approach that constitutes this context deems the PNR system lawful while leaving the base rate fallacy unaddressed; the CJEU's human-in-the-loop safeguard rests on legal fiction, so the system's guaranteed production of high numbers of false positives opens a legitimacy gap between what the law authorises and the rights values the context is meant to secure",
+      "evidence": "§1.2: 'although the European rights-based approach recognises the PNR system's impact on fundamental rights, it deems it lawful and legitimate on security grounds, leaving the base rate fallacy unaddressed'; §6"
+    },
+    {
+      "factor_ref": 4,
+      "contextual_end": "containment of surveillance within its justified context (air travel)",
+      "advances_or_undermines": "undermines",
+      "argument": "Applying the identical technology to sea travel meets statistically significantly lower public acceptance in every aspect investigated, despite identical repercussions — evidence that perceived appropriateness is context-dependent and that expansion beyond air travel (function creep) breaches context-relative informational expectations",
+      "evidence": "§1.3: 'there is a statistically significant difference in what the public views as an acceptable false positive rate between travel contexts, despite the repercussions being the same'; §5.4, §6"
+    },
+    {
+      "factor_ref": 0,
+      "contextual_end": "effective human verification as the context's error-correction mechanism",
+      "advances_or_undermines": "undermines",
+      "argument": "Even the publicly tolerated false positive rate may be operationally unattainable: at the estimated justifiable air-travel FPR of 12.7%, the EU would need capacity for ~140,000 manual checks per day, casting doubt on whether the human-in-the-loop safeguard on which the system's legitimacy rests could scale",
+      "evidence": "§6: 'it is unclear whether the existing PNR system could scale to accommodate false positive rates in excess of 10%... there would need to be an aggregate capacity of ~140,000 manual checks per day at the EU-level'"
+    }
+  ]
+}

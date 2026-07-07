@@ -1,0 +1,128 @@
+{
+  "meta": {
+    "case_id": "degroot2024_genomic_forensic",
+    "source": "de Groot, N.F. (2024). A contextual integrity approach to genomic information: what bioethics can learn from big data ethics. Medicine, Health Care and Philosophy 27(3):367-379. https://doi.org/10.1007/s11019-024-10211-0 (open access, PMC11310229)",
+    "practice": "Law-enforcement access to genomic data held in medical biobanks and commercial genealogy databases (investigative genetic genealogy / familial searching)",
+    "practice_input": "People contribute their DNA in two settings. Patients donate genetic samples to medical biobanks, consenting for their data to be used only for health research and held under medical confidentiality and trust. Separately, consumers send saliva to direct-to-consumer genealogy companies to learn about ancestry and find relatives. A new practice has emerged: law enforcement seeks access to these databases to identify criminal suspects, uploading crime-scene DNA and using familial matches (investigative genetic genealogy) to trace individuals through their relatives. Because genomes are shared, one person's participation exposes thousands of biological relatives who never consented; estimates suggest only about 2% of a population need to be in such a database for police to trace almost anyone. Should police access to these genetic databases continue, be modified, or be rejected?",
+    "contaminated": false,
+    "annotator": "claude-agent (needs human second pass)",
+    "annotation_date": "2026-07-07",
+    "annotator_notes": "Contamination flag set false: published 2024 in Medicine, Health Care and Philosophy (Springer), a mid-prominence bioethics venue, post-2023, so unlikely to be canonical few-shot material. Residual risk noted: the article is open-access on PubMed Central (PMC11310229) and could appear in the training corpus of later models; treat any suspiciously verbatim model reproduction of the '2%/tyranny of the minority' framing as a possible contamination signal rather than genuine traversal skill. IMPORTANT: this is a conceptual/argumentative bioethics paper, NOT a rigorous per-step CI walk-through. The author invokes Nissenbaum's FOUR constitutive parameters (contexts, actors, attributes, transmission principles) and a two-move evaluation (identify altered flow -> assess whether the context's values are threatened), not the 9-step augmented decision heuristic. The per-step gold below is an interpretive reconstruction that maps the author's prose onto the 9-step schema; step boundaries are the annotator's, not the source's. Second-pass targets: s7_factors kind assignments and s9 decision (reject vs modify-toward-democratic-governance). Vocabulary extensions logged: 'purpose_limitation' (research-only use) added as a normalized transmission principle; 'trust' recorded as a source-named transmission principle though it functions more as a context value.",
+    "source_deviations": [
+      "Multi-case paper: it analyses genomic data across medical, forensic, commercial, and research/archaeological contexts. This gold annotates only the FORENSIC strand (law-enforcement access to medical biobanks AND commercial genealogy databases), which the author develops most fully under the 'Sensitive across different societal contexts and moving beyond consent' subsection.",
+      "The author blends two sub-cases within the forensic strand — forensic use of medical biobanks and investigative genetic genealogy on commercial DTC databases — treating them as one argument; this gold keeps them as distinct flows in s1 but shares s6-s9.",
+      "The source describes Nissenbaum's FOUR parameters and a compressed evaluation move, not the 9-step decision heuristic; steps s5 (entrenchment) and s1 (per-flow granularity) are performed only implicitly/compressed, so their gold content is a reconstruction.",
+      "The source mixes flow description (s1/s3) directly into its prima-facie-violation claim ('information flows are altered in several parameter fields') and its value evaluation (s7/s8) — steps are not cleanly separated in the prose.",
+      "Purpose is treated by the author as a transmission-principle-like restriction ('only used for research purposes'); recorded here as a purpose_limitation TP (vocabulary extension)."
+    ]
+  },
+  "steps_present": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"],
+  "s1_flows": [
+    {
+      "sender": "patient / biobank donor",
+      "recipient": "medical researchers",
+      "subject": "patient / biobank donor",
+      "information_type": "genomic / genetic data",
+      "medium": "donation to a medical biobank under informed consent",
+      "novelty": "entrenched baseline flow (research use of donated genetic data)",
+      "evidence": "'the transmission principles in medical biobanks, e.g. trust and confidentiality (more specifically that people rely their data will be only used for research purposes or, when not, with their consent)' (Sensitive across different societal contexts)"
+    },
+    {
+      "sender": "medical biobank",
+      "recipient": "law enforcement (police, prosecutors)",
+      "subject": "patient / biobank donor",
+      "information_type": "genomic / genetic data",
+      "medium": "law-enforcement access to the medical genetic database",
+      "novelty": "novel: law enforcement becomes an additional information recipient of medically-donated genomic data",
+      "evidence": "'with forensic use of medical biobanks... law enforcement would become an additional information recipient' (Sensitive across different societal contexts)"
+    },
+    {
+      "sender": "consumer / test-taker",
+      "recipient": "commercial genealogy platform (and its users)",
+      "subject": "consumer / test-taker",
+      "information_type": "recreational / direct-to-consumer genomic testing data",
+      "medium": "direct-to-consumer genomic test, uploaded to a commercial genealogy database",
+      "novelty": "entrenched baseline flow (ancestry / relative-finding use)",
+      "evidence": "'It also becomes easier to share genomic data across different contexts, such as forensic use of medical genetic data... commercial drug development use of recreational genomic testing data' (Introduction)"
+    },
+    {
+      "sender": "commercial genealogy database",
+      "recipient": "law enforcement (police, prosecutors)",
+      "subject": "consumer / test-taker AND their non-consenting biological relatives",
+      "information_type": "genomic data + familial-match inferences (investigative genetic genealogy)",
+      "medium": "police upload crime-scene DNA and use familial matches to trace individuals through relatives",
+      "novelty": "novel: law enforcement recipient, and thousands of non-consenting relatives become de facto subjects via familial matching",
+      "evidence": "'only 2% of a population needs to consent to have their DNA profile to be included in a commercial DNA database open for law enforcement to be able to track down almost anyone in that population through IGG (Erlich et al., 2018)... the individual consent of one individual has consequences for thousands of relatives'"
+    }
+  ],
+  "s2_context": {
+    "domain": "health care / medical research (biobank); commercial genomic testing (DTC)",
+    "nested_contexts": ["forensic / law-enforcement context (the destination context)", "commercial genomic-testing context", "democratic state-citizen governance"],
+    "activities": ["donating genetic samples to medical biobanks for health research", "direct-to-consumer ancestry/relative-finding testing", "law enforcement uploading crime-scene DNA and running familial searches (IGG)"],
+    "purposes": ["health research", "medical care", "recreational ancestry and relative-finding", "criminal identification / suspect tracing"],
+    "values_ends": ["accessibility of healthcare", "doctor-patient confidentiality and trust in the medical profession", "protection of group / relative interests", "democratic legitimacy of state action", "appropriate state-citizen relations"],
+    "evidence": "'one will have to explore whether the goals, ends, and values of the healthcare context are threatened... people may refrain from seeking medical help... negatively impact doctor-patient confidentiality and trust in the medical profession' (Sensitive across different societal contexts)"
+  },
+  "s3_actors": {
+    "senders": ["patients / biobank donors", "medical biobanks", "DTC consumers / test-takers", "commercial genealogy databases"],
+    "recipients": ["medical researchers (entrenched)", "commercial genealogy platform users (entrenched)", "law enforcement / police / prosecutors (novel recipient)"],
+    "subjects": ["patients / biobank donors", "DTC test-takers", "biological relatives who never consented (drawn in via familial matching)"],
+    "nonhuman_roles": [
+      {"entity": "medical biobank / genetic database", "treated_as": "sender"},
+      {"entity": "commercial genealogy database (e.g. DTC platform)", "treated_as": "sender"}
+    ],
+    "evidence": "'Actors are distinguished in three types: information senders, recipients, and subjects (the people that the data is about)'; author stresses that relatives become affected subjects without consenting: 'the individual consent of one individual has consequences for thousands of relatives'"
+  },
+  "s4_transmission_principles": [
+    {"principle": "confidentiality", "source_label": "trust and confidentiality", "explicit": true, "evidence": "'the transmission principles in medical biobanks, e.g. trust and confidentiality... would change' (Sensitive across different societal contexts)"},
+    {"principle": "consent", "source_label": "with their consent", "explicit": true, "evidence": "'people rely their data will be only used for research purposes or, when not, with their consent'"},
+    {"principle": "purpose_limitation", "source_label": "only used for research purposes", "explicit": true, "evidence": "'people rely their data will be only used for research purposes' — purpose-limited transmission (vocabulary extension: purpose_limitation)"},
+    {"principle": "trust", "source_label": "trust", "explicit": true, "evidence": "author lists 'trust' alongside confidentiality as a medical-biobank transmission principle; recorded though it functions largely as a context value"}
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "Patients/donors (senders & subjects) provide genomic data to medical researchers (recipients) under confidentiality, informed consent, and the purpose-limitation that the data is used only for research (TPs)",
+      "entrenchment_evidence": "Author treats research-only use, confidentiality, and trust as the established medical-biobank norm that donors 'rely' on; grounded in doctor-patient confidentiality and trust in the medical profession",
+      "departures": [
+        "law enforcement added as a new recipient not contemplated in the medical/commercial context",
+        "transmission principles of trust/confidentiality/research-only use are overridden",
+        "commercial genealogy data (collected for ancestry) repurposed for policing",
+        "non-consenting biological relatives become de facto subjects via familial matching"
+      ],
+      "completeness": "entrenched",
+      "evidence": "'the transmission principles in medical biobanks, e.g. trust and confidentiality (more specifically that people rely their data will be only used for research purposes or, when not, with their consent) would change'"
+    }
+  ],
+  "s6_prima_facie": {
+    "violation": "yes",
+    "departed_parameters": ["recipient", "transmission_principle", "subject"],
+    "justification": "The author states forensic use of medical biobanks alters information flows 'in several parameter fields': law enforcement becomes an additional recipient and the transmission principles of trust/confidentiality/research-only use change. For commercial IGG, non-consenting relatives are drawn in as subjects. This is a prima facie breach of the entrenched context-relative informational norms.",
+    "evidence": "'the contextual integrity approach would reveal that information flows are altered in several parameter fields. Namely, law enforcement would become an additional information recipient. Also, the transmission principles in medical biobanks... would change.'"
+  },
+  "s7_factors": [
+    {"factor": "Chilling effect on healthcare access and erosion of doctor-patient confidentiality/trust — people may refrain from seeking medical help, risking their own and others' health", "kind": "trust", "affected_parties": ["patients", "the public", "the medical profession"], "direction": "harm", "evidence": "'people may refrain from seeking medical help, may risk their health and possibly the health of others, creating problems for the accessibility of healthcare and negatively impact doctor-patient confidentiality and trust in the medical profession'"},
+    {"factor": "Tyranny of the minority / democratic deficit — a ~2% opt-in minority effectively decides police-traceability for the entire population, bypassing democratic deliberation", "kind": "democracy", "affected_parties": ["entire population"], "direction": "harm", "evidence": "'When 2% of the population decides to participate in police access, they make indirectly a decision for the entire population: a tyranny of the minority'; 'the importance of democratic decision-making on this issue (instead of leaving it to the tyranny of the minority)'"},
+    {"factor": "Group / relative interests overridden — one individual's consent has consequences for thousands of non-consenting biological relatives", "kind": "other(group_privacy)", "affected_parties": ["biological relatives of test-takers"], "direction": "harm", "evidence": "'the individual consent of one individual has consequences for thousands of relatives'"},
+    {"factor": "Shift in the relation between state and citizens — expansion of state surveillance power over the population via private genetic data", "kind": "power", "affected_parties": ["citizens", "the state"], "direction": "harm", "evidence": "'considering the full range of ethical and social-political issues, including... the implications for the relation between state and citizens'"},
+    {"factor": "Entanglement of commercial parties with law enforcement — private DTC companies become channels for policing", "kind": "other(commercialization)", "affected_parties": ["consumers", "commercial platforms", "law enforcement"], "direction": "harm", "evidence": "'considering the full range of ethical and social-political issues, including... the involvement of commercial parties'"},
+    {"factor": "Broader effects on power structures, justice, fairness, equality, social hierarchy and democracy (the CI political-value checklist the author invokes)", "kind": "justice", "affected_parties": ["the public"], "direction": "harm", "evidence": "'It looks at the effects on power structures, implications for justice, fairness, equality, social hierarchy, democracy, and so on (Nissenbaum 2009; p. 182)'"}
+  ],
+  "s8_contextual_meaning": [
+    {"factor_ref": 0, "contextual_end": "accessibility of healthcare and trust in the medical profession", "advances_or_undermines": "undermines", "argument": "Because the medical context's informational norms are breached when law enforcement gains access, people may avoid seeking care and doctor-patient trust erodes — undermining the healthcare context's core goals of accessible care and trust", "evidence": "'one will have to explore whether the goals, ends, and values of the healthcare context are threatened. This seems to be the case...'"},
+    {"factor_ref": 1, "contextual_end": "democratic legitimacy and appropriate state-citizen relations", "advances_or_undermines": "undermines", "argument": "Leaving a population-wide surveillance capability to be triggered by a 2% opt-in minority displaces democratic decision-making that a change of this magnitude in state power should require", "evidence": "'the importance of democratic decision-making on this issue (instead of leaving it to the tyranny of the minority)... the implications for the relation between state and citizens'"}
+  ],
+  "s9_recommendation": {
+    "decision": "reject",
+    "conditions": [
+      "Law-enforcement access to medical genetic databases 'lacks legitimacy' because it is not in line with the values, goals, and interests of the medical context — it should not proceed on the current terms",
+      "Decisions about investigative genetic genealogy and police access to genetic databases should be made through democratic deliberation, not left to the 'tyranny of the minority' of opt-in consumers",
+      "Genomic governance should move beyond individual informed consent toward contextual and collective evaluation of whether a flow serves the destination and source context's values"
+    ],
+    "carrying_findings": [
+      "the entrenched medical-context transmission principles (confidentiality, research-only use, trust) are breached (s6)",
+      "the healthcare context's ends of accessibility and trust are undermined (s8)",
+      "democratic legitimacy is bypassed by the tyranny-of-the-minority dynamic (s7/s8)"
+    ],
+    "evidence": "'the practice of giving law enforcement access to medical genetic databases is, it can be argued, not in line with the values, goals, and interests of this medical context. If we accept that conclusion, then, according to the contextual integrity framework, such use lacks legitimacy.'"
+  }
+}
