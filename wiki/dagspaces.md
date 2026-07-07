@@ -105,6 +105,24 @@ The provider is auto-detected from the hostname; override with `judge.provider=<
 
 ---
 
+## `vlm_geoprivacy_aug` — Augmented visual geolocation CI (CVPR 2027)
+
+**Purpose**: Fork of `vlm_geoprivacy_bench` that "inpaints" hypothetical capture contexts (smart glasses, dashcam, delivery robot, ...) into the prompt and measures paired per-image shifts in normative judgments vs. an un-framed baseline. For *"Tracing Norms Around the Imaging of Public Space"*. The original benchmark dagspace stays untouched.
+
+**Entrypoint**: `python -m dagspaces.vlm_geoprivacy_aug.cli pipeline=mcq_eval_hypotheticals model=qwen3-vl-8b/instruct`
+
+**Pipelines**: `mcq_eval_hypotheticals` (default), `freeform_eval_hypotheticals` (Q7-only shifts via granularity judge). Both pin `temperature=0.0` — sampling noise in paired comparisons masquerades as normative shift.
+
+**Hypothetical sets** (`hypotheticals=` group): `capture_devices` (default; photo-taker bridge folded in), `capture_devices_raw` (no-bridge ablation), `none` (baseline-only control).
+
+**Key metrics** (`compute_hypothetical_metrics`, full provenance): per-variant Q7 abstention rate + label distributions; paired vs. baseline: `flip_rate`, `mean_ordinal_shift`, `toward_abstention_rate`, `delta_abstention_rate`. Original human labels score the **baseline only** — they were annotated without device context.
+
+**W&B project**: `vlm-geoprivacy-aug`.
+
+See [howto/geoprivacy-hypotheticals.md](howto/geoprivacy-hypotheticals.md) for running arms and adding variants/dimensions.
+
+---
+
 ## `confaide` — ConfAIde tiers 1–2
 
 **Purpose**: Probe disclosure/withholding under contextual constraints. Tiers 1–2 include human annotations for correlation analysis.

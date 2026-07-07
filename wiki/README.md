@@ -44,6 +44,7 @@ Manuscript: `papers/colm26_normative-simulacra/`. Experiment runbook: `EXPERIMEN
 - [howto/add-eval-benchmark.md](howto/add-eval-benchmark.md) — build a new CI eval from scratch
 - [howto/build-gutenberg-corpus.md](howto/build-gutenberg-corpus.md) — top-K / top-author selection + durable disk cache
 - [howto/colm-100-novel-run.md](howto/colm-100-novel-run.md) — scale COLM norm + flow extraction from 10 to 100 novels (3-pipeline plan, ~78h wall)
+- [howto/geoprivacy-hypotheticals.md](howto/geoprivacy-hypotheticals.md) — run/extend the augmented geoprivacy benchmark (capture-context shifts, CVPR 2027)
 - [howto/run-experiments.md](howto/run-experiments.md) — running training, eval, ablations
 
 ## Related top-level docs

@@ -1,0 +1,18 @@
+# @package _global_
+# Phi-4-multimodal-instruct + SFT LoRA for VLM benchmarks.
+# max_num_seqs=1 required: Phi-4's dynamic image tiling produces variable-shape
+# image_attention_mask tensors that cannot be batched in vLLM V1.
+model:
+  model_source: /share/pierson/matt/zoo/models/Phi-4-multimodal-instruct
+  model_family: phi-4
+  lora_path: /share/pierson/matt/UAIR/multirun/2026-03-25_grpo_training/11-00-19/sft_only/outputs/sft/checkpoint
+  engine_kwargs:
+    max_model_len: 8192
+    max_num_seqs: 1
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    enforce_eager: true
+    enable_lora: true
+    max_lora_rank: 64
+  batch_size: 0
+  concurrency: 1

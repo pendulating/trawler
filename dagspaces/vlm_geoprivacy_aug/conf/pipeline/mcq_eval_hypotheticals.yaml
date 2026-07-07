@@ -1,0 +1,57 @@
+# @package _global_
+# MCQ eval with hypothetical capture-context inpainting: every image runs
+# once per hypothetical variant (baseline control included), and metrics are
+# paired per-image shifts vs. the baseline.
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# Greedy decoding: paired shift metrics compare the same image across
+# variants, so sampling noise would masquerade as normative shift.
+sampling_params:
+  temperature: 0.0
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/vlm_geoprivacy_aug
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+      inpaint_hypotheticals:
+        stage: inpaint_hypotheticals
+        depends_on:
+          - load_dataset
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/inpaint_hypotheticals/dataset.parquet
+      vlm_mcq_inference:
+        stage: vlm_mcq_inference
+        depends_on:
+          - inpaint_hypotheticals
+        inputs:
+          dataset: inpaint_hypotheticals.dataset
+        outputs:
+          dataset: outputs/vlm_mcq_inference/dataset.parquet
+        launcher: slurm_gpu_1x
+      parse_mcq:
+        stage: parse_mcq
+        depends_on:
+          - vlm_mcq_inference
+        inputs:
+          dataset: vlm_mcq_inference.dataset
+        outputs:
+          dataset: outputs/parse_mcq/dataset.parquet
+      compute_hypothetical_metrics:
+        stage: compute_hypothetical_metrics
+        depends_on:
+          - parse_mcq
+        inputs:
+          dataset: parse_mcq.dataset
+        outputs:
+          dataset: outputs/compute_hypothetical_metrics/metrics.parquet

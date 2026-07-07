@@ -1,0 +1,5 @@
+# @package _global_
+prompt:
+  mode: zs
+  free_form: true
+  heuristics: false

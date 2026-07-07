@@ -1,0 +1,78 @@
+# @package _global_
+# Free-form eval with hypothetical capture-context inpainting. The judged
+# granularity (Q7_pred) is compared per-image across variants; shift metrics
+# are Q7-only in this mode.
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+prompt:
+  mode: zs
+  free_form: true
+  heuristics: false
+
+# Greedy decoding: paired shift metrics compare the same image across
+# variants, so sampling noise would masquerade as normative shift.
+sampling_params:
+  temperature: 0.0
+
+judge:
+  model_source: /share/pierson/matt/zoo/models/Qwen2.5-72B-Instruct-AWQ
+  model_family: qwen2.5
+  engine_kwargs:
+    max_model_len: 2048
+    max_num_seqs: 16
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/vlm_geoprivacy_aug
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      load_dataset:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+      inpaint_hypotheticals:
+        stage: inpaint_hypotheticals
+        depends_on:
+          - load_dataset
+        inputs:
+          dataset: load_dataset.dataset
+        outputs:
+          dataset: outputs/inpaint_hypotheticals/dataset.parquet
+      vlm_freeform_inference:
+        stage: vlm_freeform_inference
+        depends_on:
+          - inpaint_hypotheticals
+        inputs:
+          dataset: inpaint_hypotheticals.dataset
+        outputs:
+          dataset: outputs/vlm_freeform_inference/dataset.parquet
+        launcher: slurm_gpu_2x
+      parse_freeform:
+        stage: parse_freeform
+        depends_on:
+          - vlm_freeform_inference
+        inputs:
+          dataset: vlm_freeform_inference.dataset
+        outputs:
+          dataset: outputs/parse_freeform/dataset.parquet
+      granularity_judge:
+        stage: granularity_judge
+        depends_on:
+          - parse_freeform
+        inputs:
+          dataset: parse_freeform.dataset
+        outputs:
+          dataset: outputs/granularity_judge/dataset.parquet
+        launcher: slurm_gpu_2x
+      compute_hypothetical_metrics:
+        stage: compute_hypothetical_metrics
+        depends_on:
+          - granularity_judge
+        inputs:
+          dataset: granularity_judge.dataset
+        outputs:
+          dataset: outputs/compute_hypothetical_metrics/metrics.parquet

@@ -1,0 +1,5 @@
+# @package _global_
+# No hypothetical inpainting: the inpaint_hypotheticals stage (if present in
+# the pipeline) expands to the baseline control only.
+hypotheticals:
+  variants: []

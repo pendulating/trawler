@@ -1,0 +1,10 @@
+# @package _global_
+# Ablation arm: identical capture-device frames but WITHOUT the photo-taker
+# bridge sentences — how the model reconciles the benchmark's "photo-taker"
+# questions with machine capture is left to the model. Compare against
+# hypotheticals=capture_devices to isolate the effect of the bridge itself.
+defaults:
+  - capture_devices
+
+hypotheticals:
+  include_bridges: false
