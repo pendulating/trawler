@@ -1,0 +1,182 @@
+{
+  "meta": {
+    "case_id": "sar2014_sns_tracking",
+    "source": "Sar, R.K. & Al-Saggaf, Y. (2014). Contextual integrity's decision heuristic and the tracking by social network sites. Ethics and Information Technology 16(1), 15-26. https://doi.org/10.1007/s10676-013-9329-y",
+    "practice": "Facebook, Twitter, and Google Plus tracking users' web-browsing movements beyond SNS boundaries via embedded widgets (Like, Tweet, +1 buttons), ca. 2013",
+    "practice_input": "A practice has become widespread (ca. 2013): social network sites (SNSs) — Facebook, Twitter, and Google Plus — track their users' web browsing beyond SNS boundaries. Websites across the web embed SNS widgets (Facebook's Like button, Twitter's Tweet button, Google's Plus One button); whenever a user visits such a page, the browser's request to retrieve the widget sends the SNS the user's unique identifier together with the page visited (e.g., a searched recipe), even if the user never clicks the button. SNSs thereby record users' movements and browsing habits across non-SNS sites, on top of the profile information users provide within the SNS, and use the data for personalized advertising; SNSs also share users' information with third-party sites such as advertisers and applications. Privacy policies mention such collection, but users are largely unaware of it. Should this practice continue as-is, be modified, or be rejected?",
+    "contaminated": true,
+    "annotator": "claude-agent (needs human second pass)",
+    "annotation_date": "2026-07-07",
+    "annotator_notes": "Conservatively flagged contaminated: pre-2023 (2014), niche journal but moderately cited and indexed in multiple open repositories. Judgment calls: (1) s9 coded 'reject', not 'modify' — the recommendation sentence ('we recommend that the framework reject the practice') and Table 5 both use 'reject', but both attach unless-clauses (opt-out choice, or explicit informing) and the conclusion says the practice 'can be favoured or accepted by the CI framework if there is a change in the design'; a defensible alternative coding is modify-with-consent-conditions — the conditions[] list captures the escape hatch either way. (2) s5 completeness coded 'entrenched' although the norms are located by analogy (SNS-as-community, widget-as-hidden-CCTV) per Nissenbaum (2011), because the source treats the resulting norm as applicable and concludes outright violation, not incomplete norms. (3) s4 normalized TPs (notice, consent, exchange) are drawn from the Nissenbaum (2010, p.145) quote that appears in the source's Step 5 text, because the source's Step 4 itself only points at the three privacy policies as the transmission principles. Annotated from the CSU institutional repository author manuscript (page numbers differ from the published Springer version; evidence refs use the manuscript's step/section labels). Second-pass fields: s7_factors, s9_recommendation.",
+    "source_deviations": [
+      "Step 4 enumerates privacy-policy content (what Facebook/Twitter/Google Plus policies say they collect and share) as the transmission principles rather than abstract TPs; the normalized TPs (notice, consent, commercial exchange) are actually articulated in Step 5 via a Nissenbaum (2010, p.145) quote — TP identification and norm location are mixed across steps 4-5",
+      "Step 5 imports substantial evaluative argument (Barocas & Nissenbaum critique of notice-and-consent, policy length/fickleness, jargon, language barriers, take-it-or-leave-it sign-up) that under the heuristic belongs closer to steps 7-8; the s6 prima facie verdict rests largely on this evaluation",
+      "Step 6 already declares 'a breach of information norms, and consequently a violation of contextual integrity' — a full verdict rather than a strictly prima facie one (though it does note further legitimacy assessment is required)",
+      "Step 9 introduces new analysis rather than only resting on prior findings: an examination of widget-management privacy settings (Facebook/Twitter settings do not stop tracking; Google Plus offers no option) and a marginal-benefit argument (sharing was possible pre-widgets by copy-pasting URLs; ads would persist, only less personalized)",
+      "Step 2 locates context by building an original SNS-to-real-life-community analogy (profile = house, privacy settings = access card/locks) following Nissenbaum's (2011) supplementary recommendation for online activities lacking clear social precedent, rather than identifying an existing societal context"
+    ]
+  },
+  "steps_present": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"],
+  "s1_flows": [
+    {
+      "sender": "SNS users",
+      "recipient": "SNSs (Facebook, Twitter, Google Plus)",
+      "subject": "SNS users",
+      "information_type": "personal information and user-generated content (sign-up information, profile contents, interactions)",
+      "medium": "SNS sign-up and profile/interaction features",
+      "novelty": "entrenched baseline: SNSs already hold large volumes of information voluntarily provided by users",
+      "evidence": "Step 1: 'SNS users provide SNSs with their information in order to sign-up for an SNS account, and later, generate other contents on SNSs in order to interact with other people.'"
+    },
+    {
+      "sender": "websites embedding SNS widgets (first-party sites visited by the user)",
+      "recipient": "SNSs (Facebook, Twitter, Google Plus)",
+      "subject": "SNS users",
+      "information_type": "users' movements/browsing activity outside SNS boundaries (visited page plus the user's SNS unique identifier, e.g., searched recipe with Facebook ID)",
+      "medium": "widget-retrieval HTTP requests (Referer headers and cookies), observed in the authors' 2012 Wireshark experiments",
+      "novelty": "novel: prior to the existence of the widgets, SNSs could only record users' activities within SNS boundaries",
+      "evidence": "Step 1: 'they also have the ability to track user's movements within and outside SNSs, particularly among websites that use SNS widgets'; Sec. 2.2.2 Table 3 Row 2 (Taste.com.au sends the user's Facebook unique identifier and fish-curry search via like.php)"
+    },
+    {
+      "sender": "SNSs (Facebook, Twitter, Google Plus)",
+      "recipient": "third party sites (advertisers, data aggregators, third-party applications)",
+      "subject": "SNS users",
+      "information_type": "users' personal information and clickstream",
+      "medium": "platform data transfer / HTTP traffic to third parties",
+      "novelty": "part of the new practice under study (dissemination beyond the user-SNS relationship)",
+      "evidence": "Step 1: 'They are also seen to disseminate users' information to various third party sites (e.g. Facebook transfers users' information to Farmville application, and Twitter shares user's clickstream to third party sites).'"
+    }
+  ],
+  "s2_context": {
+    "domain": "SNS analogized to a real-life community (no clear offline social precedent; context located via similarity of SNS structure to social activity per Nissenbaum 2011)",
+    "nested_contexts": ["SNS profile as a house within the community (private profile = locked house with access card; public profile = unlocked house; granular privacy settings = different levels of house access for different friends)"],
+    "activities": ["constructing profiles (profile information, wall posts, photo albums, private messages)", "articulating friend lists and traversing connections", "interacting with friends (hanging out in the living room, leaving notes, dropping letters in the mailbox)", "sharing content"],
+    "purposes": ["connecting and communicating with other people who share some offline connection"],
+    "values_ends": ["providing a means of communication between people where they can connect with each other", "Facebook's stated mission: to make the world more open and connected by giving people the power to share"],
+    "evidence": "Step 2 (community analogy, citing Al-Saggaf 2004 and boyd & Ellison 2007); values/ends stated in Step 8"
+  },
+  "s3_actors": {
+    "senders": ["SNS users (providing personal information to SNSs)", "SNSs (transferring/leaking users' information to third party sites)"],
+    "recipients": ["SNSs (collecting, receiving, storing users' personal information and browsing habits)", "third party sites (advertisers, data aggregators, third-party applications)"],
+    "subjects": ["SNS users"],
+    "nonhuman_roles": [
+      {"entity": "SNS widgets (Like / Tweet / Plus One buttons)", "treated_as": "instrument"},
+      {"entity": "SNSs (Facebook, Twitter, Google Plus)", "treated_as": "ambiguous"}
+    ],
+    "evidence": "Step 3: 'SNSs (Facebook, Twitter, and Google Plus), users and third party sites are the main agents. Users, as senders... SNSs, as recipients... SNSs, as senders, transfer or leak users' information to third party sites, as recipients.' Widgets figure as the tracking instrument ('hidden CCTV camera', Step 5); SNSs occupy both sender and recipient roles"
+  },
+  "s4_transmission_principles": [
+    {
+      "principle": "notice",
+      "source_label": "the sender's knowledge (or notice)",
+      "explicit": true,
+      "evidence": "Step 5, quoting Nissenbaum (2010, p.145): commercial exchange 'requires the sender's knowledge (or notice), and/or permission (consent)'; Step 5's departure finding is the failure of transparent notice"
+    },
+    {
+      "principle": "consent",
+      "source_label": "permission (consent) / informed or active consent",
+      "explicit": true,
+      "evidence": "Step 5: 'did SNSs acquire informed consent from their users regarding the set-up of the CCTV camera...?'; 'Facebook, Twitter and Google Plus did not gain informed or active consent from their users'"
+    },
+    {
+      "principle": "exchange",
+      "source_label": "commercial exchange of information in accordance with the rules of a competitive free market",
+      "explicit": true,
+      "evidence": "Step 5: 'The transmission principles also allow for commercial exchange of information in accordance with the rules of a competitive free market, but it requires the sender's knowledge (or notice), and/or permission (consent)'"
+    },
+    {
+      "principle": "consent",
+      "source_label": "privacy policies (terms and conditions agreed at sign-up) treated as the operative transmission principles",
+      "explicit": true,
+      "evidence": "Step 4: 'We examined privacy policies of Facebook, Twitter, and Google Plus to find out what they say about the information collection and distribution'; Table 5 Step 4 row lists the three privacy policies as the transmission principle; Step 5: 'if we rely on these policies as transmission principles...'"
+    }
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "Within the SNS-as-community context, SNSs (recipients) may collect information users (senders/subjects) provide and generate within SNS boundaries, and commercial exchange of users' information is permitted under competitive free-market rules provided the sender has knowledge (notice) and/or gives permission (consent)",
+      "entrenchment_evidence": "Community analogy: residents' movements within and outside a community are not recorded by hidden CCTV cameras without scrutiny ('How a CCTV camera is setup can be questionable and should be investigated'); prior to the widgets, SNSs could only record users' activities within SNS boundaries; Nissenbaum (2010, p.145) notice/consent condition on commercial exchange",
+      "departures": [
+        "SNS widgets resemble hidden CCTV cameras capturing users' movements within AND outside the community/SNS boundary",
+        "SNSs did not gain informed or active consent for the tracking: privacy policies are too long (Google's ~2500 words), constantly changing (five Twitter versions since 2006; Tweet-button collection only addressed in the new policy), jargon-laden (cookies, third parties), and language-restricted (Facebook/Twitter policies English-only at the time)",
+        "take-it-or-leave-it choice: agree to all terms or not use the SNS at all; users who signed up earlier may not agree to the newer tracking and targeting, with no meaningful opt-out from new policies",
+        "users cannot satisfy Barocas & Nissenbaum's five conditions of informed choice (which actors have access, to what, what they may do with it, whether it is conveyed to third parties, and what policies apply to those third parties)",
+        "users' information is moved across different contexts without their informed consent"
+      ],
+      "completeness": "entrenched",
+      "evidence": "Step 5: 'The departure from the entrenched practice in this context is the SNS widget... that resembles hidden CCTV camera used to capture users' movements within and outside a community. Prior to the existence of the widgets, SNSs can only record users' activities within SNS boundaries.'"
+    }
+  ],
+  "s6_prima_facie": {
+    "violation": "yes",
+    "departed_parameters": ["transmission_principle", "information_type", "recipient"],
+    "justification": "SNSs did not gain informed consent from their users regarding the collection and distribution of their information (transmission-principle breach: notice-and-consent failed); the widgets are hidden CCTV cameras recording users' movements within and outside the community (new information type: cross-site browsing movements beyond SNS boundaries; new recipients: SNSs receiving non-SNS browsing data and third parties receiving users' information)",
+    "evidence": "Step 6: 'The descriptive component of the heuristic establishes that such tracking constitutes a breach of information norms, and consequently a violation of contextual integrity. However, further steps assessing the legitimacy of the tracking are required by the heuristic.'"
+  },
+  "s7_factors": [
+    {
+      "factor": "Users are not aware of the tracking or recording and so have the false impression that their online activities are in a private zone, while SNSs actually know what they are doing online",
+      "kind": "information_asymmetry",
+      "affected_parties": ["SNS users"],
+      "direction": "harm",
+      "evidence": "Step 7: 'Users are not aware of the tracking or recording; hence, they have the impression that their online activities are private.'; summing up: 'users thought they had complete freedom and autonomy... when in fact SNSs are able to know what they are doing online'"
+    },
+    {
+      "factor": "Being observed and having browsing recorded by the hidden camera deteriorates personal autonomy — per Westin, privacy protects individuality, consciousness of individual choice in life, and the individual's sense of deciding when to 'go public'",
+      "kind": "autonomy",
+      "affected_parties": ["SNS users"],
+      "direction": "harm",
+      "evidence": "Step 7: 'Personal autonomy is one of the four functions of privacy that Westin refers to as the desire to avoid being manipulated or dominated wholly by others... Therefore, online users' autonomy is deteriorated to some extent.'"
+    },
+    {
+      "factor": "Tracking without users being well-informed impinges on users' freedom to formulate life choices, preferences and commitments; users' browsing choices would differ — more cautious and selective — if they knew their activities were recorded (chilling effect)",
+      "kind": "freedom",
+      "affected_parties": ["SNS users"],
+      "direction": "harm",
+      "evidence": "Step 7: 'Without the fear of being observed, or judged by others... an individual has more freedom to formulate life choices, preferences and commitment for themselves. The context of SNS tracking without users being well-informed impinges on the users' freedom to some degree.'"
+    },
+    {
+      "factor": "The tracking allows SNSs to provide relevant, personalised advertising based on users' browsing preferences or habits (e.g., kitchen-utensil or cookbook bargains after visiting a recipe site)",
+      "kind": "other(personalization_benefit)",
+      "affected_parties": ["SNS users", "SNSs"],
+      "direction": "benefit",
+      "evidence": "Step 7: 'On the bright side, the tracking allows SNSs to provide relevant advertising contents to their users.'"
+    }
+  ],
+  "s8_contextual_meaning": [
+    {
+      "contextual_end": "connection and communication between people (the central goal/value of an SNS; Facebook's mission to make the world more open and connected by giving people the power to share)",
+      "advances_or_undermines": "undermines",
+      "argument": "SNS tracking goes beyond the SNS mission and users' expectations: within the SNS/community context users expect to share experiences and communicate with other users, but not to be tracked and monitored across different sites",
+      "evidence": "Step 8: 'the SNS tracking appears to go beyond their mission as well as users' expectations of connecting and communicating with their friends'"
+    },
+    {
+      "factor_ref": 0,
+      "contextual_end": "users' expectation of bounded, controlled visibility within the community (the 'private profile')",
+      "advances_or_undermines": "undermines",
+      "argument": "The notion of 'private profile' gives users the wrong impression that only their limited audience sees what they share, because most users have no clue that their information and browsing activities are shared to third-party sites and tracked by SNSs in HTTP headers; frequently changing, long privacy policies fail to formally inform users about the tracking",
+      "evidence": "Step 8: 'the notion of \"private profile\" gives users the wrong impression... Privacy policies which are frequently changing, and long, fail to formally inform the users about the tracking.'"
+    },
+    {
+      "contextual_end": "delivery of the expected communication services",
+      "advances_or_undermines": "advances",
+      "argument": "Facebook, Twitter and Google Plus do deliver the expected communication services based on their goals and mission (Facebook's billion active users by mid-2012 attributed to succeeding at this) — but the tracking itself is not what delivers this end",
+      "evidence": "Step 8: 'Facebook, Twitter and Google Plus do deliver the expected communication services based on their goals and mission. However, the SNS tracking appears to go beyond...'"
+    }
+  ],
+  "s9_recommendation": {
+    "decision": "reject",
+    "conditions": [
+      "The practice can be favoured or accepted by the CI framework if there is a change in the design in which SNSs give users the choice or freedom to enable or disable the widgets (the hidden camera) completely (opt out)",
+      "Or at least, the design should make the tracking explicitly clear to users so that they are well-informed about the practice and able to make better decisions with regard to SNS usage",
+      "Collection of users' information WITHIN SNS boundaries remains appropriate for improving users' experience in connecting with other users and improving SNS services (troubleshooting, site-performance/network-traffic analysis); collecting users' online movements OUTSIDE SNS boundaries and disseminating their information to other parties without users being explicitly informed is not appropriate"
+    ],
+    "carrying_findings": [
+      "SNSs failed to gain informed or active consent because of the inadequacy of the privacy-policy (notice-and-consent) approach: length, constant change, jargon, language barriers, take-it-or-leave-it sign-up (s5/s6)",
+      "Users' autonomy and freedom are impinged because users are not formally or explicitly informed about the monitoring and assume their browsing is private when it is not (s7)",
+      "The tracking impinges on the context's goals, values and ends: users expect to connect and communicate, not to be monitored across non-SNS sites (s8)",
+      "Existing privacy settings do not constitute opt-out: managing Facebook's or Twitter's widget only limits visibility of tailored ads/activity, the widgets still track after being disabled; Google Plus provides no widget option at all (s9)",
+      "The widgets' benefit is marginal: users could share by copy-pasting URLs before widgets existed, and advertisements would still exist without them, only less personalised (s9)",
+      "Conclusion: 'SNS users' right to privacy is being violated by the practice of SNS tracking across non-SNS sites'"
+    ],
+    "evidence": "Step 9: 'we recommend that the framework reject the practice of tracking and monitoring SNS users by SNS companies (like Facebook, Twitter, and Google) across non-SNS'; Table 5 Step 9 row: 'The framework rejects the practice... unless users are given choice to opt out, or unless users are well informed about the practice.'; Conclusion final paragraph (design-change acceptance conditions, citing Hull et al. 2011)"
+  }
+}

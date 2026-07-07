@@ -1,0 +1,371 @@
+{
+  "meta": {
+    "case_id": "zeide2018_moocs",
+    "source": "Zeide, E. & Nissenbaum, H. (2018). Learner Privacy in MOOCs and Virtual Education. Theory and Research in Education 16(3): 280-307. https://doi.org/10.1177/1477878518815340",
+    "practice": "MOOC/virtual-education platforms (Coursera, edX, Udacity) delivering instruction, assessment, and credentials directly to learners while adopting commercial-marketplace data norms in place of student privacy norms",
+    "practice_input": "A practice has become widespread: online learning platforms — MOOCs and virtual learning environments such as Coursera, edX, and Udacity — offer courses, assessment, and career credentials directly to individual learners, outside accredited schools. The platforms record what learners explicitly submit (assignments, test answers, discussion posts) plus continuous behavioral data — every click, video view, and keystroke — and, for proctored certificates, biometric data such as webcam photos and typing patterns. Governed only by their own terms of service and privacy policies rather than student-privacy law, providers analyze this data to personalize instruction, run experiments on learners, and build learner profiles and competency-based credentials shown to employers; they may share or monetize learner data with contractors, analytics firms, researchers, business partners, and advertisers. Should this practice continue as-is, be modified, or be rejected?",
+    "contaminated": true,
+    "annotator": "claude-agent (needs human second pass)",
+    "annotation_date": "2026-07-07",
+    "annotator_notes": "Nissenbaum-authored, published 2018, SSRN/open PDF widely circulated — contaminated by definition. Full text obtained from https://nissenbaum.tech.cornell.edu/papers/Learner%20Privacy%20in%20MOOCs%20and%20Virtual%20Education.pdf (published SAGE pagination). Values-heavy exemplar: the paper's center of gravity is s2/s5/s7/s8 (pluralistic education paradigms vs. commercial-marketplace norms). s6 coded 'yes' with a caveat: the prima facie judgment rides on a contested-context move — VLEs claim the educational context functionally while legally inhabiting the commercial one; the paper resolves this by holding VLEs to educational norms because they perform educators' functions ('If they take on the role of educators, they must also take on the responsibilities', p. 282). Second-pass fields: s7 factor checklist, s6 departed_parameters, s9-absent call.",
+    "source_deviations": [
+      "The paper deliberately narrows the parameter mapping: 'For this article, we will focus on the parameters of actors (senders, subjects, recipients) and information types (attributes)' (Methodology, p. 285). Transmission principles are never enumerated as a dedicated step; the s4 list below is reconstructed from TP language embedded in the norm descriptions (confidentiality, consent, legitimate-education-interest limits, notice-and-choice, de-identification) — coverage target, not an exact-match target.",
+      "Step 9 is directional, not a verdict: the conclusion issues conditional guidance — 'MOOCs and Virtual Education providers must go beyond compliance with data collection and use regulation to preserve the values supported by student privacy norms' (Abstract) and 'If VLEs seek to fill the role of schools, they should adopt privacy practices and information norms that reflect the magnitude of that public responsibility' (pp. 301-302), plus 'this uneasy misalignment must be resolved... It requires more fundamental scrutiny of the role VLEs play' (p. 282). No continue/modify/reject decision and no binding parameter-level conditions are stated, so s9 is coded absent rather than coerced to 'modify'.",
+      "Flow description (s1) and evaluation are mixed in the 'Learner privacy practices in VLEs' section: the mapping of VLE flows is interleaved with normative commentary (e.g., 'This uncertainty is in and of itself a far cry from the transparency and access consistent with student privacy norms', p. 289); flow content is placed in s1 and the evaluative content in s7 here.",
+      "The prima facie step (s6) is never announced as such; the paper moves from 'having identified discrepancies' (p. 285) directly into evaluation, with the breach of entrenched educational norms asserted via the section structure ('VLEs explicitly eschew the heightened protections', p. 301) rather than an explicit prima-facie verdict sentence."
+    ]
+  },
+  "steps_present": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"],
+  "s1_flows": [
+    {
+      "sender": "learner",
+      "recipient": "VLE/MOOC provider (platform servers)",
+      "subject": "learner",
+      "information_type": "explicitly entered content: assignments, answers to tests, chat/discussion posts, survey responses (demographics, prior experience)",
+      "medium": "platform interface (conscious submission)",
+      "novelty": "analogue of classroom submission, but captured verbatim and durably ('every discussion post, every essay, every teacher comment is captured for posterity')",
+      "evidence": "'VLEs of course collect information users voluntarily and explicitly submit to the platform, such as assignments, answers to tests, and chat room posts' (p. 290); McCluskey & Winter quote (p. 292)"
+    },
+    {
+      "sender": "learner",
+      "recipient": "VLE/MOOC provider",
+      "subject": "learner",
+      "information_type": "passively captured behavioral and learning data with ancillary metadata: clickstream ('every mouse click'), attendance/progress/completion, eye tracking, log data, IoT/smartphone-emitted metadata",
+      "medium": "automated, continuous capture during platform use; cookies that cannot meaningfully be disabled",
+      "novelty": "novel — no classroom analogue; 'anytime, anywhere' access comes with anytime, anywhere surveillance",
+      "evidence": "pp. 290-292: 'VLEs capture real-time data at an unprecedented scale including every mouse click'; edX privacy policy quote on metadata-emitting devices"
+    },
+    {
+      "sender": "learner",
+      "recipient": "VLE provider / remote-proctoring vendors (Pearson Vue, ProctorU)",
+      "subject": "learner",
+      "information_type": "biometric and identity-verification data: photo ID with name and birthdate, webcam photos, typing-pattern profiles, head placement, sounds, eye movement, facial recognition",
+      "medium": "sensor-based remote proctoring during certification assessment",
+      "novelty": "novel — certification integrity pursued via biometric surveillance rather than in-person proctoring",
+      "evidence": "'Applications like Pearson Vie and Proctor U collect digital, audio, visual, and biometric information to verify students' identities and detect behavior patterns that suggest cheating' (p. 291)"
+    },
+    {
+      "sender": "external third parties (social media platforms, offline sources, data brokers)",
+      "recipient": "VLE provider",
+      "subject": "learner",
+      "information_type": "external data: learning style, competencies, demographics, geolocation, social media activity",
+      "medium": "third-party data acquisition ('additional typical methods of collecting data', unspecified)",
+      "novelty": "novel — reverse flow of extra-educational data into the learning environment",
+      "evidence": "'Udacity may collect and use information from offline or third parties like social media sites' (p. 291); Coursera's unspecified 'additional typical methods' (p. 291)"
+    },
+    {
+      "sender": "VLE provider",
+      "recipient": "contractors, subcontractors, business partners, affiliates, marketers, and outside learning-analytics specialists (Civitas, Knewton)",
+      "subject": "learner",
+      "information_type": "learner records, interaction data, learner profiles",
+      "medium": "onward disclosure under provider terms of service, without learner consent",
+      "novelty": "departs from school-official/legitimate-education-interest gating of vendor sharing",
+      "evidence": "'VLEs reserve the right to share information with subcontractors, business partners, or affiliates... can also share information with marketers and product developers' (p. 289); Knewton 'We literally know everything' boast (p. 290)"
+    },
+    {
+      "sender": "VLE provider",
+      "recipient": "internal and external researchers; the general public (open datasets, published research)",
+      "subject": "learner",
+      "information_type": "interaction and performance data, including 'anonymized' datasets and A/B experiment data",
+      "medium": "research access, cross-platform interoperability frameworks, public data releases (HarvardX/MITx)",
+      "novelty": "experimentation on learners at scale (Coursera runs thousands of A/B experiments) without consent mechanisms of human-subjects or student-privacy regimes",
+      "evidence": "pp. 290, 294: 'Coursera conducts thousands of A/B experiments on users'; 'HarvardX and MITx... aim to publicly disclose as much data as permitted under the law'"
+    },
+    {
+      "sender": "VLE provider",
+      "recipient": "purchasers, advertisers, acquirers/creditors; publishers (Elsevier)",
+      "subject": "learner",
+      "information_type": "learner data as corporate asset: nonpersonal data for 'other business purposes', student-created content under broad perpetual licenses, anonymized data exchanged for value",
+      "medium": "monetization: sale, exchange, marketing use, transfer in acquisition or bankruptcy",
+      "novelty": "novel — student information as tradable commercial asset, contemplated sale of learner profiles to employers or advertisers",
+      "evidence": "'edX directly monetized anonymized student data, exchanging it with publisher Elsevier in exchange for free textbooks' (p. 290); Udacity's 'irrevocable, worldwide, perpetual, royalty-free' license (p. 294); Coursera early business model (pp. 290, 300)"
+    },
+    {
+      "sender": "VLE provider",
+      "recipient": "employers and admission boards",
+      "subject": "learner",
+      "information_type": "competency-based credentials, certificates, and concept-by-concept learner profiles proposed as replacements for transcripts and resumes",
+      "medium": "credentialing and employer-matching services",
+      "novelty": "granular algorithmic learner profiles replace summary transcripts shared at student request",
+      "evidence": "'Many education reformers want to [use] learner profiles for school admission and hiring instead of traditional transcripts, records, and resumes' (pp. 293-294); VLEs 'connect participants with potential employers' (p. 281)"
+    }
+  ],
+  "s2_context": {
+    "domain": "education",
+    "nested_contexts": [
+      "commercial marketplace — VLEs 'straddle irreconcilable contexts', functioning as educators while operating under commercial norms (pp. 300-301)",
+      "employment/labor market — credentialing and employer partnerships pull labor-market logics into the learning environment"
+    ],
+    "activities": [
+      "delivering instruction",
+      "facilitating learner discussion",
+      "administering assessment",
+      "conferring credentials",
+      "connecting participants with potential employers"
+    ],
+    "purposes": [
+      "economic: national prosperity and competitiveness, developing productive workers, harmonizing labor supply and demand, optimizing education efficiency",
+      "democratic: developing a citizenry capable of self-governance and encouraging robust debate",
+      "equality: socioeconomic mobility, fair academic and career outcomes, a meritocratic opportunity system, closing the achievement gap",
+      "self-actualization: personal growth, intellectual development, creative exploration"
+    ],
+    "values_ends": [
+      "democracy",
+      "equal access to opportunity",
+      "meritocracy",
+      "self-actualization and human flourishing",
+      "intellectual privacy and academic freedom",
+      "trust in the learner-educator relationship (more than commercial; in loco parentis tradition)",
+      "economic growth",
+      "psychologically safe learning environments where students can make mistakes and move beyond them (revisability)"
+    ],
+    "evidence": "Methodology section (pp. 284-285): contexts defined by paradigmatic activities, roles, practices, norms, and contextual ends; 'Pluralistic education paradigms' (pp. 295-296), incorporating Zeide (2018): economic, democratic, equality, self-actualization paradigms"
+  },
+  "s3_actors": {
+    "senders": [
+      "learners (submitting and passively emitting data)",
+      "VLE/MOOC providers (as onward disclosers to third parties)",
+      "external third parties (social media, offline sources) sending data about learners into the platform",
+      "traditional baseline: teachers/schools as recorders and senders of student information"
+    ],
+    "recipients": [
+      "VLE/MOOC providers (Coursera, edX, Udacity)",
+      "contractors and subcontractors",
+      "learning-analytics specialists (Civitas, Knewton)",
+      "business partners, affiliates, marketers, product developers",
+      "internal and external researchers",
+      "remote-proctoring vendors",
+      "purchasers, advertisers, acquirers",
+      "employers and admission boards",
+      "general public (open datasets, marketing materials, published research)"
+    ],
+    "subjects": [
+      "learners — 'the data subjects are not, legally speaking, students... The term learners differentiates them from students... but also differentiates them from consumers shopping online' (p. 289); in the traditional baseline 'the data subject is almost always the student' (p. 284)"
+    ],
+    "nonhuman_roles": [
+      {"entity": "VLE platform (servers that collect, store, process)", "treated_as": "recipient"},
+      {"entity": "VLE platform/provider (when disclosing onward)", "treated_as": "sender"},
+      {"entity": "learning-analytics / predictive models ('knowledge maps', adaptive personalization algorithms)", "treated_as": "instrument"},
+      {"entity": "digital 'instructors' ('the ever-observant eye of digital instructors')", "treated_as": "ambiguous"}
+    ],
+    "evidence": "'Informational norms governing flow and recordkeeping in VLEs' (pp. 289-291): Subjects, Actors (Providers, Contractors, Researchers, Purchasers), Attributes; traditional counterparts pp. 285-287"
+  },
+  "s4_transmission_principles": [
+    {
+      "principle": "confidentiality",
+      "source_label": "default confidentiality absent student/parent consent or school oversight; 'in confidence'",
+      "explicit": true,
+      "evidence": "'confidentiality as the norm absent parent/student consent or school oversight' (p. 287); methodology TP example 'or in confidence' (p. 284)"
+    },
+    {
+      "principle": "consent",
+      "source_label": "with permission of the data subject; parental/eligible-student consent (FERPA); PPRA written consent for sensitive surveys",
+      "explicit": true,
+      "evidence": "'Transmission principles condition the flow of information from party to party, for example, with permission of data subject' (p. 284); 'schools cannot disclose covered information without consent' (p. 286)"
+    },
+    {
+      "principle": "need",
+      "source_label": "education-purpose limitation: disclosed and used only to serve 'legitimate education interests' / 'K-12 school purposes'",
+      "explicit": true,
+      "evidence": "'Student data only disclosed and used to serve legitimate education interests' (p. 288); FERPA school-official exception; SOPIPA quote (p. 288)"
+    },
+    {
+      "principle": "notice",
+      "source_label": "commercial notice-and-choice regime; VLE policies amendable 'without requiring user consent and perhaps without user notice'",
+      "explicit": true,
+      "evidence": "'the minimal and procedural protection of the commercial notice-and-choice regulatory regime' (p. 301); unilateral-amendment provision (p. 293)"
+    },
+    {
+      "principle": "anonymity",
+      "source_label": "de-identification required for redisclosure (FERPA); 'anonymized' student data; random-number identifiers that remain linkable",
+      "explicit": true,
+      "evidence": "'Information recipients cannot... redisclose the information unless it is thoroughly de-identified' (p. 286); 'edX directly monetized anonymized student data' (p. 290); 'Learner profiles are necessarily associated with specific learners, even if platforms use random numbers' (p. 293)"
+    },
+    {
+      "principle": "exchange",
+      "source_label": "monetization/sale as corporate asset: data exchanged with Elsevier for free textbooks; contemplated sale to employers/advertisers; asset in acquisition or bankruptcy",
+      "explicit": false,
+      "evidence": "pp. 290, 294, 300: Elsevier exchange; Coursera 'other business purposes'; Lederman (2014) bankruptcy warning"
+    },
+    {
+      "principle": "mandatory",
+      "source_label": "no meaningful opt-out: cookie collection required for functionality; continued use taken as binding acceptance of policy changes",
+      "explicit": false,
+      "evidence": "'Learners have no meaningful ability to opt-out of these practices' (p. 293); 'They take continued use of services as a binding acceptance of any changes' (p. 293)"
+    }
+  ],
+  "s5_norms": [
+    {
+      "norm_flow": "Personally identifiable student information stays within institutional confines; disclosure only with student/parent consent or under school oversight of recipients' legitimate education interests (senders: educators/schools; recipients: school officials, approved vendors; TP: confidentiality + consent)",
+      "entrenchment_evidence": "'During the past 50 years, the principles concerning appropriate flow of student information have remained remarkably consistent' (p. 285); FERPA (1974), PPRA (1978), newer state laws, industry self-regulation (Student Privacy Pledge), public rhetoric, in loco parentis tradition, constitutional jurisprudence on universities' 'special niche'",
+      "departures": [
+        "recipients: business partners, marketers, advertisers, purchasers, researchers, the general public, under provider terms of service alone",
+        "no student/parent consent mechanism; commercial notice-and-choice substitutes for consent",
+        "VLEs fall outside FERPA and state student-privacy law because they collect directly from learners without school mediation"
+      ],
+      "completeness": "entrenched",
+      "evidence": "'Default confidentiality absent student/parent consent or school oversight' (p. 287); 'Learner privacy practices in VLEs' (pp. 291-292)"
+    },
+    {
+      "norm_flow": "Parents and eligible students can access and contest the accuracy of information in education records (transparency and amendment rights fostering trust)",
+      "entrenchment_evidence": "FERPA 34 CFR 99.10-99.12, 99.20-99.22; state governance structures (California contract-posting requirements); 'FERPA reassures parents and students that the information in school records is based on accurate, fair, and relevant data' (p. 288)",
+      "departures": [
+        "learners have 'minimal ability to access and oversee the accuracy of the assessments, inferences, and resulting credentials created by VLEs' (p. 293)",
+        "policies imprecise and confusing; amendable without user consent and perhaps without notice",
+        "primary transparency mechanism is an email address for questions"
+      ],
+      "completeness": "entrenched",
+      "evidence": "'Parent/student access and ability to contest personally identifiable information' (p. 288) vs. 'Ubiquitous collection with minimal user consent, access, and ability to amend' (pp. 292-293)"
+    },
+    {
+      "norm_flow": "Student information is disclosed and used only to further legitimate education interests; commercial access and use are constrained (PPRA marketing limits, SOPIPA school-purposes limits, no-sale pledges)",
+      "entrenchment_evidence": "FERPA school-official exception conditioned on 'legitimate education interests'; PPRA consent requirement for marketing-related collection; SOPIPA; Student Privacy Pledge signatories 'will not sell users' personal information'",
+      "departures": [
+        "research and revenue purposes: A/B experimentation, learning-science research, public data releases",
+        "broad perpetual licenses to student-created content 'for any purpose (including for any commercial purpose)' (Udacity)",
+        "monetization as corporate asset; 'the presumption that information generated during the learning process will benefit the data subject's education is also no longer the case' (p. 300)"
+      ],
+      "completeness": "entrenched",
+      "evidence": "'Student data only disclosed and used to serve legitimate education interests' (p. 288) vs. 'Research and revenue purposes' (p. 294) and 'Private actors and priorities' (p. 300)"
+    },
+    {
+      "norm_flow": "Most day-to-day classroom performance and behavior goes unrecorded (practical obscurity); formative assessment stays diagnostic and separate from end-of-term summative assessment; only summary credentials (grades, degrees) leave the school, shared upon student/parent request or permission",
+      "entrenchment_evidence": "'In physical classrooms, most information about students' performance and behavior is not recorded in education records' (p. 286); 'Classrooms are traditionally regarded as relatively private spaces' (Marshall quote, p. 287); limited portability of paper records; transcripts included only basic attainment information (Hutt)",
+      "departures": [
+        "information type: ubiquitous, granular capture — 'a virtual record of every transaction that takes place in the classroom'",
+        "embedded assessment collapses formative feedback, summative assessment, and credentialing — 'every action becomes part of learners' algorithmic transcripts'",
+        "indefinite longitudinal retention — 'the algorithmic equivalent of the proverbial permanent record'"
+      ],
+      "completeness": "entrenched",
+      "evidence": "Attributes/Classroom observation (p. 286); 'Embedded assessment and competency-based credentials' (p. 293); 'Digital mediation and data maximization' (p. 298); pp. 299-300 on formative/summative separation"
+    }
+  ],
+  "s6_prima_facie": {
+    "violation": "yes",
+    "departed_parameters": ["sender", "recipient", "information_type", "transmission_principle"],
+    "justification": "Because VLEs perform the functions of educational institutions (instruction, discussion, assessment, credentialing), entrenched educational informational norms are the applicable baseline even though the platforms legally inhabit the commercial regime. Against that baseline, VLE flows depart on nearly every parameter: platform-direct collection displaces teacher/school mediation (sender), recipients expand to contractors, analytics firms, researchers, marketers, purchasers, and the public (recipient), granular clickstream/biometric/metadata capture replaces unrecorded classroom observation and summary records (information type), and notice-and-choice with no meaningful consent, access, purpose limitation, or opt-out replaces confidentiality, consent, and legitimate-education-interest gating (transmission principle). The subject's capacity is also reclassified — learners treated 'as consumers rather than students'.",
+    "evidence": "'Having identified discrepancies, a CI analysis involves evaluating competing practices' (p. 285); 'VLEs explicitly eschew the heightened protections provided in publicly funded learning environments... offering the minimal and procedural protection of the commercial notice-and-choice regulatory regime' (p. 301); 'most VLEs explicitly eschew the privacy protections traditionally found in school settings' (p. 291)"
+  },
+  "s7_factors": [
+    {
+      "factor": "Chilling effects: surveillance reduces learners' participation and expression in classroom activities and in the political activism characteristic of higher education; discourages civic participation, free thought, and robust debate",
+      "kind": "freedom",
+      "affected_parties": ["learners", "democratic society"],
+      "direction": "harm",
+      "evidence": "'Chilling effects occur when surveillance reduces learners' participation and expression...' (p. 298); Richards on intellectual privacy; 'Who will play devil's advocate for an unpopular cause if doing so will go down in a possibly permanent record?' (p. 298)"
+    },
+    {
+      "factor": "Conforming effect: perceived observation prompts learners to move their viewpoints toward the perceived mainstream, unconsciously",
+      "kind": "autonomy",
+      "affected_parties": ["learners"],
+      "direction": "harm",
+      "evidence": "'It may have a conforming effect and prompt learners to move their viewpoints closer to that of the perceived mainstream – unconsciously (Kaminski and Witnov, 2015)' (p. 298)"
+    },
+    {
+      "factor": "Credentialing effect: collapsing formative and summative assessment raises the stakes of every action, heightening learners' sense of vulnerability, demotivating and diminishing the performance of struggling students, disproportionately affecting minorities",
+      "kind": "equality",
+      "affected_parties": ["struggling students", "minority learners"],
+      "direction": "harm",
+      "evidence": "'a credentialing effect that demotivates and ultimately diminishes the performance of struggling students. Research suggests that students' sense of vulnerability impedes academic promise and disproportionately affects minorities' (p. 299)"
+    },
+    {
+      "factor": "Permanent record / loss of revisability: indefinite longitudinal retention and repurposing of learner data limits reinvention and letting students move beyond past mistakes, undermining individual autonomy",
+      "kind": "autonomy",
+      "affected_parties": ["learners"],
+      "direction": "harm",
+      "evidence": "'Data-driven ed tech... is currently configured to create the algorithmic equivalent of the proverbial permanent record' (p. 300); 'the practical obscurity of classroom proceedings promotes the value Andrew Tutt (2014) calls revisability. This, in turn, supports individual autonomy' (p. 300)"
+    },
+    {
+      "factor": "Discriminatory impact and predictive triage: big-data techniques may have unintentionally discriminatory impact; predictive models provide a 'rational' basis to streamline stratification, and business incentives push resources toward learners already predicted to succeed (e.g., encouraging likely dropouts to leave to protect retention statistics)",
+      "kind": "discrimination",
+      "affected_parties": ["learners predicted to fail", "learners on the wrong side of the learning gap"],
+      "direction": "harm",
+      "evidence": "'There is growing concern that big data techniques may unintentionally have a discriminatory impact' (p. 298); Mount St. Mary's culling episode (Jaschik, p. 298); 'perverse incentives to devote resources to the learners most likely to succeed' (p. 297)"
+    },
+    {
+      "factor": "Exacerbated inequities in access and outcomes: certification fees may preclude those most in need of credentials; VLEs empirically most useful for already successful students; data-defined optimization may improve statistics at the expense of individual attainment",
+      "kind": "justice",
+      "affected_parties": ["poor and underserved learners", "less accomplished students"],
+      "direction": "harm",
+      "evidence": "'Charging fees for certification may also preclude those most in need of credentials from obtaining them. Research suggests that VLEs are most useful for already successful students' (p. 297); San Jose State failure (p. 297); 'disparately impact learners on the wrong side of the learning gap' (p. 298)"
+    },
+    {
+      "factor": "Information asymmetry and opacity: vague, imprecise privacy policies; inability to determine actual practices; unilateral policy amendment; minimal access to assessments and inferences; no meaningful consent or opt-out; learners likely assume educational privacy norms apply when they do not",
+      "kind": "information_asymmetry",
+      "affected_parties": ["learners"],
+      "direction": "harm",
+      "evidence": "'it is difficult to determine which practices platforms actually engage in or simply reserve as a future option. This uncertainty is in and of itself a far cry from the transparency and access consistent with student privacy norms' (p. 289); 'it is likely most VLE users think educational privacy norms apply' (p. 300)"
+    },
+    {
+      "factor": "Commercial power over learners: for-profit providers ultimately answer to investors, not students; learner data treated as intellectual and commercial asset; could conceivably sell cognitive-map data to insurers or employers without learner knowledge or consent; 'beta education' start-up volatility in a high-stakes domain",
+      "kind": "power",
+      "affected_parties": ["learners"],
+      "direction": "harm",
+      "evidence": "'ultimately responsible to provide return on venture capitalist or shareholder investments – not decide based on what's best for students' (p. 300); Coursera early business model (pp. 290, 300); AltSchool shuttering (p. 301)"
+    },
+    {
+      "factor": "Erosion of trust and intellectual safety: learning depends on user trust and psychologically safe environments where students can make mistakes; caveat emptor norms and opacity undermine that safety (cf. inBloom collapse)",
+      "kind": "trust",
+      "affected_parties": ["learners", "the educational enterprise"],
+      "direction": "harm",
+      "evidence": "'Learning is not only a high stakes enterprise for individuals and society, but one which depends on user trust and intellectual safety for success' (pp. 300-301); inBloom (p. 293); 'psychologically safe learning environments' (p. 287)"
+    },
+    {
+      "factor": "Filter bubbles from automated personalization: personalized instruction narrows exposure to new ideas and forecloses serendipitous discovery of novel interests, though individualized paths can also support learners' unique abilities and interests",
+      "kind": "other(intellectual diversity)",
+      "affected_parties": ["learners"],
+      "direction": "mixed",
+      "evidence": "'Personalized instruction may also create a filter bubble... There will be less exposure to new ideas, and less room for serendipitous discovery' (p. 299); 'To the degree this permits students to carve their own intellectual paths... this supports the discovery model' (p. 299)"
+    },
+    {
+      "factor": "Broadened access to education: free/low-cost, at-scale instruction for poor, underserved, and nontraditional students worldwide ('for anyone, anywhere, anytime'); data feedback loops may improve pedagogy and help struggling students — but the evidence is inconclusive and access alone may not increase equitable outcomes",
+      "kind": "equality",
+      "affected_parties": ["underserved and nontraditional learners worldwide"],
+      "direction": "mixed",
+      "evidence": "'MOOCs say they seek to provide poor, underserved, and nontraditional students access to high-quality instruction' (p. 292); 'These tools may help close the achievement gap... However, the existing evidence about the success of personalized learning platforms is inconclusive' (pp. 298-299)"
+    }
+  ],
+  "s8_contextual_meaning": [
+    {
+      "factor_ref": 0,
+      "contextual_end": "democracy: developing a citizenry capable of self-governance and robust debate",
+      "advances_or_undermines": "undermines",
+      "argument": "Surveillance effects are 'particularly pernicious under the democratic paradigm': chilling and conforming effects discourage the civic participation, free thought, devil's-advocacy, and robust exchange of ideas (Keyishian) that the democratic model of education exists to cultivate; intellectual privacy is 'a core component of a functioning democracy' (Richards)",
+      "evidence": "pp. 298-299: 'Potential surveillance effects are particularly pernicious under the democratic paradigm'; 'This runs counter to the prominent value of education in cultivating a citizenry capable of self-governance'"
+    },
+    {
+      "factor_ref": 2,
+      "contextual_end": "equality and meritocracy: socioeconomic mobility and fair academic/career outcomes",
+      "advances_or_undermines": "undermines",
+      "argument": "The traditional separation of formative and summative assessment gave slow starters space to catch up, 'promoting meritocracy and equality'; embedded assessment and algorithmic transcripts remove that space, raise stakes, disparately impact those on the wrong side of the learning gap, and let predictive triage 'streamline stratification' — while the access-expansion promise remains empirically unsupported and fee-gated",
+      "evidence": "pp. 297-299: formative/summative separation; 'access alone may not increase equitable outcomes in practice'; Campbell's Law on metric corruption"
+    },
+    {
+      "factor_ref": 3,
+      "contextual_end": "self-actualization: personal growth, intellectual exploration, and experimentation without fear of future consequences",
+      "advances_or_undermines": "undermines",
+      "argument": "Ubiquitous 'anytime, anywhere' surveillance constrains 'the unselfconscious play that facilitates the curiosity, intellectual exploration, and expression consistent with human flourishing'; permanent records eliminate the ivory-tower zone of consequence-free exploration and the revisability that lets students move beyond mistakes",
+      "evidence": "p. 298: 'it may also constrain the unselfconscious play...'; p. 299-300: universities as 'zones where faculty and students can feel free to pursue any idea' (Labaree); Cohen on intellectual autonomy"
+    },
+    {
+      "factor_ref": 9,
+      "contextual_end": "self-actualization and democratic exposure to diverse ideas (robust exchange of ideas)",
+      "advances_or_undermines": "mixed",
+      "argument": "Personalized learning paths can support students' unique abilities, cognitive approaches, and personal interests (discovery model), but algorithmic personalization also builds filter bubbles that undermine exposure to new ideas and serendipitous discovery — it does 'not offer unbounded intellectual exploration'",
+      "evidence": "p. 299: Keyishian 'robust exchange of ideas'; 'While personalized learning systems can cater more to learners' preferences... they do not offer unbounded intellectual exploration'"
+    },
+    {
+      "factor_ref": 4,
+      "contextual_end": "economic paradigm: prosperity, labor-market harmonization, and educational efficiency",
+      "advances_or_undermines": "mixed",
+      "argument": "VLE information norms 'promote economic efficiency, labor-market harmonization, and career success' — the one paradigm they serve — but even here 'they may undercut long-term prosperity and meritocracy as well by discouraging or discarding the outliers whose creativity often creates tomorrow's profitable innovations', and data-defined metrics invite Campbell's-Law corruption of what counts as learning",
+      "evidence": "p. 282 (Introduction summary); pp. 297-298: 'Data-defined metrics and outcomes'; Campbell's Law quote"
+    },
+    {
+      "contextual_end": "the plural ends of education as such (economic, democratic, equality, self-actualization simultaneously)",
+      "advances_or_undermines": "undermines",
+      "argument": "By adopting commercial-marketplace norms while claiming educators' role, VLEs 'reduce the likelihood that they will achieve the broad aims that are characteristic of the educational context'; their data practices undermine the values and ends of the educational context, 'which are, simultaneously to promote economic and democratic ends while sustaining values of equality and self-actualization' — the importation of commercial privacy norms is 'inimical to America's pluralistic educational enterprise'",
+      "evidence": "p. 301: 'It is troubling, therefore, that as VLEs are increasingly important in providing for society's educational needs, their data practices undermine the values and ends of an educational context'; p. 281 (Introduction)"
+    }
+  ]
+}
