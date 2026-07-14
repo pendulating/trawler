@@ -1,5 +1,24 @@
 # @package _global_
 # Gemma-4-31B-IT: multimodal (image+text → text), 31B dense, instruction-tuned
+#
+# Throughput notes (benchmarked 2026-07-12 on klara/A6000, vLLM 0.19):
+#
+# * Layout: use TP=2 with data_parallel_size=2 on a 4-GPU launcher. Do NOT use
+#   TP=4. TP=4 does buy KV headroom (12.1x concurrency vs 2.8x at TP=2), but KV
+#   is not the bottleneck — the PCIe collectives are, and TP=4 doubles them
+#   (60.6ms of all-reduce per decode step vs 29.4ms at TP=2). Measured: TP=2 on
+#   *two* GPUs (58.4 tok/s) beats TP=4 on *four* (46.9 tok/s).
+# * This model is KV-hungry: ~0.94 MB/token (60 layers x 16 KV heads x head_dim
+#   256), ~4x the gemma-4-26b-a4b MoE. That is what makes TP=2 KV-tight.
+# * kv_cache_dtype fp8 does NOT work on sm_86 — e4m3 ("fp8e4nv not supported in
+#   this architecture") and e5m2 (inductor "cannot compile partial graph") both
+#   fail. Do not try to buy KV headroom that way.
+# * Attention is forced to TRITON_ATTN by head_dim=256; FLASH_ATTN and FLASHINFER
+#   both reject it ("head_size not supported"). Not a tunable.
+# * Requires NCCL_SHM_DISABLE=0 (see wiki/slurm-and-env.md) — worth ~21% here.
+#
+# The MoE gemma-4-26b-a4b is ~2.4x faster; this model is used for gold labels by
+# an explicit call on label quality, not speed.
 model:
   model_source: /share/pierson/matt/zoo/models/Gemma-4-31B-it
   model_family: gemma-4

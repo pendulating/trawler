@@ -1,0 +1,30 @@
+# @package _global_
+# HARC-Llama-3.1-8B-Instruct (Microsoft) — the safety-alignment control.
+#
+# What it is: `meta-llama/Llama-3.1-8B-Instruct` with the HARC safety-alignment
+# LoRA merged in (full standalone bf16 model, Llama-3.1 license). HARC =
+# "Coupling Harmfulness and Refusal Directions for Robust Safety Alignment"
+# (arXiv:2607.00572).
+#
+# Why it is in the canonical set: it is the *matched pair* to llama3.1-8b/instruct
+# — same base weights, same tokenizer, same chat template, differing only in
+# safety alignment. That makes it the one model that isolates "does refusal-style
+# safety tuning help or hurt contextual-integrity reasoning?" from every other
+# confound (scale, family, pretraining data). Any CI delta between this and
+# llama3.1-8b/instruct is attributable to the alignment, not the model.
+#
+# Read its refusals carefully: a model that declines to answer a privacy vignette
+# is not the same as one that reasons correctly about it. Expect the
+# format-adherence gate (wiki/metric-trust.md) to matter more here than anywhere
+# else in the set — a refusal is an unparseable answer, not a wrong one, and the
+# two must not be silently pooled.
+model:
+  model_source: /share/pierson/matt/zoo/models/HARC-Llama-3.1-8B-Instruct
+  model_family: llama3
+  engine_kwargs:
+    max_model_len: 16384
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+  batch_size: 0
+  concurrency: 1

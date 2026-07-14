@@ -1,3 +1,6 @@
+# Prompt identity — logged by stages at run start and stamped into
+# output parquets as `prompt_name` (provenance guard, added 2026-07-12).
+name: norm_reasoning_prescriptive
 system_prompt: |
   You are an expert in normative analysis, specializing in identifying **norms** — prescriptive statements about what agents ought or ought not to do — in religious, ethical, and philosophical texts. Your analytical framework is **Joseph Raz's anatomy of norms**.
 

@@ -12,6 +12,29 @@ except ImportError:
     _JSON_REPAIR_OK = False
 
 
+def announce_prompt(stage_name: str, prompt_cfg: Any, system_prompt: str) -> str:
+    """Loudly log which prompt variant a stage is about to use; return its name.
+
+    Provenance guard: every fiction extraction run from 2026-03-09 to
+    2026-07-12 silently used the prescriptive prompts because a config-level
+    group default clobbered the pipelines' prompt selection. The returned
+    name is stamped into the stage's output parquet as `prompt_name` so the
+    artifact records which prompt produced it.
+    """
+    from omegaconf import OmegaConf
+
+    name = str(OmegaConf.select(prompt_cfg, "name") or "<unnamed>")
+    bar = "=" * 66
+    print(
+        f"[{stage_name}] {bar}\n"
+        f"[{stage_name}] PROMPT PROVENANCE: {name}\n"
+        f"[{stage_name}] system_prompt head: {system_prompt[:110]!r}\n"
+        f"[{stage_name}] {bar}",
+        flush=True,
+    )
+    return name
+
+
 def extract_json(gen_text: str) -> tuple[dict | None, str | None]:
     """Parse JSON from LLM output, with optional repair.
 

@@ -90,6 +90,43 @@ def _generate_vignettes(
     return vignettes
 
 
+def _resolve_vignette_universes(
+    norm_universes: Dict[str, list],
+    vignette_norm_universes_path: str,
+) -> Dict[str, list]:
+    """Pick the universe that judgment vignettes are generated from.
+
+    Defaults to the grounding ``norm_universes`` — vignettes and R_ground share a
+    corpus (the historical behaviour). If ``vignette_norm_universes_path`` points
+    at a JSON file, vignettes are drawn from THAT corpus instead, while grounding
+    and the CI-extraction prompt set stay untouched. This is a single-variable
+    knob for rebalancing the judgment-vignette force mix (e.g. the more
+    force-balanced top100 universe: CI-relevant app:inapp 1.72:1 vs fiction10's
+    3.07:1) without re-running flow extraction.
+
+    Uses ``isfile`` (not ``exists``) deliberately: an unset Hydra
+    ``${oc.env:VIGNETTE_NORM_UNIVERSES_PATH,""}`` source resolves through
+    ``os.path.abspath("")`` to the CWD (a *directory*), which must NOT be treated
+    as a universe file — so anything that isn't a real file falls back to the
+    grounding universe.
+    """
+    if vignette_norm_universes_path and os.path.isfile(vignette_norm_universes_path):
+        with open(vignette_norm_universes_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    # A truthy-but-non-file path (typo, stale/unmounted mount, wrong CWD under
+    # submitit) must fail loud: silently falling back to the grounding universe
+    # makes a "balanced-vignette" arm a byte-identical copy of its control. The
+    # legit unset case resolves through os.path.abspath("") to the CWD
+    # *directory* (a sentinel), which stays a silent fallback.
+    if vignette_norm_universes_path and not os.path.isdir(vignette_norm_universes_path):
+        raise FileNotFoundError(
+            f"vignette_norm_universes_path is set but is not a file: "
+            f"{vignette_norm_universes_path!r}. Fix the path or unset "
+            "VIGNETTE_NORM_UNIVERSES_PATH to use the grounding universe."
+        )
+    return norm_universes
+
+
 def _build_grpo_dataset(
     chunks_df: pd.DataFrame,
     tokenizer,
@@ -314,17 +351,24 @@ def run_grpo_training_stage(
     cfg: Any,
     embeddings_dir: str = "",
     reward_cache_path: str = "",
+    vignette_norm_universes_path: str = "",
 ) -> None:
     """Run GRPO training with TRL + vLLM.
 
     Args:
         sft_checkpoint: Path to SFT LoRA checkpoint directory.
         chunks_path: Path to chunks parquet (chunk_text + source_id).
-        norm_universes_path: Path to norm_universes.json.
+        norm_universes_path: Path to norm_universes.json (R_ground grounding +,
+            by default, the judgment-vignette source).
         output_dir: Directory to save GRPO checkpoint.
         cfg: Hydra config with training.grpo section.
         embeddings_dir: Path to per-book .npy embeddings (for online R_ground).
         reward_cache_path: Path to reward_cache.parquet (legacy cached R_ground).
+        vignette_norm_universes_path: Optional path to a SEPARATE norm_universes
+            .json that judgment vignettes are drawn from (grounding/extraction
+            keep ``norm_universes_path``). Empty/non-file ⇒ vignettes use the
+            grounding universe (historical behaviour). See
+            ``_resolve_vignette_universes``.
     """
     from trl import GRPOTrainer, GRPOConfig
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -422,6 +466,24 @@ def run_grpo_training_stage(
         else:
             print(f"[grpo_training] WARNING: book_id={book_id_str} not in norm universes "
                   f"(available: {list(norm_universes.keys())[:10]})")
+
+    # Vignette source: defaults to the grounding universe; can be pointed at a
+    # separate, more force-balanced corpus (single-variable judgment-balance
+    # probe — see _resolve_vignette_universes).
+    vignette_norm_universes = _resolve_vignette_universes(
+        norm_universes, vignette_norm_universes_path
+    )
+    _vignette_universe_is_separate = vignette_norm_universes is not norm_universes
+    if _vignette_universe_is_separate:
+        if book_id is not None:
+            book_id_str = str(book_id)
+            vignette_norm_universes = (
+                {book_id_str: vignette_norm_universes[book_id_str]}
+                if book_id_str in vignette_norm_universes else {}
+            )
+        print(f"[grpo_training] Vignettes drawn from SEPARATE universe: "
+              f"{len(vignette_norm_universes)} sources "
+              f"({vignette_norm_universes_path})")
 
     print(f"[grpo_training] Chunks: {len(chunks_df)}")
     print(f"[grpo_training] Norm universes: {len(norm_universes)} sources")
@@ -618,6 +680,10 @@ def run_grpo_training_stage(
         # called "appropriate"). None/absent = symmetric v9 behaviour.
         _rgafp = grpo_cfg.get("rground_app_floor_prohibit", None)
         _rground_app_floor_prohibit = float(_rgafp) if _rgafp is not None else None
+        # v12a: cost-sensitive tier for a hedge on a prohibited-governed flow
+        # (drops it below the neutral 0.7). None/absent = v10 behaviour.
+        _rgahp = grpo_cfg.get("rground_app_hedge_prohibit", None)
+        _rground_app_hedge_prohibit = float(_rgahp) if _rgahp is not None else None
         if _rground_scoring == "ranked" and not rk_prompt_template:
             raise ValueError(
                 "[grpo_training] rground_scoring='ranked' requires the "
@@ -642,6 +708,7 @@ def run_grpo_training_stage(
             app_mode=_rground_app_mode,
             app_floor=_rground_app_floor,
             app_floor_prohibit=_rground_app_floor_prohibit,
+            app_hedge_prohibit=_rground_app_hedge_prohibit,
         )
         print(f"[grpo_training] Online R_ground enabled "
               f"(embed={embedding_url}, judge={judge_url}, "
@@ -649,7 +716,8 @@ def run_grpo_training_stage(
               f"contrastive_lambda={_contrastive_lambda}, "
               f"app_weight={_rground_app_weight}, "
               f"app_mode={_rground_app_mode}, app_floor={_rground_app_floor}, "
-              f"app_floor_prohibit={_rground_app_floor_prohibit})")
+              f"app_floor_prohibit={_rground_app_floor_prohibit}, "
+              f"app_hedge_prohibit={_rground_app_hedge_prohibit})")
     elif not use_online_rground and weights[5] > 0.0:
         print(f"[grpo_training] R_ground using cached lookup "
               f"({len(reward_cache)} entries)")
@@ -658,6 +726,10 @@ def run_grpo_training_stage(
     _composition = str(grpo_cfg.get("reward_composition", "additive"))
     _judgment_weights = list(grpo_cfg.get("judgment_reward_weights", [0.5, 0.25, 0.25]))
     _abstention_penalty = float(grpo_cfg.get("abstention_penalty", 0.0))
+    # Facet-3 confidence resolution in r_uncert. False (default) reproduces the
+    # v9-ckpt100 keeper checkpoint; True is the corrected fall-through for the
+    # per-component ablation. Enabling it changes the composite reward value.
+    _confidence_fallthrough = bool(grpo_cfg.get("confidence_fallthrough", False))
     reward_fn = CompositeRewardFunction(
         weights=weights,
         norm_universes=norm_universes,
@@ -671,6 +743,7 @@ def run_grpo_training_stage(
         judgment_weights=_judgment_weights,
         composition=_composition,
         abstention_penalty=_abstention_penalty,
+        confidence_fallthrough=_confidence_fallthrough,
     )
     print(f"[grpo_training] No-flow scoring mode: {_nf_scoring}, "
           f"reward composition: {_composition}")
@@ -818,6 +891,19 @@ def run_grpo_training_stage(
     _vignette_ratio = float(grpo_cfg.get("vignette_ratio", 0.0))
     vignettes = []
     if _vignette_ratio > 0.0:
+        # A SEPARATE vignette universe that resolves to zero sources (missing
+        # book key, empty corpus) would silently train with no norm_judgment
+        # prompts while config still claims vignette_ratio > 0 — corrupting the
+        # training mix. Fail loud on this config/data mismatch.
+        if _vignette_universe_is_separate and not vignette_norm_universes:
+            raise ValueError(
+                f"Separate vignette universe ({vignette_norm_universes_path!r}) "
+                f"resolved to 0 sources"
+                + (f" for book_id={book_id}" if book_id is not None else "")
+                + f", but vignette_ratio={_vignette_ratio} > 0. This would train "
+                "with zero judgment vignettes. Fix the universe/book mapping or "
+                "set vignette_ratio=0."
+            )
         vig_prompt_cfg = OmegaConf.select(cfg, "prompt_norm_judgment")
         if vig_prompt_cfg:
             vig_sys = str(OmegaConf.select(vig_prompt_cfg, "system_prompt") or "")
@@ -826,9 +912,9 @@ def run_grpo_training_stage(
             vig_sys = ""
             vig_tmpl = ""
         if vig_tmpl:
-            vignettes = _generate_vignettes(norm_universes, vig_tmpl)
+            vignettes = _generate_vignettes(vignette_norm_universes, vig_tmpl)
             print(f"[grpo_training] Generated {len(vignettes)} judgment vignettes "
-                  f"from {sum(1 for n in sum(norm_universes.values(), []) if n.get('governs_info_flow'))} "
+                  f"from {sum(1 for n in sum(vignette_norm_universes.values(), []) if n.get('governs_info_flow'))} "
                   f"info-flow norms")
 
     # Contrastive signal is now per-completion dual scoring inside
@@ -874,8 +960,17 @@ def run_grpo_training_stage(
     n_gold_neg = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is False)
     n_gold_unk = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is None)
     n_vignette_meta = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("task_type") == "norm_judgment")
+    # Realised vignette force mix BEFORE screening. The v11 steering variable —
+    # sampling from the candidate pool is uniform/force-blind, so the realised
+    # ratio must be measured, not inferred from the pool's ratio.
+    from .prompt_screening import _vignette_gold_counts
+    _vig_pre = _vignette_gold_counts(reward_fn.prompt_metadata.values())
     print(f"[grpo_training] Reward prompt metadata: {len(reward_fn.prompt_metadata)} entries "
           f"({n_contrastive} contrastive, {n_vignette_meta} vignettes)")
+    if n_vignette_meta:
+        print(f"[grpo_training] Vignette gold mix (pre-screen): "
+              f"{_vig_pre['yes']} yes : {_vig_pre['no']} no "
+              f"({_vig_pre['yes'] / max(_vig_pre['no'], 1):.2f}:1)")
     print(f"[grpo_training] Gold labels: {n_gold_pos} has_exchange=True, "
           f"{n_gold_neg} has_exchange=False, {n_gold_unk} unknown")
 
@@ -921,11 +1016,15 @@ def run_grpo_training_stage(
     # vignette_ratio describes the PRE-screen mix only. Record the realized
     # post-screen count so the paper's mix claim is auditable.
     _train_vignettes = sum(1 for r in dataset if r.get("task_type") == "norm_judgment")
+    _vig_post = _vignette_gold_counts(dataset)
     if n_vignette_meta:
         print(f"[grpo_training] Vignettes in final training set: "
               f"{_train_vignettes}/{len(dataset)} "
               f"({_train_vignettes / max(len(dataset), 1):.1%}; "
               f"pre-screen {n_vignette_meta}, configured ratio {_vignette_ratio})")
+        print(f"[grpo_training] Vignette gold mix (post-screen): "
+              f"{_vig_post['yes']} yes : {_vig_post['no']} no "
+              f"({_vig_post['yes'] / max(_vig_post['no'], 1):.2f}:1)")
 
     # vLLM mode configuration
     vllm_mode = grpo_cfg.get("vllm_mode", "colocate")
@@ -1155,14 +1254,31 @@ def run_grpo_training_stage(
         "num_iterations": training_args.num_iterations,
         "epsilon_high": training_args.epsilon_high,
         "vignette_ratio": _vignette_ratio,
+        # Records which corpus the judgment vignettes came from. "" ⇒ same as the
+        # grounding norm_universes (historical default). The *_is_separate flag
+        # records what was ACTUALLY used (a set-but-non-file path fails loud in
+        # _resolve_vignette_universes, so this can't silently certify the wrong
+        # corpus).
+        "vignette_norm_universes_path": vignette_norm_universes_path or "",
+        "vignette_universe_is_separate": _vignette_universe_is_separate,
         "n_vignettes_pre_screen": n_vignette_meta,
         # Final training set (post-screen, post-split), like n_flow_chunks —
         # the realized vignette mix, vs. the configured pre-screen ratio.
         "n_vignettes_post_screen": _train_vignettes,
+        # Realised vignette FORCE mix (gold yes:no) before/after screening.
+        # The v11 steering variable — the screen is force-blind and has
+        # historically halved "no"-vignette survival, so the ratio the policy
+        # actually trains on must be auditable per run (previously required
+        # mining reward_traces.jsonl; see 2026-07-01 field note).
+        "n_vignettes_yes_pre_screen": _vig_pre["yes"],
+        "n_vignettes_no_pre_screen": _vig_pre["no"],
+        "n_vignettes_yes_post_screen": _vig_post["yes"],
+        "n_vignettes_no_post_screen": _vig_post["no"],
         "judgment_reward_weights": _judgment_weights,
         "no_flow_scoring": _nf_scoring,
         "reward_composition": _composition,
         "abstention_penalty": _abstention_penalty,
+        "confidence_fallthrough": _confidence_fallthrough,
         "rground_scoring": str(grpo_cfg.get("rground_scoring", "absolute")),
         "rground_judge_backend": str(grpo_cfg.get("rground_judge_backend", "llm")).lower(),
         "reranker_app_weight": float(grpo_cfg.get("reranker_app_weight", 0.2)),
@@ -1172,6 +1288,9 @@ def run_grpo_training_stage(
         "rground_app_floor_prohibit": (
             float(grpo_cfg["rground_app_floor_prohibit"])
             if grpo_cfg.get("rground_app_floor_prohibit", None) is not None else None),
+        "rground_app_hedge_prohibit": (
+            float(grpo_cfg["rground_app_hedge_prohibit"])
+            if grpo_cfg.get("rground_app_hedge_prohibit", None) is not None else None),
         "reward_weights": list(weights),
         "online_rground": use_online_rground,
         "enable_thinking_grpo": enable_thinking_grpo,

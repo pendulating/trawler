@@ -1,0 +1,28 @@
+# @package _global_
+# Gemma-4-12B-IT: 12B dense, instruction-tuned. The mid-size rung of the
+# canonical gemma-4 ladder (E2B -> E4B -> 12B -> 31B).
+#
+# ⚠️ REQUIRES vLLM >= 0.25. This checkpoint's architecture is
+# `Gemma4UnifiedForConditionalGeneration`, which is NOT the same class as the
+# 31B / E4B / E2B (`Gemma4ForConditionalGeneration`) and is NOT in vLLM 0.19.1's
+# model registry — the engine refuses to load it. Verified 2026-07-13:
+#     ModelRegistry.get_supported_archs()  # 0.19.1: no Gemma4Unified*
+# See wiki/canonical-models.md.
+#
+# Sizing (measured from config.json, 2026-07-13):
+# * 23 GB bf16 weights -> fits one A6000 (48 GB) with room for KV. TP=1.
+# * 48 layers x 8 KV heads x head_dim 256 = ~0.39 MB/token of KV — about 2.5x
+#   leaner than the 31B (0.98 MB/token), so it tolerates a larger max_num_seqs.
+# * head_dim=256 forces TRITON_ATTN here as on the rest of the family;
+#   FLASH_ATTN / FLASHINFER reject it. Not a tunable.
+model:
+  model_source: /share/pierson/matt/zoo/models/gemma-4-12B-it
+  model_family: gemma-4
+  thinking_mode: off
+  engine_kwargs:
+    max_model_len: 16384
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+  batch_size: 0
+  concurrency: 1

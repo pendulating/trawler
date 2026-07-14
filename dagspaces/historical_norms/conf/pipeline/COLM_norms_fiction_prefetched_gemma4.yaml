@@ -1,0 +1,133 @@
+# @package _global_
+# Raz Norm Extraction Pipeline — Fiction Texts (Gemma-4 gold-label regeneration).
+#
+# 2026-07-12 re-extraction with a fresh judge (google/gemma-4-31B-it) and
+# the FICTION prompts actually applied — the first norms run after the
+# prompt-wiring fix (config.yaml group defaults used to clobber pipeline
+# prompt selections; every prior fiction run used the prescriptive prompts).
+# Verify the `PROMPT PROVENANCE: norm_reasoning_fiction` banner in stage logs
+# and the `prompt_name` column in output parquets.
+#
+# Stages: norm_reasoning → norm_extraction only. Role abstraction runs
+# separately (role_abstraction_standalone pattern) against the extraction
+# parquet, as in the qwen36 lineage.
+#
+# Corpus-agnostic: FICTION_CHUNKS_PATH selects fiction10 or top100 chunks
+# (identical schemas). See scripts/run_extract_{fiction10,top100}_norms_gemma4.sh.
+#
+# Usage:
+#   FICTION_CHUNKS_PATH=/path/to/chunks.parquet \
+#     python -m dagspaces.historical_norms.cli \
+#       pipeline=COLM_norms_fiction_prefetched_gemma4 model=gemma-4-31b/instruct
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# NOTE: this pipeline assumes `model=gemma-4-31b/instruct` is passed on the
+# CLI. The model can't be pinned via defaults from a pipeline yaml because
+# the base config loads `pipeline` before `model`, so a `- override /model:`
+# here doesn't apply.
+
+# Fiction prompt variants (live selections since the 2026-07-12 wiring fix;
+# guarded by tests/historical_norms/test_prompt_wiring.py)
+prompt_reasoning: ${prompt_norm_reasoning_fiction}
+prompt_extraction: ${prompt_norm_extraction_fiction}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/COLM_norms_fiction_gemma4
+  allow_partial: false
+
+  sources:
+    prefetched_chunks:
+      path: ${oc.env:FICTION_CHUNKS_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      # ============================================================
+      # Stage 1: Raz Norm Reasoning (from prefetched chunks)
+      # ============================================================
+      reasoning:
+        stage: norm_reasoning
+        depends_on: []
+        inputs:
+          dataset: prefetched_chunks
+        outputs:
+          dataset: outputs/reasoning/reasoning.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 6144
+          # TP=2 x DP=2 (two replicas), NOT TP=4. The KV-starvation reasoning
+          # that motivated TP=4 was correct in its premise but wrong in its
+          # conclusion: TP=4 really does fix KV (2.8x -> 12.1x concurrency), but
+          # KV was never the bottleneck -- the PCIe collectives are. TP=4 doubles
+          # them (60.6ms of all-reduce per decode step vs 29.4ms at TP=2), which
+          # costs more than the KV headroom is worth.
+          #
+          # Measured on klara/A6000 at production shape (24 real chunks,
+          # max_tokens=6144, guided JSON), per 4 GPUs:
+          #   TP=2 x DP=2 : 20.3 prompts/min  <- this
+          #   TP=4 x DP=1 : 12.3 prompts/min
+          # fiction10 (2993 chunks): ~2.5h vs ~4.1h. Requires NCCL_SHM_DISABLE=0.
+          model.engine_kwargs.data_parallel_size: 2
+          model.engine_kwargs.tensor_parallel_size: 2
+          model.engine_kwargs.max_num_seqs: 24
+          model.engine_kwargs.gpu_memory_utilization: 0.92
+          # 24576 (not the yaml's eval-tuned 16384): the ~6k-token system
+          # prompt + book summary + chunk pushed 706/2993 fiction10 prompts
+          # past 16384-max_tokens, silently clamping output budgets (worst
+          # tail truncates mid-JSON -> parse error -> has_norms=False bias
+          # against long-summary books). KV is paged, so max_model_len only
+          # needs to bound the longest request.
+          model.engine_kwargs.max_model_len: 24576
+        launcher: slurm_gpu_4x
+        wandb_suffix: reasoning
+
+      # ============================================================
+      # Stage 2: Raz Norm Extraction
+      # Role abstraction (stage 3) runs separately, as in the qwen36
+      # lineage.
+      # ============================================================
+      extraction:
+        stage: norm_extraction
+        depends_on: [reasoning]
+        inputs:
+          dataset: reasoning.dataset
+        outputs:
+          dataset: outputs/extraction/structured_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 8192
+          # TP=2 x DP=2 (two replicas), NOT TP=4. The KV-starvation reasoning
+          # that motivated TP=4 was correct in its premise but wrong in its
+          # conclusion: TP=4 really does fix KV (2.8x -> 12.1x concurrency), but
+          # KV was never the bottleneck -- the PCIe collectives are. TP=4 doubles
+          # them (60.6ms of all-reduce per decode step vs 29.4ms at TP=2), which
+          # costs more than the KV headroom is worth.
+          #
+          # Measured on klara/A6000 at production shape (24 real chunks,
+          # max_tokens=6144, guided JSON), per 4 GPUs:
+          #   TP=2 x DP=2 : 20.3 prompts/min  <- this
+          #   TP=4 x DP=1 : 12.3 prompts/min
+          # fiction10 (2993 chunks): ~2.5h vs ~4.1h. Requires NCCL_SHM_DISABLE=0.
+          model.engine_kwargs.data_parallel_size: 2
+          model.engine_kwargs.tensor_parallel_size: 2
+          model.engine_kwargs.max_num_seqs: 24
+          model.engine_kwargs.gpu_memory_utilization: 0.92
+          # 24576 (not the yaml's eval-tuned 16384): the ~6k-token system
+          # prompt + book summary + chunk pushed 706/2993 fiction10 prompts
+          # past 16384-max_tokens, silently clamping output budgets (worst
+          # tail truncates mid-JSON -> parse error -> has_norms=False bias
+          # against long-summary books). KV is paged, so max_model_len only
+          # needs to bound the longest request.
+          model.engine_kwargs.max_model_len: 24576
+        launcher: slurm_gpu_4x
+        wandb_suffix: extraction

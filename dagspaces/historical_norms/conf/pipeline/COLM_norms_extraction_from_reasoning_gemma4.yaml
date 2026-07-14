@@ -1,0 +1,73 @@
+# @package _global_
+# Norm EXTRACTION ONLY, from an already-completed reasoning parquet (Gemma-4).
+#
+# Why this exists (2026-07-13): the overnight chain was launched inside SLURM
+# session job 845966, which timed out at 09:52 and killed the driver. The
+# top100_norms *reasoning* job had already been submitted and survived to
+# completion (reasoning.parquet, 15,875/15,875 rows), but nothing after it was
+# ever submitted. The orchestrator has no node-level resume — re-running
+# COLM_norms_fiction_prefetched_gemma4 would redo ~12h of reasoning from
+# scratch. This pipeline picks up where it stopped.
+#
+# It is COLM_norms_fiction_prefetched_gemma4's `extraction` node, verbatim
+# (same prompt, same TP=2 x DP=2 layout, same max_model_len), with the reasoning
+# parquet promoted from a node output to a source.
+#
+# Deliberately does NOT run role_abstraction — the fiction10 norms corpus stops
+# at structured_norms.parquet, and top100 must match it. Role abstraction is a
+# separate pipeline (role_abstraction_standalone).
+#
+# Usage:
+#   REASONING_PATH=/path/to/reasoning.parquet \
+#     python -m dagspaces.historical_norms.cli \
+#       pipeline=COLM_norms_extraction_from_reasoning_gemma4 \
+#       model=gemma-4-31b/instruct
+#
+# SANITY: confirm the stage log prints `PROMPT PROVENANCE: norm_extraction_fiction`
+# and that the output parquet carries prompt_name == 'norm_extraction_fiction'.
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# Fiction prompt (live selection since the 2026-07-12 wiring fix; guarded by
+# tests/historical_norms/test_prompt_wiring.py).
+prompt_extraction: ${prompt_norm_extraction_fiction}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/COLM_norms_fiction_gemma4
+  allow_partial: false
+
+  sources:
+    reasoning_data:
+      path: ${oc.env:REASONING_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      extraction:
+        stage: norm_extraction
+        depends_on: []
+        inputs:
+          dataset: reasoning_data
+        outputs:
+          dataset: outputs/extraction/structured_norms.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 8192
+          # TP=2 x DP=2, NOT TP=4 — the PCIe collectives are the bottleneck, not
+          # KV, and TP=4 doubles them. Measured per 4 GPUs on klara/A6000:
+          # TP=2 x DP=2 = 20.3 prompts/min vs TP=4 x DP=1 = 12.3.
+          # Requires NCCL_SHM_DISABLE=0. See wiki/slurm-and-env.md.
+          model.engine_kwargs.data_parallel_size: 2
+          model.engine_kwargs.tensor_parallel_size: 2
+          model.engine_kwargs.max_num_seqs: 24
+          model.engine_kwargs.gpu_memory_utilization: 0.92
+          model.engine_kwargs.max_model_len: 24576
+        launcher: slurm_gpu_4x
+        wandb_suffix: extraction

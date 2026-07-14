@@ -44,7 +44,7 @@ echo ""
 # NCCL env vars for PCIe-only machines (no NVLink)
 export NCCL_P2P_DISABLE=1
 export NCCL_IB_DISABLE=1
-export NCCL_SHM_DISABLE=1
+export NCCL_SHM_DISABLE=0  # SHM is the fallback transport when P2P is off; disabling both forces TCP sockets
 
 # Launch embedding server
 echo "[$(date)] Launching embedding server on GPU ${EMB_GPU}..."

@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 
 from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import CIExtractionResult
-from ._utils import extract_json, clean_for_parquet
+from ._utils import announce_prompt, extract_json, clean_for_parquet
 
 
 def _parse_reasoning_json(raw: str) -> Dict[str, Any]:
@@ -102,6 +102,7 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     print(f"[ci_extraction] Loaded prompt from config "
           f"(system_prompt: {len(system_prompt)} chars, prompt_template: {len(prompt_template)} chars)",
           flush=True)
+    prompt_name = announce_prompt("ci_extraction", prompt_cfg, system_prompt)
 
     def _format_prompt(row: Dict[str, Any]) -> str:
         text = str(row.get("ci_flow_snippet") or row.get("article_text") or "")
@@ -181,77 +182,31 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     )
 
     print(f"[ci_extraction] Completed inference, {len(result_df)} results")
-    result_df = _validate_flow_quality(result_df, cfg)
     result_df = clean_for_parquet(result_df, extra_cols=["ci_reasoning_data", "ci_norms_invoked"], stage_name="ci_extraction")
+    result_df["prompt_name"] = prompt_name
     return result_df
 
 
-# Flow tuple fields that must be role-abstracted (the extraction prompt
-# instructs "NEVER use character names" — see ci_schema.py).
-_FLOW_QA_FIELDS = [
-    ("subject", "ci_subject"),
-    ("sender", "ci_sender"),
-    ("recipient", "ci_recipient"),
-    ("information_type", "ci_information_type"),
-    ("transmission_principle", "ci_transmission_principle"),
-    ("context", "ci_context"),
-]
-
-
-def _validate_flow_quality(result_df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
-    """Flag flows whose components reference named characters.
-
-    Mirrors the norms-track ``norm_quality_*`` check (2026-06-09: layered
-    blocklist + title pattern + spaCy PERSON NER via
-    ``..name_detection.PersonNameDetector``). The flows track previously
-    had NO quality validation even though its prompt forbids character
-    names. Adds ``flow_quality_flags`` / ``flow_quality_passed``; rows are
-    flagged, never dropped.
-    """
-    if result_df.empty:
-        result_df["flow_quality_flags"] = None
-        result_df["flow_quality_passed"] = None
-        return result_df
-
-    from ..name_detection import PersonNameDetector
-
-    blocklist = None
-    try:
-        custom = OmegaConf.select(cfg, "norm_quality.character_blocklist")
-        if custom:
-            blocklist = {str(n).lower() for n in custom}
-    except Exception:
-        pass
-    _use_ner = OmegaConf.select(cfg, "norm_quality.use_ner", default=True)
-    detector = PersonNameDetector(
-        blocklist=blocklist,
-        use_ner=bool(_use_ner) if _use_ner is not None else True,
-    )
-
-    all_flags: List[Any] = []
-    all_passed: List[Any] = []
-    for _, row in result_df.iterrows():
-        # Rows without an extracted flow (parse errors, no-flow chunks)
-        # get null quality columns, matching the norms-track convention.
-        if not any(isinstance(row.get(col), str) and row.get(col)
-                   for _, col in _FLOW_QA_FIELDS):
-            all_flags.append(None)
-            all_passed.append(None)
-            continue
-        flags: List[str] = []
-        for field_name, col in _FLOW_QA_FIELDS:
-            val = row.get(col)
-            if isinstance(val, str) and val:
-                flags.extend(detector.field_flags(field_name, val))
-        seen: set = set()
-        unique = [f for f in flags if not (f in seen or seen.add(f))]
-        all_flags.append("; ".join(unique) if unique else None)
-        all_passed.append(len(unique) == 0)
-
-    result_df["flow_quality_flags"] = all_flags
-    result_df["flow_quality_passed"] = all_passed
-    n_flagged = sum(1 for p in all_passed if p is False)
-    n_checked = sum(1 for p in all_passed if p is not None)
-    print(f"[ci_extraction] Flow quality: {n_flagged}/{n_checked} flows "
-          f"flagged for named-person references")
-    return result_df
+# NOTE (2026-07-13): there was a `_validate_flow_quality()` here, adding
+# `flow_quality_flags` / `flow_quality_passed` by running the norms-track
+# PersonNameDetector over the six flow fields. It has been removed.
+#
+# It enforced a rule that does not exist. Its docstring claimed the flows
+# prompt "forbids character names" — it does not, and never did: neither
+# `ci_extraction_fiction` nor `ci_extraction_prescriptive` says anything about
+# roles or character names, while `norm_extraction_fiction` says it five times.
+# `InformationFlowTuple.sender` is documented only as "the agent transmitting
+# or disclosing the information", where `RazNormTuple.norm_subject` says "MUST
+# be a social role, NEVER a named character". Nissenbaum's sender/recipient are
+# *actors in a context*; naming them is the point.
+#
+# The check was copy-pasted from the norms track and flagged 37.6% of the
+# fiction10 flows (6,087/16,200) for doing exactly what the prompt asked. It was
+# also incoherent on its own terms: `Mrs. Bennet -> Mr. Bennet` failed on the
+# title regex while `Elizabeth -> Jane` passed, so it measured name *formatting*,
+# not name presence. Nothing consumed it but a W&B gauge.
+#
+# If role-abstracted flows are ever wanted, the fix is a prompt change plus a
+# `ci_role_abstraction` stage mirroring `norm_role_abstraction` — not a detector.
+# See notebooks/normative-simulacra/fiction10_norms_gemma4_validation_2026_07_12.py
+# (Gate F6).

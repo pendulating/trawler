@@ -152,6 +152,11 @@ contrastive_ratio: 0.0
 contrastive_lambda: 1.0
 no_flow_scoring: independent
 
+# r_uncert facet-3 confidence resolution. false = v9-ckpt100 keeper repro;
+# true = corrected fall-through (default-5 fallback reachable), for the
+# per-component ablation. Changes the composite reward value. See default.yaml.
+confidence_fallthrough: false
+
 # ── R_ground scoring mode (Phase 3) ──
 # "ranked": one listwise judge call per (group, universe) ranks all G
 # same-prompt completions against a shared retrieved norm set; per-candidate
@@ -204,6 +209,24 @@ rground_app_floor: 0.4
 # discount-not-annihilate guard. null = symmetric v9 behaviour.
 # See deontic.appropriateness_multiplier, wiki/grpo_training_field_notes/2026-06-24_v10_plan.md.
 rground_app_floor_prohibit: 0.1
+
+# ── Cost-sensitive hedge tier (v12a 2026-07-03) ──
+# The v10 floor punished the false-permit TAIL but left hedging the safe
+# optimum: prohibited-flow hedge ("ambiguous") mass froze at ~72% across the
+# v10 AND v11-probe runs, with a correct committer present in ~half the traced
+# groups that still lost — under R_ground = base × direction a well-grounded
+# hedge (×0.7) routinely outscores a mediocre-grounded correct commit (×1.0),
+# since the commit's direction edge is only 1.0-vs-0.7 while grounding+rank
+# spread is larger (rank_weight 0.5). Both held-out sweeps plateaued at GoldCoin
+# Forbid recall 0.55 (< SFT 0.65). hedge_prohibit drops a hedged verdict on a
+# prohibited/discouraged-governed flow to 0.5, widening the commit-vs-hedge gap
+# 0.3 → 0.5 exactly where it binds; hedges on non-prohibited flows keep the
+# neutral 0.7, and no-flow declarations stay neutral (abstention economics
+# unchanged — the no_flow gate already runs hot at ~0.6). Ordering: correct 1.0
+# > hedge-on-prohibited 0.5 > false-forbid 0.4 > false-permit 0.1. null = v10.
+# See deontic.appropriateness_multiplier,
+# wiki/grpo_training_field_notes/2026-07-01_v11_probe_midrun_forensics.md (§3).
+rground_app_hedge_prohibit: 0.5
 
 # ── Reward composition (Phase 3) ──
 # "gated": R = gate(r_uncert, r_complete, r_consist) × disc(r_context,

@@ -1,0 +1,68 @@
+# @package _global_
+# CI Information Flow REASONING ONLY from prefetched fiction chunks (scaled).
+#
+# Stage-1-only variant of COLM_flows_fiction_prefetched_qwen36: runs just
+# ci_reasoning (flow identification + has_information_exchange gold labels +
+# per-chunk CI reasoning traces) and skips the 5-tuple ci_extraction stage.
+#
+# Why it exists: the GRPO training pipeline consumes the *reasoning* output
+# (CI_REASONING_PATH -> reasoning.parquet with article_text / gutenberg_id /
+# has_information_exchange), not the structured tuples — so for the top100
+# flows GRPO run only this stage blocks (~3h on 4 GPUs; the norms-track
+# reasoning over the same 15,875 chunks took 2.8h). The structured-tuple
+# stage can be run later, wasting nothing, via:
+#   python -m dagspaces.historical_norms.cli \
+#     pipeline=ci_extraction_from_reasoning_fiction model=qwen3.6-27b/instruct \
+#     reasoning_dataset_path=<this pipeline's outputs/ci_reasoning/reasoning.parquet>
+#
+# Usage (see scripts/run_extract_top100_flows.sh):
+#   FICTION_CHUNKS_PATH=/share/pierson/matt/zoo/datasets/gutenberg_cache/chunks_top100_fiction_en.parquet \
+#     python -m dagspaces.historical_norms.cli \
+#       pipeline=COLM_flows_reasoning_prefetched_qwen36 model=qwen3.6-27b/instruct
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# NOTE: this pipeline assumes `model=qwen3.6-27b/instruct` is passed on the
+# CLI (see comment in COLM_norms_fiction_prefetched_qwen36.yaml).
+
+# Override prompts to use fiction variants
+prompt_ci_reasoning: ${prompt_ci_reasoning_fiction}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/COLM_flows_reasoning_qwen36
+  allow_partial: false
+
+  sources:
+    prefetched_chunks:
+      path: ${oc.env:FICTION_CHUNKS_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      # ============================================================
+      # CI Reasoning (only stage)
+      # Identifies information flows in fiction and reasons about
+      # context, actors, direction, and appropriateness. Same node
+      # config as COLM_flows_fiction_prefetched_qwen36.
+      # ============================================================
+      ci_reasoning:
+        stage: ci_reasoning
+        depends_on: []
+        inputs:
+          dataset: prefetched_chunks
+        outputs:
+          dataset: outputs/ci_reasoning/reasoning.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 4096
+          model.engine_kwargs.data_parallel_size: 2
+          model.engine_kwargs.tensor_parallel_size: 2
+        launcher: slurm_gpu_4x
+        wandb_suffix: ci_reasoning

@@ -1,5 +1,36 @@
 # 2026-06-09 — NER-based name QA for norm + flow extraction
 
+> ## ⚠️ Partially retracted 2026-07-13
+>
+> **The flows half of this change was wrong and has been removed.** Two
+> corrections, both validated on the fiction10 gemma-4 corpora — see
+> `notebooks/normative-simulacra/fiction10_norms_gemma4_validation_2026_07_12.py`
+> (Gates F and F6):
+>
+> 1. **`_validate_flow_quality()` is deleted.** The premise in "Why" §2 below —
+>    *"the CI extraction prompt itself forbids character names
+>    (`ci_schema.py:188`)"* — is a **misattribution**. Line 188 is inside
+>    **`RazNormTuple.norm_subject`**, the *norms* schema. `InformationFlowTuple`
+>    says only *"the agent transmitting or disclosing the information"*, and
+>    **neither** `ci_extraction_fiction` nor `ci_extraction_prescriptive` mentions
+>    roles or character names (`norm_extraction_fiction` does, five times). A norms
+>    rule was applied to flows. The check flagged **6,087 / 16,200 (37.6%)** of
+>    fiction10 flows for doing exactly what the prompt asked, and was incoherent
+>    besides — `Mrs. Bennet → Mr. Bennet` failed the title regex while
+>    `Elizabeth → Jane` passed, so it graded name *formatting*, not name presence.
+>    `data_quality/flow_quality_passed_rate` is gone with it.
+>
+> 2. **The blocklist now matches ambiguous names case-sensitively.** The built-in
+>    list contains `will` (Will Ladislaw) and `may` (May Welland), matched
+>    case-insensitively across all ten books — so the modal verbs in *"a servant
+>    **may** not disclose…"* tripped the gate everywhere. On fiction10 that was
+>    **373 of 440** flagged norms: `norm_quality_passed` reported 4.39% leakage
+>    when the true rate was **0.32%**. See `name_detection.AMBIGUOUS_NAMES`.
+>
+> Neither check ever dropped a row, so **no corpus was corrupted** — the damage
+> was confined to two W&B gauges that read as signal and were noise. The NER
+> detector and the norms-track integration (below) remain correct and in use.
+
 **Status:** in working tree. Replaces the manually curated character
 blocklist as the *primary* QA detector and fixes two structural gaps the
 empirical check exposed.

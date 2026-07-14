@@ -1,3 +1,6 @@
+# Prompt identity — logged by stages at run start and stamped into
+# output parquets as `prompt_name` (provenance guard, added 2026-07-12).
+name: ci_reasoning_prescriptive
 system_prompt: |
   You are an expert in Helen Nissenbaum's Contextual Integrity (CI) framework, specializing in identifying **information flows** — instances where information is transmitted, disclosed, concealed, or withheld between agents — in prescriptive and religious texts.
 

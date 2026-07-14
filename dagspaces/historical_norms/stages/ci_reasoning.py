@@ -11,7 +11,7 @@ from typing import Any, Dict
 
 from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import CIReasoningList
-from ._utils import extract_json, clean_for_parquet
+from ._utils import announce_prompt, extract_json, clean_for_parquet
 
 
 def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
@@ -49,6 +49,7 @@ def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
     print(f"[ci_reasoning] Loaded prompt from config "
           f"(system_prompt: {len(system_prompt)} chars, prompt_template: {len(prompt_template)} chars)",
           flush=True)
+    prompt_name = announce_prompt("ci_reasoning", prompt_cfg, system_prompt)
 
     def _format_prompt(row_or_text) -> str:
         if isinstance(row_or_text, dict):
@@ -123,4 +124,5 @@ def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
           f"{n_parse_errors} parse errors")
 
     result_df = clean_for_parquet(result_df, extra_cols=["ci_reasoning_data"], stage_name="ci_reasoning")
+    result_df["prompt_name"] = prompt_name
     return result_df

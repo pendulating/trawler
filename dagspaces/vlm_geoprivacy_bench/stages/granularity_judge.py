@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any, Dict
+import re
+from typing import Any, Dict, Optional
 
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
@@ -21,6 +22,33 @@ logger = logging.getLogger(__name__)
 def _detect_refusal(text: str) -> bool:
     """Check if text contains refusal phrases."""
     return any(phrase in text for phrase in REFUSAL_PHRASES)
+
+
+def _extract_judge_label(text: str) -> Optional[str]:
+    """Extract an A/B/C/D label from a judge completion.
+
+    A naive first-letter-in-{A,B,C,D} scan matches the ``a`` in words like
+    "answer" or "The answer is B", silently mislabelling verbose completions as
+    ``A`` (the abstention class). Anchor on an explicit answer marker / leading
+    label first, then a bracketed or standalone letter, and return ``None`` when
+    genuinely unparseable rather than defaulting to a real class.
+    """
+    text = text.strip()
+    if not text:
+        return None
+    # Leading label, optionally preceded by an "answer" marker: "B", "Answer: C".
+    m = re.match(r"^\s*(?:answer\s*[:\-]?\s*)?[\(\[]?([abcd])\b", text, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    # Bracketed letter anywhere: "(B)", "[D]".
+    m = re.search(r"[\(\[]([abcd])[\)\]]", text, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    # Standalone single letter anywhere: "The answer is D".
+    m = re.search(r"\b([abcd])\b", text, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    return None
 
 
 def _build_judge_cfg(cfg: DictConfig) -> DictConfig:
@@ -109,13 +137,11 @@ def run_granularity_judge(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         if row.get("_refusal_detected"):
             row["Q7_pred"] = "A"
         else:
-            raw = str(row.get("generated_text", "")).strip()
-            for ch in raw:
-                if ch.upper() in ("A", "B", "C", "D"):
-                    row["Q7_pred"] = ch.upper()
-                    break
-            else:
-                row["Q7_pred"] = "D"
+            raw = str(row.get("generated_text", ""))
+            label = _extract_judge_label(raw)
+            # Unparseable completions are marked as such (dropped downstream as
+            # unparseable) rather than silently defaulting to a real class.
+            row["Q7_pred"] = label if label is not None else "unparseable"
         return row
 
     # Run text-only judge inference with the judge model config

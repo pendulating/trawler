@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import RazNormReasoningList
-from ._utils import extract_json, clean_for_parquet
+from ._utils import announce_prompt, extract_json, clean_for_parquet
 
 
 def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
@@ -43,6 +43,7 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
     print(f"[norm_reasoning] Loaded prompt from config "
           f"(system_prompt: {len(system_prompt)} chars, prompt_template: {len(prompt_template)} chars)",
           flush=True)
+    prompt_name = announce_prompt("norm_reasoning", prompt_cfg, system_prompt)
 
     def _format_prompt(row: Dict[str, Any]) -> str:
         article_text = str(row.get("article_text", ""))
@@ -171,4 +172,5 @@ def run_norm_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
         print(f"[norm_reasoning] Exploded {pre_count} rows -> {len(result_df)} rows (one per norm)")
 
     result_df = clean_for_parquet(result_df, extra_cols=["reasoning_data"], stage_name="norm_reasoning")
+    result_df["prompt_name"] = prompt_name
     return result_df

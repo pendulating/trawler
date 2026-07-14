@@ -10,12 +10,6 @@ defaults:
   - pipeline: norm_extraction
   - model: qwen2.5-72b/awq
   - data: pride_and_prejudice
-  # Active prompt keys — stages look these up at runtime.
-  # Default to the prescriptive-text variants.
-  - prompt@prompt_reasoning: norm_reasoning_prescriptive
-  - prompt@prompt_extraction: norm_extraction_prescriptive
-  - prompt@prompt_ci_reasoning: ci_reasoning_prescriptive
-  - prompt@prompt_ci_extraction: ci_extraction_prescriptive
   # Named prescriptive variants (available for explicit pipeline overrides)
   - prompt@prompt_norm_reasoning_prescriptive: norm_reasoning_prescriptive
   - prompt@prompt_norm_extraction_prescriptive: norm_extraction_prescriptive
@@ -30,6 +24,23 @@ defaults:
   - prompt@prompt_consolidation: norm_consolidation
   # Role abstraction prompt
   - prompt@prompt_role_abstraction: norm_role_abstraction
+
+# Active prompt keys — stages look these up at runtime. Defaults are the
+# prescriptive-text variants; pipeline configs swap variants by overriding
+# these body keys (e.g. `prompt_reasoning: ${prompt_norm_reasoning_fiction}`).
+#
+# IMPORTANT: these MUST be body keys, not `prompt@prompt_reasoning:` group
+# defaults. A group default in this file merges AFTER the pipeline body
+# (defaults-list order), silently clobbering every pipeline's prompt
+# selection — that exact bug shipped ALL fiction extraction runs from
+# 2026-03-09 (fb7256e) to 2026-07-12 with the prescriptive prompts.
+# Guarded by tests/historical_norms/test_prompt_wiring.py. To force a
+# variant from the CLI, append a group default (merges last, wins over the
+# pipeline): `+prompt@prompt_ci_reasoning=ci_reasoning_fiction`.
+prompt_reasoning: ${prompt_norm_reasoning_prescriptive}
+prompt_extraction: ${prompt_norm_extraction_prescriptive}
+prompt_ci_reasoning: ${prompt_ci_reasoning_prescriptive}
+prompt_ci_extraction: ${prompt_ci_extraction_prescriptive}
 
 experiment:
   name: historical_norms

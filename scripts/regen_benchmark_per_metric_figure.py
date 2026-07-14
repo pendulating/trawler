@@ -29,8 +29,8 @@ PAPER = Path("/share/pierson/matt/UAIR/papers/colm26_normative-simulacra")
 TABLE = PAPER / "tables" / "benchmark_results.tex"
 
 # Column index (0-based, after splitting a data row on '&') -> metric.
-# Row layout: Model & Cond & Appl & Comp & QA & Lk & AdjLk & Helpful & Help & r & CIRL & Q7 & MMLU
-COL = {"Appl": 2, "Comp": 3, "Helpful": 7, "AdjLk": 6, "r": 9, "Q7": 11}
+# Row layout: Model & Cond & Appl & Comp & QA & Lk & AdjLk & Helpful & Help & r & CIRL-Comp & CIRL-Acc & Q7 & MMLU
+COL = {"Appl": 2, "Comp": 3, "Helpful": 7, "AdjLk": 6, "r": 9, "Q7": 12}
 
 # The 6 plotted panels: (table-key, panel title, higher_is_better)
 PANELS = [
@@ -42,8 +42,8 @@ PANELS = [
     ("Q7",     "VLM-GeoPrivacy Q7 Acc (%)",    True),
 ]
 
-COND_COLORS = {"Zero-shot": "#4C72B0", "SFT": "#DD8452", "GRPO": "#55A868"}
-COND_ORDER = ["Zero-shot", "SFT", "GRPO"]
+COND_COLORS = {"0-Shot": "#4C72B0", "SFT": "#DD8452", "GRPO": "#55A868"}
+COND_ORDER = ["0-Shot", "SFT", "GRPO"]
 
 plt.rcParams.update({
     "font.family": "serif", "font.serif": ["Times New Roman", "DejaVu Serif"],

@@ -1045,6 +1045,35 @@ def _create_submitit_executor(
             "submitit is not available but is required for SLURM job submission"
         )
 
+    # Fail loudly if submitit cannot actually see SLURM.
+    #
+    # AutoExecutor picks its backend from `SlurmExecutor.affinity()`, which is
+    # literally `-1 if shutil.which("srun") is None else 2`. If `srun` is not on
+    # PATH it silently falls back to the LOCAL executor and runs the stage as a
+    # subprocess on whatever node the driver happens to be on — no GPUs, no
+    # error. On 2026-07-13 that quietly launched a 31B model on a GPU-less CPU
+    # node; the only symptom was `CUDA_VISIBLE_DEVICES=''` buried in a stage log.
+    #
+    # The trap on this cluster: the SLURM clients in ~/.local/bin are ssh
+    # -forwarding shims (sacct/sbatch/scancel/sinfo/squeue) and there is NO srun
+    # shim. A login shell also has /usr/local/slurm/current/bin on PATH, which
+    # supplies a real `srun`, so interactive runs work — but an `sbatch` job gets
+    # a minimal PATH, loses it, and falls back to local. Driver scripts must set:
+    #     export PATH="$HOME/.local/bin:$PATH:/usr/local/slurm/current/bin"
+    # (shims first so sbatch/squeue resolve to the working ones; the native dir
+    # last so `srun` merely *exists* for this check — slurm_use_srun=False, so it
+    # is never executed).
+    import shutil as _shutil
+
+    if _shutil.which("srun") is None:
+        raise RuntimeError(
+            "submitit cannot see SLURM: `srun` is not on PATH, so AutoExecutor "
+            "would silently fall back to its LOCAL executor and run this GPU "
+            "stage as a subprocess on the current node (no GPUs).\n"
+            "Fix: export PATH=\"$HOME/.local/bin:$PATH:/usr/local/slurm/current/bin\"\n"
+            "See wiki/slurm-and-env.md."
+        )
+
     with _clean_slurm_env():
         executor = submitit.AutoExecutor(folder=log_folder)
 

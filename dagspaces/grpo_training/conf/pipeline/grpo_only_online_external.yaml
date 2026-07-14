@@ -12,6 +12,11 @@
 #     pipeline=grpo_only_online_external \
 #     training/grpo=online_rground_external \
 #     model=qwen3.5-9b/sft-ci
+#
+# Optional VIGNETTE_NORM_UNIVERSES_PATH: draw the judgment vignettes from a
+# SEPARATE (e.g. more force-balanced top100) norm_universes.json while R_ground
+# grounding + the CI-extraction prompts keep NORM_UNIVERSES_PATH. Unset ⇒
+# vignettes use the grounding universe (historical default).
 
 defaults:
   - override /hydra/launcher: slurm_monitor
@@ -32,6 +37,10 @@ pipeline:
     norm_embeddings:
       path: ${oc.env:NORM_EMBEDDINGS_PATH,""}
       type: dir
+    # Optional separate vignette universe (unset ⇒ vignettes use norm_universes).
+    vignette_norm_universes:
+      path: ${oc.env:VIGNETTE_NORM_UNIVERSES_PATH,""}
+      type: json
 
   graph:
     nodes:
@@ -43,6 +52,7 @@ pipeline:
           chunks: ci_reasoning
           norm_universes: norm_universes
           embeddings: norm_embeddings
+          vignette_norm_universes: vignette_norm_universes
         outputs:
           checkpoint:
             path: outputs/grpo/checkpoint

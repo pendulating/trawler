@@ -8,7 +8,8 @@ Ported from GoldCoin/eval/parse_eval_result.py with improvements:
 from __future__ import annotations
 
 import json
-from typing import Optional
+import re
+from typing import List, Optional, Tuple
 
 import pandas as pd
 
@@ -49,54 +50,76 @@ def extract_step_result(response: str) -> str:
     return response
 
 
+# Word-boundary keyword matching. Substring matching mis-classified negated
+# verdicts: "permis" matched inside "impermissible" (→ Permit, should be Forbid)
+# and "allow" inside "not allowed" (→ Permit, should be Forbid). Patterns are
+# anchored with ``\b`` so a positive keyword cannot match inside a negating word,
+# and negated/forbidding phrases are listed first so that on an index tie they
+# beat the bare positive keyword they contain. Earliest match position wins;
+# "not X" phrases start before the bare "X" they contain, so double-negations
+# ("not violate", "not forbid" → Permit) resolve correctly by position.
+_COMPLIANCE_PATTERNS: List[Tuple["re.Pattern[str]", str]] = [
+    (re.compile(p), label) for p, label in [
+        # Forbid (including negated-permit phrases)
+        (r"impermissib", "Forbid"),
+        (r"\bnot\s+permit", "Forbid"),
+        (r"\bnot\s+allow", "Forbid"),
+        (r"\bnot\s+(?:fully\s+)?compl", "Forbid"),
+        (r"\bprohibit", "Forbid"),
+        (r"\bforbid", "Forbid"),
+        (r"\bviolat", "Forbid"),
+        # Permit (including double-negations that mean "complies")
+        (r"\bnot\s+violat", "Permit"),
+        (r"\bnot\s+explicitly\s+prohibit", "Permit"),
+        (r"\bnot\s+forbid", "Permit"),
+        (r"\bcompl(?:y|ies|ies\s+with|iant)", "Permit"),
+        (r"\bpermit", "Permit"),
+        (r"\bpermis", "Permit"),
+        (r"\ballow", "Permit"),
+    ]
+]
+
+_APPLICABILITY_PATTERNS: List[Tuple["re.Pattern[str]", str]] = [
+    (re.compile(p), label) for p, label in [
+        # Not Applicable (negations first — a leading "Not applicable" has no
+        # space-padded " not " and must still be caught)
+        (r"\bnot\s+applicable", "Not Applicable"),
+        (r"\binapplicable", "Not Applicable"),
+        (r"\bdoes\s+not\s+apply", "Not Applicable"),
+        (r"\bdo\s+not\s+apply", "Not Applicable"),
+        (r"\bdoesn'?t\s+apply", "Not Applicable"),
+        (r"\bnot\s+apply", "Not Applicable"),
+        (r"\bn/a\b", "Not Applicable"),
+        # Applicable
+        (r"\bapplicable", "Applicable"),
+        (r"\bapplies\s+to", "Applicable"),
+        (r"\bapply\s+to", "Applicable"),
+    ]
+]
+
+
+def _earliest_regex_label(
+    response: str, patterns: List[Tuple["re.Pattern[str]", str]]
+) -> Optional[str]:
+    """Return the label whose pattern matches earliest; ties favour list order."""
+    best_index = len(response)
+    best_label: Optional[str] = None
+    for pat, label in patterns:
+        m = pat.search(response)
+        if m is not None and m.start() < best_index:
+            best_index = m.start()
+            best_label = label
+    return best_label
+
+
 def first_compliance_result(response: str) -> Optional[str]:
     """Find the first compliance keyword in the response."""
-    permit_keywords = [
-        "permit", "permis", "complies with", "not violat",
-        "allow", "not explicitly prohibit", "not forbid",
-    ]
-    forbid_keywords = [
-        "forbid", "not permit", "prohibit", "not comply",
-        "not fully comply", "violat",
-    ]
-    all_labels = permit_keywords + forbid_keywords
-
-    first_index = len(response)
-    first_label = ""
-    for label in all_labels:
-        if label in response:
-            idx = response.index(label)
-            if idx < first_index:
-                first_index = idx
-                first_label = label
-
-    if first_label in permit_keywords:
-        return "Permit"
-    elif first_label in forbid_keywords:
-        return "Forbid"
-    return None
+    return _earliest_regex_label(response, _COMPLIANCE_PATTERNS)
 
 
 def first_applicability_result(response: str) -> Optional[str]:
     """Find the first applicability keyword in the response."""
-    applicable_keywords = ["applicable", "apply to", "applies to"]
-    not_keywords = [" not "]
-    all_labels = applicable_keywords + not_keywords
-
-    first_index = len(response)
-    first_label = ""
-    for label in all_labels:
-        if label in response:
-            idx = response.index(label)
-            if idx < first_index:
-                first_index = idx
-                first_label = label
-
-    if first_label in applicable_keywords:
-        return "Applicable"
-    elif first_label in not_keywords:
-        return "Not Applicable"
-    return None
+    return _earliest_regex_label(response, _APPLICABILITY_PATTERNS)
 
 
 def _try_json_classification(response: str) -> Optional[str]:
