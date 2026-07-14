@@ -8,7 +8,10 @@ new book. Three layers, cheapest first:
 
 1. **blocklist** — explicit names from ``cfg.norm_quality.character_blocklist``
    plus the built-in 10-novel list. Kept for aliases and fictional places
-   NER cannot see ("big brother", "monte cristo", "pemberley").
+   NER cannot see ("big brother", "monte cristo", "pemberley"). Matched
+   case-insensitively, *except* for entries in ``AMBIGUOUS_NAMES`` (names that
+   are also ordinary English words — "May", "Will"), which require the
+   capitalized form. See that constant for why.
 2. **titled** — ``Mr./Mrs./Lady/... + ProperNoun`` regex.
 3. **person_entity** — spaCy ``en_core_web_sm`` PERSON entities. Corpus-
    agnostic: scales to arbitrary novels with zero manual curation.
@@ -28,6 +31,29 @@ TITLE_PATTERN = re.compile(
     r"\b(?:Mr\.|Mrs\.|Miss|Ms\.|Lady|Lord|Sir|Reverend|Rev\.|Colonel|Col\.)"
     r"\s+[A-Z][a-z]+"
 )
+
+# Blocklist entries that are also ordinary English words. These are matched
+# CASE-SENSITIVELY (the capitalized proper-noun form only); every other entry
+# stays case-insensitive.
+#
+# Why (2026-07-13): the built-in blocklist carries "will" (Will Ladislaw,
+# *Middlemarch*) and "may" (May Welland, *The Age of Innocence*), and it is a
+# GLOBAL list applied to all books with a case-insensitive match. So the modal
+# verbs in "a servant may not disclose..." and "the heir will inherit..." tripped
+# the gate in every novel. On fiction10 that was 373 of 440 flagged norms — 85%
+# of `norm_quality_passed == False` was modal verbs, making true leakage look
+# like 4.39% when it was 0.32%.
+#
+# Requiring the capitalized form fixes it: "a servant may not" is clean, while
+# "May refuses Archer" still flags. Sentence-initial "May..." can still false-
+# positive, but norm text is declarative and this is an advisory flag that drops
+# no rows. Entries listed here take effect only if they are actually in a
+# blocklist, so seeding likely collisions is free insurance for larger corpora.
+AMBIGUOUS_NAMES = frozenset({
+    "may", "will", "grace", "hope", "faith", "rose", "mark", "frank", "rich",
+    "bill", "art", "dawn", "joy", "prudence", "patience", "charity", "constance",
+    "victor", "earnest", "pip", "sue", "wilder",
+})
 
 _NLP = None
 _NER_UNAVAILABLE = False
@@ -84,8 +110,16 @@ class PersonNameDetector:
         use_ner: bool = True,
     ):
         names = sorted({n.lower() for n in (blocklist or set())})
+        # (canonical_name, pattern, case_sensitive). Ambiguous entries compile
+        # against the Title-Cased form and are searched in the ORIGINAL text, so
+        # the proper noun matches and the common word does not.
         self._block_patterns = [
-            (n, re.compile(r"\b" + re.escape(n) + r"\b")) for n in names
+            (
+                n,
+                re.compile(r"\b" + re.escape(n.title() if n in AMBIGUOUS_NAMES else n) + r"\b"),
+                n in AMBIGUOUS_NAMES,
+            )
+            for n in names
         ]
         self.use_ner = use_ner
 
@@ -102,8 +136,8 @@ class PersonNameDetector:
             return out
 
         lowered = text.lower()
-        for name, pattern in self._block_patterns:
-            if pattern.search(lowered):
+        for name, pattern, case_sensitive in self._block_patterns:
+            if pattern.search(text if case_sensitive else lowered):
                 out["blocklist"].append(name)
 
         for match in TITLE_PATTERN.finditer(text):

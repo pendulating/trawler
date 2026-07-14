@@ -183,37 +183,62 @@ def appropriateness_multiplier(
     force: Optional[str],
     floor: float = 0.4,
     floor_prohibit: Optional[float] = None,
+    hedge_prohibit: Optional[float] = None,
 ) -> float:
-    """Cost-sensitive (asymmetric) direction multiplier for one flow (v10).
+    """Cost-sensitive (asymmetric) direction multiplier for one flow (v10/v12a).
 
     Identical to ``direction_multiplier(appropriateness_consistency(label, force),
     floor)`` *except* it can punish a **false-permit** — the model calling a
     prohibited/discouraged-governed flow ``appropriate`` — harder than a
-    false-forbid, via ``floor_prohibit``:
+    false-forbid, via ``floor_prohibit`` (v10), and a **hedge on a
+    prohibited/discouraged-governed flow** harder than a hedge elsewhere, via
+    ``hedge_prohibit`` (v12a):
 
       correct verdict (either direction)            → 1.0
-      hedge / "ambiguous" / no directional force    → (1+floor)/2  (0.7 at floor 0.4)
+      hedge, no directional force                   → (1+floor)/2  (0.7 at floor 0.4)
+      hedge, norm prohibits                             → hedge_prohibit (0.5)
       false-forbid (said inappropriate, norm obligates) → floor          (0.4)
       false-permit (said appropriate, norm prohibits)   → floor_prohibit  (0.1)
+
+    A "hedge" is any non-committed verdict on an extracted flow: "ambiguous", a
+    missing label, or an unrecognized one (so garbage labels can't keep the
+    neutral tier on prohibited flows).
 
     The fiction-derived governing norms are ~4:1 appropriate:inappropriate, so
     under the symmetric v9 floor the EV-optimal verdict when unsure is the
     permissive one — the measured cause of the 30% Forbid commit-accuracy. A
     lower ``floor_prohibit`` steepens the within-group gradient on prohibited
-    flows toward the (correct) ``inappropriate`` verdict. ``floor_prohibit=None``
-    reproduces the symmetric v9 multiplier exactly.
+    flows toward the (correct) ``inappropriate`` verdict. v10/v11 forensics then
+    showed the floor punished the false-permit *tail* but left hedging the safe
+    optimum — prohibited-flow hedge mass froze at ~72% across both runs because
+    under R = base × direction a well-grounded hedge (×0.7) routinely outscores
+    a mediocre-grounded correct commit (×1.0). ``hedge_prohibit`` (< the neutral
+    0.7, > ``floor_prohibit``) widens the commit-vs-hedge gap exactly where it
+    binds while leaving hedges on non-prohibited flows at the neutral tier.
+    Both knobs ``None`` reproduces the symmetric v9 multiplier exactly;
+    ``hedge_prohibit=None`` alone reproduces v10.
     """
     fp = floor if floor_prohibit is None else floor_prohibit
     if not 0.0 <= floor <= 1.0:
         raise ValueError(f"floor must be in [0, 1], got {floor}")
     if not 0.0 <= fp <= 1.0:
         raise ValueError(f"floor_prohibit must be in [0, 1], got {fp}")
+    if hedge_prohibit is not None and not 0.0 <= hedge_prohibit <= 1.0:
+        raise ValueError(f"hedge_prohibit must be in [0, 1], got {hedge_prohibit}")
     expected = expected_appropriateness(force)
-    if expected is None or not model_label:
+    if expected is None:
         return direction_multiplier(NEUTRAL_CONSISTENCY, floor)
+
+    def _hedge() -> float:
+        if expected == "inappropriate" and hedge_prohibit is not None:
+            return hedge_prohibit
+        return direction_multiplier(NEUTRAL_CONSISTENCY, floor)
+
+    if not model_label:
+        return _hedge()
     lab = str(model_label).strip().lower()
     if lab == "ambiguous":
-        return direction_multiplier(NEUTRAL_CONSISTENCY, floor)
+        return _hedge()
     if lab == expected:
         return 1.0
     if lab in ("appropriate", "inappropriate"):
@@ -221,7 +246,7 @@ def appropriateness_multiplier(
         # while the norm prohibits) gets the steeper floor; a false-forbid keeps
         # the general floor.
         return fp if expected == "inappropriate" else floor
-    return direction_multiplier(NEUTRAL_CONSISTENCY, floor)
+    return _hedge()
 
 
 def candidate_appropriateness_multiplier(
@@ -229,18 +254,26 @@ def candidate_appropriateness_multiplier(
     force: Optional[str],
     floor: float = 0.4,
     floor_prohibit: Optional[float] = None,
+    hedge_prohibit: Optional[float] = None,
 ) -> float:
-    """Mean cost-sensitive multiplier over a candidate's flows (v10).
+    """Mean cost-sensitive multiplier over a candidate's flows (v10/v12a).
 
     The cost-sensitive map is non-linear in the per-flow verdict, so unlike the
     v9 path (mean *consistency* then one ``direction_multiplier``) this maps each
     flow to its multiplier first, then means. Single-flow candidates (the common
     case) are identical either way. A candidate with no appropriateness labels
     (e.g. a no-flow declaration) returns the neutral multiplier, so it neither
-    gains nor loses on this axis.
+    gains nor loses on this axis — deliberately ALSO under ``hedge_prohibit``:
+    the v12a hedge tier prices a hedged verdict on an *extracted* flow, never
+    abstention itself (no-flow economics are owned by no_flow_reward and the
+    judge's unjustified-no-flow ranking; the no_flow promotion gate already runs
+    hot at ~0.6 and must not be pushed further toward extraction).
     """
     labels = flow_appropriateness_labels(candidate_doc)
     if not labels:
         return direction_multiplier(NEUTRAL_CONSISTENCY, floor)
-    vals = [appropriateness_multiplier(lab, force, floor, floor_prohibit) for lab in labels]
+    vals = [
+        appropriateness_multiplier(lab, force, floor, floor_prohibit, hedge_prohibit)
+        for lab in labels
+    ]
     return sum(vals) / len(vals)

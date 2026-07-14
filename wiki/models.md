@@ -1,5 +1,10 @@
 # Model Configs
 
+> **Which models to use** is a separate question from how to configure them — see
+> **[canonical-models.md](canonical-models.md)** for the canonical 13-model task set
+> (established 2026-07-13), the gpt-oss **harmony** requirement, and the vLLM version
+> constraints. This page is the *mechanics*: layout, YAML schema, and version notes.
+
 ## Layout
 
 Shared across all dagspaces: `dagspaces/common/conf/model/<family>/<variant>.yaml`. Resolved via Hydra searchpath (`pkg://dagspaces.common.conf`). Override with `model=<family>/<variant>` on the command line.

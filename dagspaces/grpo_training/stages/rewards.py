@@ -157,6 +157,7 @@ def r_uncert(
     completion: str,
     gold_has_exchange: Optional[bool] = None,
     is_no_flow: bool = False,
+    confidence_fallthrough: bool = False,
 ) -> float:
     """R_uncert: Task clarity reward.
 
@@ -167,6 +168,18 @@ def r_uncert(
 
     For no-flow completions, awards schema validity + discrimination (0.8)
     scaled by correctness: 1.0 if gold agrees, 0.25 if gold says flows exist.
+
+    ``confidence_fallthrough`` selects the facet-3 confidence-resolution
+    behaviour. Default (``False``) reproduces the v9-ckpt100 keeper checkpoint:
+    the None-chain stops at the first *non-None* candidate, so a flow whose only
+    confidence signal is the non-numeric ``confidence_qual="uncertain"`` (the
+    ``_parse_completion`` default) makes ``float()`` raise and contributes
+    nothing — the documented ``confidence_quant`` default-5 → 0.1 fallback is
+    unreachable. ``True`` applies the corrected chain (fall through to the next
+    candidate on a parse failure). Wired to the ``confidence_fallthrough`` GRPO
+    config knob (default ``false`` = keeper repro); set it ``true`` only for the
+    per-component ablation, since enabling it changes the composite reward value
+    and would confound reproduction of the keeper checkpoint.
     """
     parsed = _parse_completion(completion)
     if parsed is None:
@@ -233,16 +246,33 @@ def r_uncert(
         # Try raw "confidence" first (flat format pre-normalization),
         # then "confidence_qual" (where _parse_completion stores the
         # original numeric value), then "confidence_quant" (default 5).
-        c = e.get("confidence")
-        if c is None:
-            c = e.get("confidence_qual")
-        if c is None:
-            c = e.get("confidence_quant")
-        if c is not None:
-            try:
-                conf_values.append(float(c))
-            except (TypeError, ValueError):
-                pass
+        if confidence_fallthrough:
+            # Corrected chain: a candidate that fails float() falls through to
+            # the next one, so a non-numeric "confidence_qual" reaches the
+            # numeric "confidence_quant" default (5 → 0.1 on the facet).
+            for key in ("confidence", "confidence_qual", "confidence_quant"):
+                c = e.get(key)
+                if c is None:
+                    continue
+                try:
+                    conf_values.append(float(c))
+                    break
+                except (TypeError, ValueError):
+                    continue
+        else:
+            # Keeper (v9-ckpt100) behaviour — the None-chain stops at the first
+            # non-None field even when float() then raises. Preserved as the
+            # default; see docstring.
+            c = e.get("confidence")
+            if c is None:
+                c = e.get("confidence_qual")
+            if c is None:
+                c = e.get("confidence_quant")
+            if c is not None:
+                try:
+                    conf_values.append(float(c))
+                except (TypeError, ValueError):
+                    pass
     if conf_values:
         avg_conf = sum(conf_values) / len(conf_values)
         score += 0.2 * max(0.0, min(avg_conf, 10.0)) / 10.0
@@ -696,6 +726,7 @@ class CompositeRewardFunction:
         judgment_weights: Optional[Sequence[float]] = None,
         composition: str = "additive",
         abstention_penalty: float = 0.0,
+        confidence_fallthrough: bool = False,
     ):
         if len(weights) != 6:
             raise ValueError(f"Expected 6 reward weights, got {len(weights)}")
@@ -721,6 +752,10 @@ class CompositeRewardFunction:
         self.abstention_penalty = float(abstention_penalty)
         self.no_flow_scoring = no_flow_scoring
         self.judgment_weights = list(judgment_weights) if judgment_weights else [0.5, 0.25, 0.25]
+        # Facet-3 confidence resolution in r_uncert. False (default) reproduces
+        # the v9-ckpt100 keeper checkpoint (buggy: documented default-5 fallback
+        # unreachable); True enables the corrected fall-through. See r_uncert.
+        self.confidence_fallthrough = bool(confidence_fallthrough)
         self.norm_universes = norm_universes or {}
         self.reward_cache = reward_cache
         self.context_embedding_model = context_embedding_model
@@ -742,6 +777,8 @@ class CompositeRewardFunction:
         ]
         # Set by grpo_training.py for trace logging
         self.enable_thinking_grpo = None
+        # Per-call judgment-vignette verdict stats (see _push_vignette_health)
+        self.last_vignette_health: Dict[str, float] = {}
 
         # Pre-compute source context embeddings so r_context doesn't
         # re-encode the same reference set on every call.
@@ -847,6 +884,42 @@ class CompositeRewardFunction:
             text = str(completion)
         return _strip_think_blocks(text)
 
+    def _push_vignette_health(self, stats: Dict[str, int]) -> None:
+        """Surface per-call judgment-vignette verdict stats under ``vignette/*``.
+
+        The v10→v11 iterations steer on the vignette verdict mix — per-gold-class
+        accuracy and the over-permit (``says_yes_gold_no``) / over-forbid
+        (``says_no_gold_yes``) drift — which previously had to be mined from
+        reward_traces.jsonl post hoc (and traces sample only the first 8
+        completions per call; this covers every completion). Same
+        ``commit=False`` pattern as ``OnlineRGround._push_health`` so values
+        merge into TRL's step commit. Pushed only for calls that contained
+        vignette completions; kept on ``last_vignette_health`` for tests and
+        offline reads.
+        """
+        n_yes, n_no = stats["n_yes"], stats["n_no"]
+        if n_yes + n_no == 0:
+            return
+        out: Dict[str, float] = {
+            "vignette/n_yes": float(n_yes),
+            "vignette/n_no": float(n_no),
+            "vignette/unparsed_frac": stats["unparsed"] / (n_yes + n_no),
+        }
+        if n_yes:
+            out["vignette/acc_gold_yes"] = stats["correct_yes"] / n_yes
+            out["vignette/says_no_gold_yes"] = stats["says_no_gold_yes"] / n_yes
+        if n_no:
+            out["vignette/acc_gold_no"] = stats["correct_no"] / n_no
+            out["vignette/says_yes_gold_no"] = stats["says_yes_gold_no"] / n_no
+        out = {k: round(v, 4) for k, v in out.items()}
+        self.last_vignette_health = out
+        try:
+            import wandb
+            if wandb.run is not None:
+                wandb.log(out, commit=False)
+        except Exception:
+            pass
+
     def _should_trace(self) -> bool:
         """Whether to log detailed traces on this call."""
         if not self._trace_path:
@@ -934,6 +1007,8 @@ class CompositeRewardFunction:
         partial_components = []  # list of [r0..r4] or None (judgment sentinel)
         is_no_flow = []          # True if CI completion declares no exchange
         judgment_scores: Dict[int, float] = {}  # idx → pre-computed reward
+        vig_stats = {"n_yes": 0, "n_no": 0, "correct_yes": 0, "correct_no": 0,
+                     "says_yes_gold_no": 0, "says_no_gold_yes": 0, "unparsed": 0}
 
         for i, completion in enumerate(extracted_texts):
             meta = meta_list[i]
@@ -948,6 +1023,21 @@ class CompositeRewardFunction:
                 j_reas = r_judgment_reasoning(completion)
                 j_cite = r_norm_cite(completion, norm_art)
                 judgment_scores[i] = jw[0] * j_acc + jw[1] * j_reas + jw[2] * j_cite
+                # Verdict-mix stats for _push_vignette_health (r_judgment only
+                # yields correctness; the drift metrics need what the model SAID).
+                if gold_j in ("yes", "no"):
+                    parsed_j = _parse_judgment_completion(completion)
+                    model_j = (str(parsed_j.get("judgment", "")).lower().strip()
+                               if parsed_j else "")
+                    vig_stats[f"n_{gold_j}"] += 1
+                    if j_acc >= 1.0:
+                        vig_stats[f"correct_{gold_j}"] += 1
+                    if gold_j == "no" and model_j == "yes":
+                        vig_stats["says_yes_gold_no"] += 1
+                    if gold_j == "yes" and model_j == "no":
+                        vig_stats["says_no_gold_yes"] += 1
+                    if model_j not in ("yes", "no"):
+                        vig_stats["unparsed"] += 1
                 partial_components.append(None)  # sentinel
                 is_no_flow.append(False)
                 continue
@@ -977,7 +1067,8 @@ class CompositeRewardFunction:
                 src_ctx_embs = self._source_context_embeddings.get(source_id)
                 src_ctx_strs = self.source_contexts.get(source_id, [])
                 partial_components.append([
-                    r_uncert(completion, gold_has_exchange=gold_has_exchange, is_no_flow=_is_nf),
+                    r_uncert(completion, gold_has_exchange=gold_has_exchange, is_no_flow=_is_nf,
+                             confidence_fallthrough=self.confidence_fallthrough),
                     r_complete(completion, gold_has_exchange=gold_has_exchange, is_no_flow=_is_nf),
                     r_consist(completion, gold_has_exchange=gold_has_exchange, is_no_flow=_is_nf),
                     r_context(completion, src_ctx_embs, src_ctx_strs, self.context_embedding_model,
@@ -1123,5 +1214,7 @@ class CompositeRewardFunction:
 
         if trace_entries:
             self._log_trace(trace_entries)
+
+        self._push_vignette_health(vig_stats)
 
         return scores

@@ -29,6 +29,7 @@ from dagspaces.grpo_training.stages.prompt_screening import (
 from dagspaces.grpo_training.stages.rewards import (
     CompositeRewardFunction,
     r_context,
+    r_uncert,
 )
 
 WEIGHTS = [0.10, 0.05, 0.05, 0.20, 0.10, 0.50]
@@ -229,6 +230,40 @@ class TestRContextNoFlow:
     def test_parse_failure_still_zero(self):
         assert r_context("not json at all", None, [], None,
                          gold_has_exchange=False) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# r_uncert facet-3 confidence resolution (confidence_fallthrough knob)
+# ---------------------------------------------------------------------------
+
+# A valid extracting completion whose sole flow omits the confidence field.
+# _parse_completion fills confidence_qual="uncertain" (non-numeric) and
+# confidence_quant=5, so facet-3 behaviour depends entirely on the knob.
+_NO_CONFIDENCE_COMPLETION = json.dumps({
+    "reasoning": "Alice shares her diagnosis with Bob in confidence.",
+    "has_information_exchange": True,
+    "flows": [{
+        "subject": "Alice",
+        "sender": "Alice",
+        "recipient": "Bob",
+        "information_type": "medical diagnosis",
+        "transmission_principle": "confidentiality",
+    }],
+})
+
+
+class TestRUncertConfidenceFallthrough:
+    """A confidence-less flow: schema(0.6) + discrimination(0.2) = 0.8 base."""
+
+    def test_keeper_default_drops_confidence_facet(self):
+        # Keeper (v9-ckpt100) behaviour: the None-chain stops at the non-numeric
+        # confidence_qual="uncertain", float() raises, facet-3 contributes 0.0.
+        assert r_uncert(_NO_CONFIDENCE_COMPLETION) == pytest.approx(0.8)
+
+    def test_fallthrough_recovers_documented_default(self):
+        # Corrected: fall through to confidence_quant=5 → 0.2 * 5/10 = 0.1.
+        assert r_uncert(_NO_CONFIDENCE_COMPLETION,
+                        confidence_fallthrough=True) == pytest.approx(0.9)
 
 
 # ---------------------------------------------------------------------------

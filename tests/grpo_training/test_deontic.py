@@ -211,3 +211,85 @@ class TestCandidateMultiplier:
         cons = d.candidate_appropriateness_consistency(doc, "prohibited")
         assert d.candidate_appropriateness_multiplier(doc, "prohibited", floor=0.4) == pytest.approx(
             d.direction_multiplier(cons, 0.4))
+
+
+class TestHedgeProhibitTier:
+    """v12a: cost-sensitive hedge tier — a hedged verdict on a
+    prohibited/discouraged-governed flow drops below the neutral 0.7, widening
+    the commit-vs-hedge gap where the v10/v11 forensics showed it binds (hedge
+    mass frozen ~72% on prohibited flows across both runs)."""
+
+    _V12A = dict(floor=0.4, floor_prohibit=0.1, hedge_prohibit=0.5)
+
+    def test_hedge_on_prohibited_drops_to_tier(self):
+        assert d.appropriateness_multiplier(
+            "ambiguous", "prohibited", **self._V12A) == pytest.approx(0.5)
+
+    def test_hedge_on_discouraged_drops_to_tier(self):
+        assert d.appropriateness_multiplier(
+            "ambiguous", "discouraged", **self._V12A) == pytest.approx(0.5)
+
+    def test_hedge_on_appropriate_governed_keeps_neutral(self):
+        # hedge elsewhere stays 0.7 — the tier is prohibited-specific.
+        assert d.appropriateness_multiplier(
+            "ambiguous", "obligatory", **self._V12A) == pytest.approx(0.7)
+        assert d.appropriateness_multiplier(
+            "ambiguous", "recommended", **self._V12A) == pytest.approx(0.7)
+
+    def test_no_directional_force_keeps_neutral(self):
+        # permitted/unknown force carries no expectation — never punished.
+        assert d.appropriateness_multiplier(
+            "ambiguous", "permitted", **self._V12A) == pytest.approx(0.7)
+        assert d.appropriateness_multiplier(
+            "ambiguous", None, **self._V12A) == pytest.approx(0.7)
+
+    def test_unrecognized_label_on_prohibited_is_a_hedge(self):
+        # Garbage labels can't keep the neutral tier on prohibited flows.
+        assert d.appropriateness_multiplier(
+            "unsure??", "prohibited", **self._V12A) == pytest.approx(0.5)
+
+    def test_missing_label_on_prohibited_is_a_hedge(self):
+        assert d.appropriateness_multiplier(
+            None, "prohibited", **self._V12A) == pytest.approx(0.5)
+
+    def test_commit_tiers_unchanged(self):
+        # correct 1.0 > hedge-on-prohibited 0.5 > false-permit 0.1.
+        assert d.appropriateness_multiplier(
+            "inappropriate", "prohibited", **self._V12A) == pytest.approx(1.0)
+        assert d.appropriateness_multiplier(
+            "appropriate", "prohibited", **self._V12A) == pytest.approx(0.1)
+
+    def test_none_hedge_prohibit_reproduces_v10(self):
+        for lab, force in [("ambiguous", "prohibited"), ("unsure??", "prohibited"),
+                           (None, "prohibited"), ("ambiguous", "obligatory"),
+                           ("appropriate", "prohibited"), ("inappropriate", "obligatory")]:
+            assert d.appropriateness_multiplier(
+                lab, force, floor=0.4, floor_prohibit=0.1) == pytest.approx(
+                d.appropriateness_multiplier(
+                    lab, force, floor=0.4, floor_prohibit=0.1, hedge_prohibit=None)
+            ), (lab, force)
+
+    def test_invalid_hedge_prohibit_rejected(self):
+        with pytest.raises(ValueError):
+            d.appropriateness_multiplier(
+                "ambiguous", "prohibited", hedge_prohibit=1.5)
+
+    def test_candidate_single_hedge_on_prohibited(self):
+        doc = json.dumps([{"appropriateness": "ambiguous"}])
+        assert d.candidate_appropriateness_multiplier(
+            doc, "prohibited", **self._V12A) == pytest.approx(0.5)
+
+    def test_candidate_means_hedge_and_false_permit(self):
+        doc = json.dumps([
+            {"appropriateness": "ambiguous"},    # hedge on prohibited → 0.5
+            {"appropriateness": "appropriate"},  # false-permit        → 0.1
+        ])
+        assert d.candidate_appropriateness_multiplier(
+            doc, "prohibited", **self._V12A) == pytest.approx(0.3)
+
+    def test_candidate_no_flow_stays_neutral(self):
+        # The hedge tier prices a hedged verdict on an EXTRACTED flow, never
+        # abstention itself — no-flow declarations keep the neutral 0.7 so
+        # v12a does not push the (already-hot) no_flow rate toward extraction.
+        assert d.candidate_appropriateness_multiplier(
+            "no flows", "prohibited", **self._V12A) == pytest.approx(0.7)

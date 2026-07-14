@@ -53,6 +53,26 @@ def select_prompts_by_reward_std(
     return _select_from_stds(stds, reward_std_min, min_keep)
 
 
+def _vignette_gold_counts(rows) -> Dict[str, int]:
+    """Count judgment vignettes by gold verdict ("yes"/"no").
+
+    The vignette force balance is the v11 steering variable
+    (wiki/grpo_training_field_notes/2026-06-27_v11_plan.md): the variance
+    screen is force-blind and empirically keeps "no" vignettes at roughly
+    half the rate of "yes" ones (v10: pool 3.07:1 → realised 5.2:1), so the
+    realised ratio must be recorded, never assumed from the candidate pool.
+    Accepts any iterable of row mappings (HF Dataset or list of dicts).
+    """
+    counts = {"yes": 0, "no": 0}
+    for row in rows:
+        if row.get("task_type") != "norm_judgment":
+            continue
+        gold = str(row.get("gold_judgment") or "").lower()
+        if gold in counts:
+            counts[gold] += 1
+    return counts
+
+
 def _reward_signature(reward_fn, temperature: float, max_tokens: int) -> str:
     """Serialize everything that changes sampled completions or their scores.
 
@@ -67,13 +87,17 @@ def _reward_signature(reward_fn, temperature: float, max_tokens: int) -> str:
     cache-hit on a stale screen — so ``rground_formula_version`` is bumped
     whenever the R_ground computation changes (v8 2026-06-22: symmetric
     contrastive clamp; v9 2026-06-23: directional composition + multiplicative
-    appropriateness). See 2026-06-23_v9_plan.md.
+    appropriateness; v12a 2026-07-03: cost-sensitive hedge tier).
+    See 2026-06-23_v9_plan.md.
     """
     rg = getattr(reward_fn, "online_rground", None)
     return json.dumps({
         "weights": getattr(reward_fn, "weights", []),
         "composition": getattr(reward_fn, "composition", "additive"),
         "abstention_penalty": getattr(reward_fn, "abstention_penalty", 0.0),
+        "no_flow_scoring": getattr(reward_fn, "no_flow_scoring", "independent"),
+        "judgment_weights": getattr(reward_fn, "judgment_weights", None),
+        "confidence_fallthrough": getattr(reward_fn, "confidence_fallthrough", False),
         "lambda": getattr(rg, "contrastive_lambda", None),
         "scoring_mode": getattr(rg, "scoring_mode", None),
         "rank_top_k": getattr(rg, "rank_top_k", None),
@@ -82,7 +106,8 @@ def _reward_signature(reward_fn, temperature: float, max_tokens: int) -> str:
         "app_mode": getattr(rg, "app_mode", "additive"),
         "app_floor": getattr(rg, "app_floor", None),
         "app_floor_prohibit": getattr(rg, "app_floor_prohibit", None),
-        "rground_formula_version": "v10_cost_sensitive_floor",
+        "app_hedge_prohibit": getattr(rg, "app_hedge_prohibit", None),
+        "rground_formula_version": "v12a_cost_sensitive_hedge",
         "judge_model": getattr(getattr(rg, "judge_client", None),
                                "model_name", None),
         "temperature": temperature,
@@ -236,6 +261,12 @@ def prescreen_dataset(
     kept_set = set(kept_keys)
     filtered = dataset.filter(lambda row: row["prompt"] in kept_set)
 
+    # Realised vignette force mix in/out of the screen — the screen is
+    # force-blind, so this is where the configured pool ratio can silently
+    # drift (see _vignette_gold_counts).
+    vig_in = _vignette_gold_counts(dataset)
+    vig_kept = _vignette_gold_counts(filtered)
+
     report = {
         "cache_key": key,
         "cache_hit": cache_hit,
@@ -247,6 +278,10 @@ def prescreen_dataset(
         "require_flow_variance": require_flow_variance,
         "n_dropped_flow_variance": n_flow_dropped,
         "sft_no_flow_rate": no_flow_rate,
+        "vignette_yes_in": vig_in["yes"],
+        "vignette_no_in": vig_in["no"],
+        "vignette_yes_kept": vig_kept["yes"],
+        "vignette_no_kept": vig_kept["no"],
         "std_quantiles": _quantiles(sorted(stds.values())),
     }
     report_path = os.path.join(output_dir, "prescreen_report.json")
@@ -260,6 +295,12 @@ def prescreen_dataset(
     print(f"[prompt_screening] Kept {len(filtered)}/{len(dataset)} prompts "
           f"(std>={reward_std_min}{_flow_note}); SFT no-flow rate={no_flow_rate}; "
           f"report → {report_path}")
+    if vig_in["yes"] + vig_in["no"]:
+        print(f"[prompt_screening] Vignette gold mix: "
+              f"in {vig_in['yes']} yes : {vig_in['no']} no "
+              f"({vig_in['yes'] / max(vig_in['no'], 1):.2f}:1) → "
+              f"kept {vig_kept['yes']} yes : {vig_kept['no']} no "
+              f"({vig_kept['yes'] / max(vig_kept['no'], 1):.2f}:1)")
     _log_report_to_wandb(report)
     return filtered
 
@@ -277,7 +318,9 @@ def _log_report_to_wandb(report: Dict[str, Any]) -> None:
             return
         wandb.run.config.update({"prescreen": report}, allow_val_change=True)
         for k in ("n_prompts_in", "n_prompts_kept", "n_prompts_dropped",
-                  "sft_no_flow_rate", "cache_hit"):
+                  "sft_no_flow_rate", "cache_hit",
+                  "vignette_yes_in", "vignette_no_in",
+                  "vignette_yes_kept", "vignette_no_kept"):
             if report.get(k) is not None:
                 wandb.run.summary[f"prescreen/{k}"] = report[k]
     except Exception:

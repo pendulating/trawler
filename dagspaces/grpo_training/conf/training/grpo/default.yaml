@@ -53,6 +53,16 @@ contrastive_lambda: 0.5
 #   "flat"        — legacy: all components get the same flat no_flow_reward().
 no_flow_scoring: independent
 
+# r_uncert facet-3 confidence resolution.
+#   false — reproduces the v9-ckpt100 keeper checkpoint. A flow whose only
+#           confidence signal is the non-numeric "uncertain" default makes the
+#           documented confidence_quant default-5 (→ 0.1) fallback unreachable,
+#           so confidence-less flows contribute 0.0 to the facet.
+#   true  — corrected fall-through: a non-numeric candidate falls through to the
+#           next, making the default-5 fallback reachable. Changes the composite
+#           reward value; use for the per-component ablation, not keeper repro.
+confidence_fallthrough: false
+
 # Reward component weights: [r_uncert, r_complete, r_consist, r_context, r_cohere, r_ground]
 reward_weights:
   - 0.10   # r_uncert  (task clarity / schema validity — gating)

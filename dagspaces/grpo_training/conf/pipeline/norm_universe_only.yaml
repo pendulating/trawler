@@ -1,0 +1,42 @@
+# @package _global_
+# Norm-universe build ONLY (no reward_prep) — embed per-book norms with
+# Qwen3-Embedding-8B and write norm_universes.json + embeddings.
+#
+# Lighter sibling of norm_universe_and_reward_prep: used when you only need a
+# fresh universe (e.g. the force-balanced top100 universe for the v11 judgment-
+# vignette probe — VIGNETTE_NORM_UNIVERSES_PATH points at this output). The
+# online R_ground judge needs no reward_cache, so reward_prep is skipped.
+#
+# Usage:
+#   ABSTRACTED_NORMS_PATH=/path/to/abstracted_norms.parquet \
+#   python -m dagspaces.grpo_training.cli \
+#     pipeline=norm_universe_only \
+#     model=qwen3.5-9b/sft-contentless-v6
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/norm_universe_only
+
+  sources:
+    abstracted_norms:
+      path: ${oc.env:ABSTRACTED_NORMS_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      norm_universe:
+        stage: norm_universe
+        depends_on: []
+        inputs:
+          dataset: abstracted_norms
+        outputs:
+          dataset:
+            path: outputs/norm_universe/norm_universes.json
+            type: json
+          embeddings:
+            path: outputs/norm_universe/embeddings
+            type: dir
+        launcher: slurm_gpu_1x
+        wandb_suffix: norm_universe

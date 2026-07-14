@@ -1,0 +1,45 @@
+# @package _global_
+# Gemma-4-26B-A4B-IT: multimodal MoE (26B total / ~4B active per token,
+# 128 experts), instruction-tuned. Use via `model=gemma-4-26b-a4b/it`.
+#
+# RETRACTED (2026-07-12): an earlier version of this file warned that this model
+# "decodes ~25x slower than the dense gemma-4-31b". That is FALSE and it wrongly
+# pushed the gold-label re-extraction onto the dense model. A controlled bench
+# (same chunks, same fiction prompt, same guided-JSON schema, klara/A6000) found
+# the MoE is **2.4x FASTER** than the dense at identical settings:
+#
+#   MoE   TP=2  138.3 out tok/s   |   dense TP=2   58.4 out tok/s
+#
+# The retracted claim came from comparing `est. speed output` in two tqdm bars at
+# different % completion — that figure is a cumulative average that includes the
+# long prefill phase, so it is not comparable across runs. Do not benchmark from it.
+#
+# The old note's causal story was also wrong: it blamed "heterogeneous head dims
+# 256/512", but the vision tower is head_dim 72 and BOTH gemma-4 models have text
+# head_dim 256. head_dim 256 is what forces TRITON_ATTN (FLASH_ATTN and FLASHINFER
+# both reject it: "head_size not supported"), so Triton applies equally to both
+# models and cannot explain any dense-vs-MoE gap.
+#
+# The MoE is faster for structural reasons that hold on any KV-tight GPU: ~4B
+# active params, and ~0.24 MB/token of KV vs the dense's ~0.94 MB/token (30 layers
+# x 8 KV heads vs 60 x 16). At TP=2 that is 143k KV tokens / 14.7x concurrency,
+# against the dense's 27k / 2.8x.
+#
+# Kept on the dense for gold labels by an explicit call on label quality
+# (26B/4B-active vs 31B dense), NOT on speed. See wiki/slurm-and-env.md.
+#
+# For 4×A6000 pipelines: pair with `launcher: slurm_gpu_4x` and set
+# data_parallel_size=2 in node overrides (two TP=2 replicas). Do NOT use TP=4 —
+# it doubles collective cost for no per-replica gain (TP=4: 175.4 tok/s vs TP=2:
+# 178.5), so two TP=2 replicas beat one TP=4 replica 2:1 on the same 4 GPUs.
+model:
+  model_source: /share/pierson/matt/zoo/models/Gemma-4-26B-A4B-it
+  model_family: gemma-4
+  thinking_mode: off
+  engine_kwargs:
+    max_model_len: 24576
+    max_num_seqs: 16
+    tensor_parallel_size: 2
+    trust_remote_code: true
+  batch_size: 0
+  concurrency: 1

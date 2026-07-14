@@ -1,3 +1,6 @@
+# Prompt identity — logged by stages at run start and stamped into
+# output parquets as `prompt_name` (provenance guard, added 2026-07-12).
+name: ci_extraction_fiction
 system_prompt: |
   You are a structured information extraction specialist working with Helen Nissenbaum's Contextual Integrity (CI) framework for privacy.
   Your task is to analyze the provided reasoning trace and source text to extract structured information flow tuples in valid JSON format.

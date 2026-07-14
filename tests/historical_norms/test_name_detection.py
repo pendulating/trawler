@@ -167,40 +167,73 @@ class TestNormValidationIntegration:
         assert out["norm_quality_flags"] is None
 
 
-class TestFlowValidationIntegration:
-    def test_flow_quality_columns(self):
-        from omegaconf import OmegaConf
-        from dagspaces.historical_norms.stages.ci_extraction import (
-            _validate_flow_quality,
+class TestAmbiguousBlocklistNames:
+    """Blocklist entries that are also ordinary English words.
+
+    The built-in blocklist carries "will" (Will Ladislaw) and "may" (May
+    Welland). It is global and was matched case-insensitively, so the modal
+    verbs in ordinary norm text tripped the gate in every book — 85% of
+    fiction10's `norm_quality_passed == False` was modal verbs, inflating
+    apparent character leakage from 0.32% to 4.39%.
+
+    The invariant: ambiguous entries match the *capitalized* form only.
+    """
+
+    def test_modal_verbs_do_not_trip_the_gate(self):
+        det = PersonNameDetector(blocklist={"may", "will"}, use_ner=False)
+        for text in (
+            "a servant may not disclose a confidence",
+            "the heir will inherit the estate",
+            "a guest may decline an invitation and will not be censured",
+        ):
+            assert det.detect(text)["blocklist"] == [], text
+
+    def test_capitalized_character_still_flagged(self):
+        det = PersonNameDetector(blocklist={"may", "will"}, use_ner=False)
+        assert det.detect("May refuses to break her engagement")["blocklist"] == ["may"]
+        assert det.detect("Will Ladislaw accepts the inheritance")["blocklist"] == ["will"]
+
+    def test_unambiguous_names_stay_case_insensitive(self):
+        """Only AMBIGUOUS_NAMES changes behaviour — everything else is untouched."""
+        det = PersonNameDetector(blocklist={"valjean", "big brother"}, use_ner=False)
+        assert det.detect("valjean conceals his identity")["blocklist"] == ["valjean"]
+        assert det.detect("Valjean conceals his identity")["blocklist"] == ["valjean"]
+        assert det.detect("big brother is watching")["blocklist"] == ["big brother"]
+
+    def test_ambiguous_set_is_lowercase(self):
+        """Membership is tested against lowercased blocklist entries."""
+        from dagspaces.historical_norms.name_detection import AMBIGUOUS_NAMES
+
+        assert all(n == n.lower() for n in AMBIGUOUS_NAMES)
+        assert {"may", "will"} <= AMBIGUOUS_NAMES
+
+
+class TestFlowQualityCheckRemoved:
+    """The flows track deliberately has NO character-name QA gate (2026-07-13).
+
+    `_validate_flow_quality` enforced a role requirement neither CI prompt ever
+    stated (`norm_extraction_fiction` demands roles five times; the CI prompts
+    never do), flagging 37.6% of fiction10 flows for doing what they were asked.
+    Nissenbaum's sender/recipient are actors in a context — naming them is the
+    point. This test exists so the check is not reintroduced by reflex.
+    """
+
+    def test_no_flow_quality_validator(self):
+        from dagspaces.historical_norms.stages import ci_extraction
+
+        assert not hasattr(ci_extraction, "_validate_flow_quality")
+        assert not hasattr(ci_extraction, "_FLOW_QA_FIELDS")
+
+    def test_no_flow_quality_metric(self):
+        from dagspaces.historical_norms.stage_metrics import (
+            compute_stage_quality_metrics,
         )
-        cfg = OmegaConf.create(
-            {"norm_quality": {"use_ner": False,
-                              "character_blocklist": ["javert"]}}
-        )
-        df = pd.DataFrame([
-            {  # flagged: blocklisted name in sender
-                "ci_subject": "an ex-convict",
-                "ci_sender": "javert",
-                "ci_recipient": "a magistrate",
-                "ci_information_type": "criminal history",
-                "ci_transmission_principle": "official report",
-                "ci_context": "law enforcement",
-            },
-            {  # clean role-abstracted flow
-                "ci_subject": "a patient",
-                "ci_sender": "a physician",
-                "ci_recipient": "a colleague",
-                "ci_information_type": "diagnosis",
-                "ci_transmission_principle": "professional consultation",
-                "ci_context": "medical care",
-            },
-            {  # parse-error row: no flow fields → null quality columns
-                "ci_subject": None, "ci_sender": None, "ci_recipient": None,
-                "ci_information_type": None,
-                "ci_transmission_principle": None, "ci_context": None,
-            },
-        ])
-        out = _validate_flow_quality(df, cfg)
-        assert out["flow_quality_passed"].tolist() == [False, True, None]
-        assert "named_char_in_sender:javert" in out["flow_quality_flags"][0]
-        assert out["flow_quality_flags"][1] is None
+
+        df = pd.DataFrame([{
+            "ci_sender": "Elizabeth",
+            "ci_recipient": "Jane",
+            "ci_appropriateness": "appropriate",
+            "flow_quality_passed": False,  # stale column from an older parquet
+        }])
+        m = compute_stage_quality_metrics("ci_extraction", df)
+        assert not any("flow_quality" in k for k in m)

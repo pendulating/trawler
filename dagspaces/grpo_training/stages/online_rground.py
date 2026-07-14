@@ -165,6 +165,7 @@ class OnlineRGround:
         app_mode: str = "additive",
         app_floor: float = 0.4,
         app_floor_prohibit: Optional[float] = None,
+        app_hedge_prohibit: Optional[float] = None,
     ):
         if scoring_mode not in ("absolute", "ranked"):
             raise ValueError(f"Unknown rground scoring mode: {scoring_mode!r}")
@@ -177,6 +178,9 @@ class OnlineRGround:
         if app_floor_prohibit is not None and not 0.0 <= app_floor_prohibit <= 1.0:
             raise ValueError(
                 f"app_floor_prohibit must be in [0, 1], got {app_floor_prohibit}")
+        if app_hedge_prohibit is not None and not 0.0 <= app_hedge_prohibit <= 1.0:
+            raise ValueError(
+                f"app_hedge_prohibit must be in [0, 1], got {app_hedge_prohibit}")
         self.embedding_client = embedding_client
         self.judge_client = judge_client
         self.norm_retriever = norm_retriever
@@ -218,6 +222,19 @@ class OnlineRGround:
         # active in multiplicative app_mode. See deontic.appropriateness_multiplier.
         self.app_floor_prohibit = (
             float(app_floor_prohibit) if app_floor_prohibit is not None else None)
+        # app_hedge_prohibit (v12a): cost-sensitive tier for a HEDGE ("ambiguous"
+        # / missing / unrecognized verdict) on a prohibited/discouraged-governed
+        # flow. None = v10 behaviour (every hedge sits at the neutral tier,
+        # (1+app_floor)/2 = 0.7). v10/v11 forensics: the false-permit floor
+        # punished the wrong-commit tail but left hedging the safe optimum —
+        # prohibited-flow hedge mass froze at ~72% across both runs because a
+        # well-grounded hedge (×0.7) routinely outscores a mediocre-grounded
+        # correct commit (×1.0) under R = base × direction. Setting this below
+        # 0.7 (above app_floor_prohibit) widens the commit-vs-hedge gap exactly
+        # where it binds; hedges on non-prohibited flows keep the neutral tier.
+        # Only active in multiplicative app_mode. See deontic.appropriateness_multiplier.
+        self.app_hedge_prohibit = (
+            float(app_hedge_prohibit) if app_hedge_prohibit is not None else None)
         self._consecutive_zero_batches = 0
         self._total_calls = 0
         self.last_diagnostics: List[List[Dict[str, Any]]] = []
@@ -834,10 +851,15 @@ class OnlineRGround:
                         # prohibited-governed flow called "appropriate") floors
                         # lower than a false-forbid — a per-flow cost-sensitive
                         # multiplier (app_cons above is kept for the trace).
-                        if self.app_floor_prohibit is not None:
+                        # v12a: app_hedge_prohibit additionally drops a hedged
+                        # verdict on a prohibited-governed flow below the neutral
+                        # 0.7 tier (no-flow declarations stay neutral).
+                        if (self.app_floor_prohibit is not None
+                                or self.app_hedge_prohibit is not None):
                             direction = candidate_appropriateness_multiplier(
                                 candidate_texts.get(i, ""), _force,
-                                self.app_floor, self.app_floor_prohibit)
+                                self.app_floor, self.app_floor_prohibit,
+                                self.app_hedge_prohibit)
                         else:
                             direction = direction_multiplier(app_cons, self.app_floor)
                         raw = base * direction
@@ -1075,5 +1097,36 @@ class OnlineRGround:
             for idx, sc, diag in zip(no_flow_indices, nf_scores, nf_diags):
                 scores[idx] = sc
                 self.last_diagnostics[idx] = diag
+
+        # All-no-flow/parse-fail batches must still flow through the same
+        # health/counter bookkeeping as the normal path — this is exactly when
+        # parse failures (and thus a dead embedding/judge server) are most
+        # likely, so the consecutive-zero-batch detector must not be bypassed.
+        self._total_calls += 1
+        if all(s == 0.0 for s in scores):
+            self._consecutive_zero_batches += 1
+            if self._consecutive_zero_batches >= 5:
+                print(
+                    f"[OnlineRGround] WARNING: {self._consecutive_zero_batches} "
+                    f"consecutive all-zero batches. Embedding or judge server "
+                    f"may be down."
+                )
+        else:
+            self._consecutive_zero_batches = 0
+
+        n = max(len(completions), 1)
+        n_parse_fail = sum(
+            1 for i in range(len(completions))
+            if not completion_valid_no_flow[i]
+        )
+        self._push_health({
+            "n_completions": len(completions),
+            "parse_fail_frac": n_parse_fail / n,
+            "no_flow_frac": len(no_flow_indices) / n,
+            "mean_score": sum(scores) / n,
+            "zero_score_frac": sum(1 for s in scores if s == 0.0) / n,
+            "mean_correct": 0.0,
+            "mean_wrong": 0.0,
+        })
 
         return scores

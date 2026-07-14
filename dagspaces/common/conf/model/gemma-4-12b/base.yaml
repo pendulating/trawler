@@ -1,0 +1,17 @@
+# @package _global_
+# Gemma-4-12B (base, not instruction-tuned). SFT starting point; for eval use
+# gemma-4-12b/instruct.
+#
+# ⚠️ REQUIRES vLLM >= 0.25 — architecture is `Gemma4UnifiedForConditionalGeneration`,
+# absent from vLLM 0.19.1's registry. See gemma-4-12b/instruct.yaml.
+model:
+  model_source: /share/pierson/matt/zoo/models/gemma-4-12B
+  model_family: gemma-4
+  thinking_mode: off
+  engine_kwargs:
+    max_model_len: 16384
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+  batch_size: 0
+  concurrency: 1

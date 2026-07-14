@@ -64,7 +64,7 @@ def _serve_entrypoint(args: Dict[str, Any]) -> None:
     # Propagate NCCL defaults for PCIe clusters
     env.setdefault("NCCL_P2P_DISABLE", "1")
     env.setdefault("NCCL_IB_DISABLE", "1")
-    env.setdefault("NCCL_SHM_DISABLE", "1")
+    env.setdefault("NCCL_SHM_DISABLE", "0")  # see get_pcie_nccl_env_vars()
     env.setdefault("NCCL_CUMEM_HOST_ENABLE", "0")
 
     print(f"[vllm-server] launching: {' '.join(cmd)}", flush=True)

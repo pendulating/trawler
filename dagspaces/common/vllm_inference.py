@@ -127,19 +127,101 @@ def _fallback_strip_reasoning(text: str) -> str:
 _strip_think_blocks = _fallback_strip_reasoning
 
 
+def _is_harmony_model(model_source: str) -> bool:
+    """True for gpt-oss, which speaks the OpenAI *harmony* response format.
+
+    Harmony is not a `<think>`-style wrapper — it is a channel protocol
+    (https://github.com/openai/harmony). The assistant emits one or more
+    `<|channel|>NAME<|message|>...` segments and only the **final** channel is
+    the answer; `analysis` is hidden CoT and `commentary` is tool traffic.
+    It therefore needs its own splitter, not a vLLM reasoning parser — see
+    `_split_harmony`.
+    """
+    return "gpt-oss" in (model_source or "").lower()
+
+
+# One harmony segment: an optional <|start|>role, the channel name, an optional
+# `to=...` tool route (commentary channel), then the payload up to any terminator.
+_HARMONY_SEGMENT = re.compile(
+    r"<\|channel\|>(?P<channel>[a-zA-Z_]+)"
+    r"(?:\s+to=[^<]*)?"
+    r"<\|message\|>(?P<content>.*?)"
+    r"(?=<\|end\|>|<\|return\|>|<\|call\|>|<\|start\|>|\Z)",
+    re.DOTALL,
+)
+
+# What the harmony delimiters detokenize to once skip_special_tokens=True has
+# eaten them: "<|start|>assistant<|channel|>final<|message|>" -> "assistantfinal".
+_HARMONY_STRIPPED_FINAL = re.compile(r"assistantfinal", re.IGNORECASE)
+
+_HARMONY_WARNED = False
+
+
+def _split_harmony(text: str) -> Optional[Tuple[str, str]]:
+    """Split a gpt-oss harmony completion into ``(reasoning, final_content)``.
+
+    Returns ``None`` if the text carries no harmony structure at all, so the
+    caller can fall through.
+
+    A truncated generation that never reaches the `final` channel yields
+    ``content == ""`` — deliberately. The alternative (hand back the `analysis`
+    text) would let hidden CoT be graded as the answer, which is exactly the bug
+    this function exists to prevent. An empty answer is visible to the
+    format-adherence gate; a plausible-looking wrong one is not.
+    """
+    global _HARMONY_WARNED
+
+    segments = [
+        (m.group("channel").lower(), m.group("content"))
+        for m in _HARMONY_SEGMENT.finditer(text)
+    ]
+    if segments:
+        final = "\n".join(c for ch, c in segments if ch == "final").strip()
+        reasoning = "\n".join(c for ch, c in segments if ch != "final").strip()
+        return reasoning, final
+
+    # No delimiters. Almost always means skip_special_tokens=True stripped them
+    # (see run_vllm_inference). Salvage what we can, but say so loudly — silently
+    # returning the smashed text is how the analysis channel got graded as the
+    # answer in the first place.
+    if _HARMONY_STRIPPED_FINAL.search(text):
+        if not _HARMONY_WARNED:
+            _HARMONY_WARNED = True
+            print(
+                "[vllm_inference] WARNING: harmony output arrived WITHOUT channel "
+                "delimiters — skip_special_tokens was True somewhere. Salvaging on "
+                "the 'assistantfinal' marker, but fix the sampling params: the "
+                "reasoning/answer split is unreliable in this mode."
+            )
+        head, _, tail = text.rpartition("assistantfinal")
+        reasoning = head.strip()
+        if reasoning.lower().startswith("analysis"):
+            reasoning = reasoning[len("analysis"):].strip()
+        return reasoning, tail.strip()
+
+    return None
+
+
 def _detect_reasoning_parser(model_source: str) -> Optional[str]:
     """Map a model path to the vLLM reasoning-parser name for that family.
 
     Returns a parser name registered in ``vllm.reasoning.ReasoningParserManager``,
     or ``None`` for non-thinking families (Phi-4, Llama, Gemma-3, etc.) where
     no reasoning extraction is needed.
+
+    gpt-oss is deliberately absent. It used to return ``"gptoss"``, which is not
+    a registered name (vLLM calls it ``openai_gptoss``), so the lookup raised
+    KeyError, the caller swallowed it, and every gpt-oss run silently fell back
+    to the `<think>` regex — which harmony never emits. Fixing the *name* is not
+    enough either: vLLM's `openai_gptoss` parser raises NotImplementedError for
+    non-streaming input ("gpt-oss has a special branch for parsing reasoning in
+    non-streaming mode"), and this module only ever calls `LLM.generate()`
+    offline. Harmony is handled by `_split_harmony` instead.
     """
     s = (model_source or "").lower()
     # Order matters — check more specific names first.
     if "gemma-4" in s or "gemma4" in s:
         return "gemma4"
-    if "gpt-oss" in s:
-        return "gptoss"
     if "deepseek-r1" in s or "deepseek_r1" in s or "deepseek-v3" in s:
         return "deepseek_r1"
     if "qwen3" in s:  # covers qwen3, qwen3.5, qwen3-vl, etc.
@@ -161,11 +243,22 @@ def model_needs_reasoning_budget(model_cfg: Any) -> bool:
       1. ``chat_template_kwargs.enable_thinking`` is explicitly ``False`` — vLLM
          strips ``<think>`` blocks from the output, but the model still *spends*
          tokens reasoning first.
-      2. The model family ships a dedicated reasoning parser (gpt-oss harmony,
-         qwen3, deepseek-r1). These reason regardless of ``enable_thinking`` —
-         e.g. gpt-oss always emits an ``analysis`` channel before ``final``,
-         which is why a bare ``chat_template_kwargs: {}`` config (no
-         ``enable_thinking`` key) still needs the larger budget.
+      2. The model reasons structurally — either it ships a vLLM reasoning
+         parser (qwen3, deepseek-r1) or it speaks harmony (gpt-oss). These
+         reason regardless of ``enable_thinking`` — gpt-oss always emits an
+         ``analysis`` channel before ``final``, which is why a bare
+         ``chat_template_kwargs: {}`` config (no ``enable_thinking`` key) still
+         needs the larger budget.
+
+    Harmony must be checked *separately* from ``_detect_reasoning_parser``.
+    That function deliberately returns None for gpt-oss (vLLM has no usable
+    non-streaming harmony parser — see ``_split_harmony``), so keying Trigger 2
+    on it alone would silently stop flagging the one family that motivated the
+    trigger. And the consequence is now worse than it used to be: since
+    ``_split_harmony`` honestly reports an unfinished generation as
+    ``content == ""``, an under-budgeted gpt-oss returns **empty** answers on
+    every short-answer benchmark rather than merely garbage ones.
+    Guarded by tests/common/test_reasoning_budget.py.
     """
     # Trigger 1: enable_thinking explicitly false.
     try:
@@ -182,7 +275,7 @@ def model_needs_reasoning_budget(model_cfg: Any) -> bool:
     except Exception:
         pass
 
-    # Trigger 2: family ships a reasoning parser → always reasons.
+    # Trigger 2: the model reasons structurally → always reasons.
     # Check both the model_source path AND the declared model_family: some
     # reasoning models carry a custom checkpoint name whose path hides the
     # base family (e.g. OpenThinker3-7B is a qwen3 model, but "qwen3" never
@@ -196,7 +289,12 @@ def model_needs_reasoning_budget(model_cfg: Any) -> bool:
         if fam is None and isinstance(model_cfg, dict):
             fam = model_cfg.get("model_family")
         for ident in (src, fam):
-            if ident and _detect_reasoning_parser(str(ident)) is not None:
+            if not ident:
+                continue
+            # Harmony (gpt-oss) has no vLLM parser but always reasons.
+            if _is_harmony_model(str(ident)):
+                return True
+            if _detect_reasoning_parser(str(ident)) is not None:
                 return True
     except Exception:
         pass
@@ -236,6 +334,16 @@ def _split_reasoning(
     if not text:
         return "", ""
 
+    # Harmony (gpt-oss) first: it is a channel protocol, not a <think> wrapper,
+    # and vLLM's parser refuses to run outside streaming mode.
+    if _is_harmony_model(model_source):
+        parsed = _split_harmony(text)
+        if parsed is not None:
+            return parsed
+        # Genuinely unstructured output (e.g. the model emitted bare prose).
+        # Treat it as content — there is no reasoning channel to separate.
+        return "", text.strip()
+
     parser_name = _detect_reasoning_parser(model_source)
     if parser_name is not None:
         try:
@@ -271,11 +379,21 @@ def _split_reasoning(
 # ---------------------------------------------------------------------------
 
 def get_pcie_nccl_env_vars() -> Dict[str, str]:
-    """Return NCCL environment variables required for PCIe-only GPUs (no NVLink)."""
+    """Return NCCL environment variables required for PCIe-only GPUs (no NVLink).
+
+    P2P must stay disabled: with it on, a 4-rank all-reduce hangs silently on
+    klara's A6000s (benchmarked 2026-07-12 -- TP=2 survives, TP=4 never returns).
+
+    SHM must stay ENABLED. Disabling P2P *and* SHM leaves NCCL no intra-node
+    transport but TCP sockets, which made every collective 2-3.5x slower
+    (decode-shaped all-reduce 0.245ms -> 0.069ms once SHM is restored; peak
+    bandwidth 2.5 -> 5.2 GB/s). That cost ~21-29% of end-to-end vLLM throughput.
+    SHM did not hang at TP=2 or TP=4 in the same benchmark.
+    """
     return {
         "NCCL_P2P_DISABLE": "1",
         "NCCL_IB_DISABLE": "1",
-        "NCCL_SHM_DISABLE": "1",
+        "NCCL_SHM_DISABLE": "0",
         "NCCL_CUMEM_HOST_ENABLE": "0",
         "NCCL_DEBUG": "WARN",
         "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
@@ -1686,6 +1804,29 @@ def run_vllm_inference(
                 f"clamped to fit the {_max_model_len}-token context window — "
                 f"check the model's max_model_len vs. the stage's max_tokens"
             )
+
+        # Harmony (gpt-oss) needs its channel delimiters to survive detokenization.
+        # vLLM defaults to skip_special_tokens=True, which DELETES <|channel|>,
+        # <|message|>, <|end|> and <|return|> from the decoded text — turning
+        #   <|channel|>analysis<|message|>A<|end|><|start|>assistant<|channel|>final<|message|>B
+        # into the unsplittable smash "analysisAassistantfinalB". Once the markers
+        # are gone no downstream parser can recover the final channel, so the model's
+        # hidden CoT ends up in `generated_text` as if it were the answer.
+        # Force them through here rather than in the model yaml: a stage that
+        # overrides `sampling_params` would otherwise silently drop the flag.
+        # See _split_harmony() and wiki/canonical-models.md.
+        #
+        # NB: `_model_source` (underscore) is the one bound in this scope — the
+        # bare `model_source` exists only inside the nested LoRA-remap branch
+        # above. Getting that wrong raises UnboundLocalError for EVERY model, not
+        # just gpt-oss, and the unit tests will not catch it: nothing exercises
+        # run_vllm_inference() without a GPU. Guarded by
+        # tests/common/test_harmony_parsing.py::TestRunVllmInferenceScope.
+        if _is_harmony_model(_model_source):
+            for _d in sp_dicts:
+                _d["skip_special_tokens"] = False
+            print(f"[{stage_name}] harmony model detected — skip_special_tokens=False "
+                  f"(channel delimiters preserved for the final-channel parser)")
 
         # -----------------------------------------------------------------------
         # Inference: data-parallel or single-process

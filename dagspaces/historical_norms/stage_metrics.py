@@ -89,8 +89,9 @@ def compute_stage_quality_metrics(stage: str, df: pd.DataFrame) -> Dict[str, Any
         if "ci_appropriateness" in df.columns:
             m.update(_value_fracs(df, "ci_appropriateness",
                                   ("appropriate", "inappropriate", "ambiguous")))
-        if "flow_quality_passed" in df.columns:
-            m[f"{_PREFIX}/flow_quality_passed_rate"] = _frac(df["flow_quality_passed"])
+        # No flow_quality_passed_rate: the check that produced it was removed
+        # 2026-07-13 (it enforced a role requirement the CI prompt never stated).
+        # See stages/ci_extraction.py.
 
     elif stage == "norm_reasoning":
         if "reasoning_error" in df.columns:

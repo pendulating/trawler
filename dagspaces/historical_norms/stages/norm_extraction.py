@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 from dagspaces.common.vllm_inference import run_vllm_inference
 from ..ci_schema import PrescriptiveNormExtractionResult
-from ._utils import extract_json, clean_for_parquet
+from ._utils import announce_prompt, extract_json, clean_for_parquet
 
 
 # All raz_* columns that the extraction stage produces.  Used to guarantee
@@ -214,6 +214,7 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     print(f"[norm_extraction] Loaded prompt from config "
           f"(system_prompt: {len(system_prompt)} chars, prompt_template: {len(prompt_template)} chars)",
           flush=True)
+    prompt_name = announce_prompt("norm_extraction", prompt_cfg, system_prompt)
 
     def _format_prompt(row: Dict[str, Any]) -> str:
         text = str(row.get("norm_snippet") or row.get("article_text") or "")
@@ -354,4 +355,5 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
               f"passed ({flagged} flagged with named characters or plot-specificity)")
 
     result_df = clean_for_parquet(result_df, extra_cols=["reasoning_data", "raz_norms_raw"], stage_name="norm_extraction")
+    result_df["prompt_name"] = prompt_name
     return result_df

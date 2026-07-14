@@ -43,8 +43,10 @@ setup:
   - export NCCL_IB_DISABLE=1
   # Disable NCCL CUMEM for PCIe (fixes 'peer access not supported' errors)
   - export NCCL_CUMEM_HOST_ENABLE=0
-  # SHM transport can hang on PCIe, disable it
-  - export NCCL_SHM_DISABLE=1
+  # SHM stays ENABLED. It is the transport NCCL falls back to when P2P is off;
+  # disabling both left only TCP sockets and cost 2-3.5x on every all-reduce
+  # (benchmarked 2026-07-12 on klara). P2P above is the one that actually hangs.
+  - export NCCL_SHM_DISABLE=0
   - export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512,expandable_segments:True
   - export CUDA_LAUNCH_BLOCKING=0
   - export TOKENIZERS_PARALLELISM=false

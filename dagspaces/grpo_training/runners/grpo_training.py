@@ -260,6 +260,12 @@ class GRPOTrainingRunner(StageRunner):
         reward_cache_path = context.inputs.get("reward_cache", "")
         norm_universes_path = context.inputs.get("norm_universes", "")
         embeddings_dir = context.inputs.get("embeddings", "")
+        # Optional: vignettes drawn from a separate (e.g. more force-balanced)
+        # universe; grounding/extraction keep `norm_universes`. Empty/non-file
+        # falls back to the grounding universe in the stage.
+        vignette_norm_universes_path = context.inputs.get(
+            "vignette_norm_universes", ""
+        )
 
         missing = []
         if not sft_checkpoint:
@@ -479,6 +485,7 @@ class GRPOTrainingRunner(StageRunner):
                 cfg=cfg,
                 embeddings_dir=embeddings_dir or "",
                 reward_cache_path=reward_cache_path or "",
+                vignette_norm_universes_path=vignette_norm_universes_path or "",
             )
         finally:
             _shutdown_server(vllm_server_proc)
