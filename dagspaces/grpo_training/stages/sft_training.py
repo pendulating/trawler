@@ -408,6 +408,25 @@ def run_sft_training_stage(
         _attn_impl = "eager"
         print(f"[sft_training] QLoRA detected — forcing attn_implementation=eager")
 
+    # Gemma-4 (head_dim=256, incl. the nested text_config archs) cannot use
+    # FlashAttention: flash-attn's Ampere kernels reject head dimensions this
+    # large in the training path ("FlashAttention forward only supports head
+    # dimension at most 256"). torch SDPA handles head_dim=256, so downgrade
+    # flash->sdpa when the model's head_dim is >= 256. Guarded so a config-load
+    # hiccup never blocks training (keeps the flash/sdpa choice already made).
+    if _attn_impl == "flash_attention_2":
+        try:
+            from transformers import AutoConfig as _AttnCfg
+            _hd_cfg = _AttnCfg.from_pretrained(base_model, trust_remote_code=True)
+            _tc = getattr(_hd_cfg, "text_config", _hd_cfg)
+            _head_dim = getattr(_tc, "head_dim", None)
+            if _head_dim is not None and _head_dim >= 256:
+                _attn_impl = "sdpa"
+                print(f"[sft_training] head_dim={_head_dim} >= 256 — forcing "
+                      "attn_implementation=sdpa (flash-attn rejects it)")
+        except Exception as _e:  # noqa: BLE001 — never let the probe block training
+            print(f"[sft_training] head_dim probe failed ({_e}); keeping {_attn_impl}")
+
     model_kwargs = {
         "trust_remote_code": True,
         "torch_dtype": torch.bfloat16,

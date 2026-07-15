@@ -1,0 +1,49 @@
+# @package _global_
+# Companion to sft_canonical_top100_gemma4.yaml — the gpt-oss-20b cell, isolated.
+#
+# Same rationale as the fiction10 gpt-oss companion: gpt-oss dequantizes to ~40GB
+# and needs FSDP on 2 GPUs (training/sft=gpt_oss + slurm_train_2x node launcher);
+# it speaks harmony, so its chat template differs from the rest — least-proven cell.
+#
+# Same contentless-v6 negatives, trained on the TOP100 Gemma-4-teacher flows.
+#
+# Usage:
+#   python -m dagspaces.grpo_training.cli --multirun +sweep=sft_canonical_top100_gemma4_gptoss
+
+defaults:
+  - override /pipeline: sft_only
+  - override /model: gpt-oss-20b/instruct
+  - override /training/sft: gpt_oss
+
+experiment:
+  name: sft_canonical_top100_gemma4_gptoss
+
+# Raise host RAM for the 2-GPU FSDP training node: the ~40GB MXFP4->bf16
+# dequant across 2 ranks OOM-killed at the default 64GB. slurm_train_2x's
+# mem_gb = ${runtime.job_memory_gb}.
+runtime:
+  job_memory_gb: 200
+
+training:
+  sft:
+    negative_selection: contentless
+
+pipeline:
+  sources:
+    ci_reasoning:
+      path: /share/pierson/matt/UAIR/outputs/2026-07-13_top100_flows_gemma4/16-23-09/COLM_flows_fiction_gemma4/outputs/ci_reasoning/reasoning.parquet
+    ci_extraction:
+      path: /share/pierson/matt/UAIR/outputs/2026-07-13_top100_flows_gemma4/16-23-09/COLM_flows_fiction_gemma4/outputs/ci_extraction/ci_flows.parquet
+  graph:
+    nodes:
+      sft_training:
+        # 2-GPU FSDP instead of the default slurm_gpu_1x.
+        launcher: slurm_train_2x
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 1
+  sweeper:
+    params:
+      model: gpt-oss-20b/instruct

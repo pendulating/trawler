@@ -1,0 +1,55 @@
+# @package _global_
+# Hydra sweep: SFT the canonical model set on the Gemma-4-teacher TOP100 flows.
+#
+# Identical structure to sft_canonical_gemma4.yaml (the fiction10 sweep) — same
+# 10 models, same contentless-v6 recipe (sft/default + negative_selection=
+# contentless) — but trained on the larger TOP100 corpus.
+#
+# Training data = the 2026-07-13 Gemma-4-31B-teacher TOP100 flows, wired
+# EXPLICITLY below (not via CI_*_PATH env) so each job's .hydra records the exact
+# corpus. ~5x the fiction10 corpus, so expect proportionally longer SFT:
+#   reasoning : 15875 chunks (380 no-exchange negatives)   ci_flows : 90091 rows
+#   prompt: ci_reasoning_fiction (fiction prompt)           parse errors: 4
+#
+# Models (10 x 1-GPU cells). gpt-oss-20b via sweep=sft_canonical_top100_gemma4_gptoss.
+# CIRL + ContextReasoner are comparison baselines, not SFT targets.
+#
+#   job 0  qwen3.5-2b/instruct        job 5  gemma-4-12b/instruct
+#   job 1  qwen3.5-4b/instruct        job 6  openthinker3-7b/instruct
+#   job 2  qwen3.5-9b/instruct        job 7  llama3.1-8b/instruct
+#   job 3  gemma-4-e2b/instruct       job 8  harc-llama3.1-8b/instruct
+#   job 4  gemma-4-e4b/instruct       job 9  phi-4/instruct
+#
+# Usage:
+#   python -m dagspaces.grpo_training.cli --multirun +sweep=sft_canonical_top100_gemma4
+#
+# Same caveats as fiction10: transformers 5.6.2 in .venv — verify the three
+# gemma-4 cells load before trusting them.
+
+defaults:
+  - override /pipeline: sft_only
+  - override /model: qwen3.5-9b/instruct   # placeholder; swept below
+
+experiment:
+  name: sft_canonical_top100_gemma4
+
+training:
+  sft:
+    negative_selection: contentless
+
+pipeline:
+  sources:
+    ci_reasoning:
+      path: /share/pierson/matt/UAIR/outputs/2026-07-13_top100_flows_gemma4/16-23-09/COLM_flows_fiction_gemma4/outputs/ci_reasoning/reasoning.parquet
+    ci_extraction:
+      path: /share/pierson/matt/UAIR/outputs/2026-07-13_top100_flows_gemma4/16-23-09/COLM_flows_fiction_gemma4/outputs/ci_extraction/ci_flows.parquet
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # Concurrent SFT monitor/GPU cells. 5 = two waves over the 10 models;
+    # leaves headroom on the 8xA6000 box for the judge server / other users.
+    array_parallelism: 5
+  sweeper:
+    params:
+      model: qwen3.5-2b/instruct,qwen3.5-4b/instruct,qwen3.5-9b/instruct,gemma-4-e2b/instruct,gemma-4-e4b/instruct,gemma-4-12b/instruct,openthinker3-7b/instruct,llama3.1-8b/instruct,harc-llama3.1-8b/instruct,phi-4/instruct
