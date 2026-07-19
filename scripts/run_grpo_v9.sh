@@ -62,7 +62,7 @@
 set -euo pipefail
 
 PROJECT_ROOT=/share/pierson/matt/UAIR
-source "$PROJECT_ROOT/.venv/bin/activate"
+source "${TRAWLER_DRIVER_VENV:-$PROJECT_ROOT/.venv-vllm025cu129}/bin/activate"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 cd "$PROJECT_ROOT"
 

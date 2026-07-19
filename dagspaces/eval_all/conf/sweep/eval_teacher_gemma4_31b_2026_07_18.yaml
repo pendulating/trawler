@@ -1,0 +1,120 @@
+# @package _global_
+# Hydra sweep: run the TEACHER/JUDGE model itself, Gemma-4-31B-it, through the
+# full eval_all roster — a reference ceiling for the canonical-set table.
+#
+# Why this row exists
+# -------------------
+# Gemma-4-31B-it occupies three roles in the current pipeline at once:
+#   1. TEACHER  — it generated the 2026-07-12 fiction10 flows (contentless-v6)
+#                 that every <family>/sft-canonical adapter was trained on.
+#   2. JUDGE    — it scores PrivacyLens leakage/helpfulness for every row of
+#                 2026-07-1{6,7}_eval_canonical_{instruct,sft_gemma4}.
+#   3. SUBJECT  — added here, as an evaluated model.
+# The question this answers: where does the model supplying the training signal
+# itself land on these benchmarks? It bounds what the SFT students could be
+# expected to inherit.
+#
+# ############################################################################
+# # SELF-JUDGING — the PrivacyLens judged columns are NOT a neutral measurement
+# ############################################################################
+# For THIS row, the judge and the subject are the same weights, so
+# Lk / Adj Lk / Helpful / Help are the model grading its own outputs. Self-
+# preference bias in LLM judges is well documented and runs in the favourable
+# direction, so treat these four numbers as an OPTIMISTIC bound, not a score
+# comparable in kind to the other rows'. Say so wherever this row is reported.
+#
+# It is nonetheless the right call to keep the SAME judge here rather than swap
+# in a neutral one: every other row in the canonical table is Gemma-4-31B-it-
+# judged, and changing the judge for one row would substitute a cross-judge
+# confound (which we cannot calibrate) for a self-preference bias (which we can
+# at least name and bound). Consistency wins; the caveat is documented instead.
+#
+# The gold-scored columns — GoldCoin macro-F1, PrivacyLens QA Acc, ConfAIde
+# Tier-2b r, CIRL vignette accuracy, MMLU — are scored against fixed labels and
+# carry NO self-judging concern. Those are the trustworthy part of this row.
+#
+# If a genuinely neutral teacher baseline is wanted later, re-run PrivacyLens
+# only, pointed at a different judge server, and report it as a separate row —
+# do not silently overwrite these cells.
+#
+# Configuration notes
+# -------------------
+# * TP=2 is mandatory. gemma-4-31b/instruct.yaml sets tensor_parallel_size=2
+#   (~59G bf16, KV-hungry at ~0.94 MB/token), so this sweep uses the
+#   all_benchmarks_2gpu roster. Do NOT switch to the 1-GPU roster.
+# * MMLU is explicitly re-enabled: mmlu ships `enabled: false` in
+#   all_benchmarks_2gpu.yaml but `enabled: true` in the 1-GPU all_benchmarks.
+#   Without this override the teacher row would be missing the MMLU column that
+#   all eleven canonical rows have. mmlu_eval_2gpu exists and is used.
+# * vlm_geoprivacy DOES run. The gemma-4 line is any-to-any multimodal, but
+#   `model_family: gemma-4` was missing from eval_all/orchestrator.py
+#   `_VLM_FAMILIES` (which listed gemma-3 only), so every gemma-4 cell in the
+#   2026-07-1{6,7} canonical sweeps silently self-skipped this benchmark as
+#   "text-only". Fixed 2026-07-18 together with a dedicated
+#   `build_gemma4_prompt` — the gemma-3 builder could NOT be reused, because
+#   Gemma4Processor renders a list-valued system message as its literal Python
+#   repr and would have silently corrupted the system prompt.
+#   CONSEQUENCE: the six existing gemma-4 canonical cells (e2b/e4b/12b x
+#   {instruct, sft-canonical}) still have no Q7 value. Re-run vlm_geoprivacy for
+#   them if that column should be filled; this sweep only covers the teacher.
+# * NCCL_SHM_DISABLE=0 is pinned below. This model's TP=2 all-reduce traffic is
+#   the throughput bottleneck (~29ms/decode step) and SHM-disabled forces those
+#   collectives onto TCP sockets — 2-3.5x slower. P2P stays disabled (that is
+#   the one that hangs on this hardware). See wiki/slurm-and-env.md.
+#
+# Required cluster setup — PrivacyLens is the only judge-dependent benchmark:
+#   sbatch scripts/judge_server.sub      # must report /v1/models before launch
+# Confirm the served judge is Gemma-4-31B-it before trusting the row:
+#   curl -s $JUDGE_SERVER_URL/v1/models | python -m json.tool
+# Note the judge server itself holds 2 GPUs on klara for the same weights, so
+# this sweep is loading a second copy — array_parallelism=1 keeps that sane.
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun \
+#       +sweep=eval_teacher_gemma4_31b_2026_07_18
+#
+# Sampled smoke test first (recommended — TP=2 + a 59G load is the expensive
+# way to discover a config error):
+#   python -m dagspaces.eval_all.cli \
+#       +sweep=eval_teacher_gemma4_31b_2026_07_18 \
+#       runtime.debug=true runtime.sample_n=5
+
+defaults:
+  - override /pipeline: all_benchmarks_2gpu
+
+experiment:
+  name: eval_teacher_gemma4_31b
+
+benchmarks:
+  mmlu:
+    # See "Configuration notes" above: off by default in the 2gpu roster, but
+    # every canonical row has an MMLU value, so the teacher row needs one too.
+    enabled: true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # One model, TP=2 per stage, sharing a box with the 2-GPU judge server.
+    array_parallelism: 1
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      # Same vLLM 0.25 pin as the canonical sweeps this row is a reference for.
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      # TP=2 collectives are this model's bottleneck — keep SHM on, P2P off.
+      - export NCCL_SHM_DISABLE=0
+      - export NCCL_P2P_DISABLE=1
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      model: gemma-4-31b/instruct

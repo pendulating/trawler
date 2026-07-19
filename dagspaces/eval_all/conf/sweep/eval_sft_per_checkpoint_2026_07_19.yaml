@@ -1,0 +1,117 @@
+# @package _global_
+# Hydra sweep: full eval_all PER EPOCH CHECKPOINT (171 / 342 / 513 of 513
+# total steps = epochs 1/2/3) for qwen3.5-9b and gemma-4-e2b, SFT'd in the
+# 2026-07-19 canonical sweep (template-overhaul + DFT era).
+#
+# Purpose: epoch-wise trajectory of benchmark performance — does the
+# best-epoch selection used for the canonical cells leave anything on the
+# table, and where does over-fitting start?
+#
+# Upstream runs (both completed cleanly, all three checkpoints present):
+#   qwen3.5-9b   multirun/2026-07-19_sft_canonical_gemma4/00-11-59/2
+#   gemma-4-e2b  multirun/2026-07-19_sft_canonical_gemma4/00-11-59/3
+#
+# 2 models x 3 checkpoints = 6 cells, each an explicit sft-canonical-ckptNNN
+# model yaml with a hardcoded lora_path (the v9/v10-ckptNNN convention). A
+# first attempt used a swept ${sft_ckpt} interpolation instead — it broke
+# with InterpolationKeyError inside eval_all's re-rooted child configs
+# (sweep 13-46-08), so: no interpolation, concrete yamls only. Both models
+# are TP=1, so the 1-GPU all_benchmarks pipeline covers everything.
+#
+# NOTE: these rows are NOT protocol-comparable with the keeper-era
+# (pre-2026-07-18) SFT evals — the template overhaul + DFT switch sits in
+# between. Compare only within the 07-19 cohort.
+#
+# Required cluster setup — PrivacyLens is the only judge-dependent benchmark:
+#   sbatch scripts/judge_server.sub      # must report /v1/models before launch
+# Judge: Gemma-4-31B-it on klara:8002 (same as eval_canonical_sft_gemma4).
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_sft_per_checkpoint_2026_07_19
+
+experiment:
+  name: eval_sft_per_checkpoint
+
+# ── Roster tweaks (2026-07-19): full roster with two substitutions ────────
+# 1. ConfAIde runs ONLY tiers 2a/2b (the Likert sensitivity correlations);
+#    the four tier-3 branches are dropped via the confaide_tier2_only
+#    pipeline (2 GPU stages instead of 6).
+# 2. cirl_vignettes runs TRAJECTORY probing instead of seed+vignette. The
+#    seed/vignette levels re-probe the same 493 PrivacyLens cases that the
+#    privacylens benchmark already covers; the trajectories (agentic
+#    final-action generation, judge-scored leakage + helpfulness) are the
+#    signal unique to the CIRL data. Its judge stages hit JUDGE_SERVER_URL
+#    synchronously — the judge server must be up (same requirement as
+#    privacylens).
+# ── Engine tuning (2026-07-19, data-driven) ──────────────────────────────
+# The blanket engine_kwargs (max_model_len 16384, max_num_seqs 16) are the
+# NORM-EXTRACTION defaults and are 3-13x oversized for most benchmarks.
+# Numbers below come from vLLM usage columns of the completed
+# 2026-07-17_eval_canonical_instruct/21-21-52 run (arms qwen3.5-9b +
+# gemma-4-12b, worst of the two; gemma tokenizes ~1% longer), sized as
+# roundup_1024(1.25 x max_prompt + observed max_tokens cap + template):
+#   goldcoin   prompt max  960, cap ≤4096 (reasoning bump) →  6144 / 64
+#   confaide2  prompt max  205, cap ≤4096                  →  5120 / 64
+#   mmlu       prompt max 1061, cap ≤4096, 14042 rows      →  6144 / 128
+#   vlm_geo    text 1282 + ≤280 img tokens, cap 512        →  3072 / 32
+#   privacylens agent_action prompt max 5153 + 8192 gen — genuinely needs
+#     the 16384 default; DELIBERATELY untouched (2% of gemma actions
+#     already length-truncate at 8192).
+#   cirl trajectory prompt max ~5.2k + 7000 gen ≈ 13.4k — savings vs
+#     16384 are marginal; left at default for simplicity.
+# NB: the short-benchmark floor is the reasoning-capable max_tokens bump
+# to 4096 (common/vllm_inference.py) — if that bump is ever lowered these
+# can shrink further.
+benchmarks:
+  confaide:
+    pipeline: confaide_tier2_only
+    extra_args:
+      - model.engine_kwargs.max_model_len=5120
+      - model.engine_kwargs.max_num_seqs=64
+  cirl_vignettes:
+    pipeline: cirl_trajectory_eval
+  goldcoin:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+  mmlu:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=128
+  vlm_geoprivacy:
+    extra_args:
+      - model.engine_kwargs.max_model_len=3072
+      - model.engine_kwargs.max_num_seqs=32
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # Capped at 3 concurrent cells: shares klara with the still-running SFT
+    # arms and the judge server.
+    array_parallelism: 3
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      # Same engine pin as eval_canonical_sft_gemma4: vLLM 0.25 venv so both
+      # families run under one engine version.
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      model: >-
+        qwen3.5-9b/sft-canonical-ckpt171,
+        qwen3.5-9b/sft-canonical-ckpt342,
+        qwen3.5-9b/sft-canonical-ckpt513,
+        gemma-4-e2b/sft-canonical-ckpt171,
+        gemma-4-e2b/sft-canonical-ckpt342,
+        gemma-4-e2b/sft-canonical-ckpt513

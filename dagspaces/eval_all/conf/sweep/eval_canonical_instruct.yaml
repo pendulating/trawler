@@ -1,0 +1,87 @@
+# @package _global_
+# Hydra sweep: full eval_all over the canonical model set, UN-FINE-TUNED — i.e.
+# the exact pre-SFT checkpoints that eval_canonical_sft_gemma4.yaml fine-tuned.
+# This is the baseline column for the SFT sweep: same 11 models, same benchmarks,
+# same judge, LoRA removed.
+#
+# VERIFIED un-finetuned == instruct (not true base): every <family>/sft-canonical
+# yaml's model_source is byte-identical to that family's instruct.yaml model_source
+# (e.g. Llama-3.1-8B-Instruct, gemma-4-12B-it, Qwen3.5-9B), and NONE matches the
+# family's *-Base checkpoint where one exists. So the pre-SFT model for every cell
+# is <family>/instruct, and these yamls carry no lora_path. (Checked 2026-07-17.)
+#
+# Pairing (SFT source run -> pre-SFT model this baseline evaluates):
+#   qwen3.5-2b/4b/9b, openthinker3-7b, llama3.1-8b, harc-llama3.1-8b, phi-4,
+#   gemma-4-e2b/e4b/12b, gpt-oss-20b   ->   <same family>/instruct
+#
+# 11 models = the canonical 13 minus cirl/base and context-reasoner/ppo, matching
+# eval_canonical_sft_gemma4.yaml exactly so the two sweeps are row-aligned.
+#
+# All 11 are TP=1 (confirmed against each instruct.yaml), so the 1-GPU
+# all_benchmarks pipeline covers the whole set; no all_benchmarks_2gpu split.
+#
+# Full roster (no benchmark_filter): goldcoin, privacylens, cirl_vignettes,
+# confaide, vlm_geoprivacy, mmlu. simpleqa_verified stays disabled by default.
+#
+# Required cluster setup — PrivacyLens is the only judge-dependent benchmark:
+#   sbatch scripts/judge_server.sub      # must report /v1/models before launch
+#
+# Judge: Gemma-4-31B-it on klara:8002 (judge_server.sub's default as of
+# 2026-07-16), the SAME judge as eval_canonical_sft_gemma4 so the PrivacyLens
+# rows are directly comparable SFT-vs-baseline. Not judge-comparable with the
+# pre-07-16 Qwen3.6-27B PrivacyLens column. body.model auto-resolves from
+# /v1/models at export time (dagspaces/common/judge_export.py) — confirm the
+# served model before trusting rows.
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_canonical_instruct
+#
+# Throttle GPU/judge contention:
+#   ... hydra.launcher.array_parallelism=2
+
+experiment:
+  name: eval_canonical_instruct
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # Each cell is a monitor that fans out GPU children; one shared judge
+    # server backs privacylens. 3 concurrent cells matches the SFT sweep and
+    # leaves headroom on the 8xA6000 box.
+    array_parallelism: 3
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      # vLLM 0.25, NOT server.env's default .venv (0.19.1). gemma-4-12b is
+      # Gemma4UnifiedForConditionalGeneration, which 0.19.1's ModelRegistry does
+      # not contain at all — that cell cannot load on the default venv. Pinned
+      # for the whole sweep so all 11 cells are compared under one engine
+      # version, and matched to the SFT sweep's engine.
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      # 11 canonical pre-SFT (instruct) models. Row-aligned with
+      # eval_canonical_sft_gemma4.yaml's sft-canonical roster.
+      model: >-
+        qwen3.5-2b/instruct,
+        qwen3.5-4b/instruct,
+        qwen3.5-9b/instruct,
+        gemma-4-e2b/instruct,
+        gemma-4-e4b/instruct,
+        gemma-4-12b/instruct,
+        openthinker3-7b/instruct,
+        llama3.1-8b/instruct,
+        harc-llama3.1-8b/instruct,
+        phi-4/instruct,
+        gpt-oss-20b/instruct

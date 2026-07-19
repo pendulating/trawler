@@ -275,7 +275,17 @@ def run_experiment(cfg: DictConfig) -> None:
 
                     if parent_group:
                         try:
-                            current_setup = list(launcher_cfg.get("setup", []))
+                            # Re-add the TRAWLER_DRIVER_VENV export that
+                            # _create_submitit_executor prepends (so
+                            # activate_stage_venv.sh can match the node-local
+                            # /scratch venv mirror). update_parameters(slurm_setup=)
+                            # below *replaces* the executor's setup, so rebuilding
+                            # from the raw launcher_cfg would drop it and force every
+                            # stage onto the NFS venv — slow cold imports and, on
+                            # >1-GPU stages, GPU-sanitize probe timeouts.
+                            current_setup = [
+                                f"export TRAWLER_DRIVER_VENV={sys.prefix}"
+                            ] + list(launcher_cfg.get("setup", []))
                             insert_idx = 0
                             for i, cmd in enumerate(current_setup):
                                 if "source" in cmd or "export HYDRA_FULL_ERROR" in cmd:

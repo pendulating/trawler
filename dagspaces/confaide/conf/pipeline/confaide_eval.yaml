@@ -28,7 +28,7 @@ pipeline:
           dataset: load_dataset_tier2a.dataset
         outputs:
           dataset: outputs/llm_inference_tier2a/dataset.parquet
-        launcher: slurm_gpu_1x
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
         overrides:
           prompt:
             tier: "2a"
@@ -73,7 +73,7 @@ pipeline:
           dataset: load_dataset_tier2b.dataset
         outputs:
           dataset: outputs/llm_inference_tier2b/dataset.parquet
-        launcher: slurm_gpu_1x
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
         overrides:
           prompt:
             tier: "2b"
@@ -118,7 +118,7 @@ pipeline:
           dataset: load_dataset_tier3_control.dataset
         outputs:
           dataset: outputs/llm_inference_tier3_control/dataset.parquet
-        launcher: slurm_gpu_1x
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
         overrides:
           prompt:
             tier: "3_control"
@@ -165,7 +165,7 @@ pipeline:
           dataset: load_dataset_tier3_free.dataset
         outputs:
           dataset: outputs/llm_inference_tier3_free/dataset.parquet
-        launcher: slurm_gpu_1x
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
         overrides:
           prompt:
             tier: "3_free"
@@ -212,7 +212,7 @@ pipeline:
           dataset: load_dataset_tier3_info.dataset
         outputs:
           dataset: outputs/llm_inference_tier3_info/dataset.parquet
-        launcher: slurm_gpu_1x
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
         overrides:
           prompt:
             tier: "3_info"
@@ -259,7 +259,7 @@ pipeline:
           dataset: load_dataset_tier3_sharing.dataset
         outputs:
           dataset: outputs/llm_inference_tier3_sharing/dataset.parquet
-        launcher: slurm_gpu_1x
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
         overrides:
           prompt:
             tier: "3_sharing"

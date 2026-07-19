@@ -37,6 +37,28 @@ def _serve_entrypoint(args: Dict[str, Any]) -> None:
     port = int(args["port"])
     address_file = args["address_file"]
 
+    # Port selection: a fixed port collides when two eval cells' servers land
+    # on the same node (array_parallelism > 1 on one box) — the loser fails
+    # to bind and burns the whole startup timeout. port=0 means "pick a free
+    # ephemeral port"; a non-zero request falls back to ephemeral if taken.
+    def _bind_probe(p: int) -> Optional[int]:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", p))
+            return s.getsockname()[1]
+        except OSError:
+            return None
+        finally:
+            s.close()
+
+    chosen = _bind_probe(port) if port else None
+    if chosen is None:
+        chosen = _bind_probe(0)
+        if port:
+            print(f"[vllm-server] port {port} unavailable → using {chosen}", flush=True)
+    port = int(chosen)
+
     os.makedirs(os.path.dirname(address_file), exist_ok=True)
     with open(address_file, "w", encoding="utf-8") as f:
         f.write(f"{hostname}:{port}\n")
@@ -55,6 +77,20 @@ def _serve_entrypoint(args: Dict[str, Any]) -> None:
         cmd += ["--max-model-len", str(int(args["max_model_len"]))]
     if args.get("gpu_memory_utilization"):
         cmd += ["--gpu-memory-utilization", str(float(args["gpu_memory_utilization"]))]
+    if args.get("max_num_seqs"):
+        cmd += ["--max-num-seqs", str(int(args["max_num_seqs"]))]
+    if args.get("trust_remote_code"):
+        cmd += ["--trust-remote-code"]
+    if args.get("enforce_eager"):
+        cmd += ["--enforce-eager"]
+    # LoRA: the task models are LoRA checkpoints — without these flags the
+    # server silently evaluates the BASE model under the checkpoint's name.
+    if args.get("lora_path"):
+        cmd += [
+            "--enable-lora",
+            "--max-lora-rank", str(int(args.get("max_lora_rank") or 64)),
+            "--lora-modules", f"{args['lora_name']}={args['lora_path']}",
+        ]
     if args.get("reasoning_parser"):
         cmd += ["--reasoning-parser", str(args["reasoning_parser"])]
     if args.get("extra_args"):
@@ -135,6 +171,13 @@ def launch_vllm_server(
     launcher_cfg = _load_launcher_config(
         cfg, launcher_name, config_dir=conf_dir,
     )
+    # Orphan guard: cleanup is atexit/SIGTERM-based, so a SIGKILLed monitor
+    # leaks the server job. slurm_gpu_1x's 10-day limit would burn a GPU for
+    # days — cap the server's own walltime instead. 12h >> any eval cell.
+    try:
+        launcher_cfg["timeout_min"] = int(server_cfg.get("max_runtime_min", 720))
+    except Exception:
+        pass
 
     log_folder = os.path.join(output_dir, "vllm_server_logs")
     os.makedirs(log_folder, exist_ok=True)
@@ -145,15 +188,39 @@ def launch_vllm_server(
     except FileNotFoundError:
         pass
 
-    served_name = str(server_cfg.get("served_model_name", "")) or str(
-        OmegaConf.select(model_cfg, "model_source")
-    )
-    model_path = str(OmegaConf.select(model_cfg, "model_source"))
+    # served_name stays the CANONICAL zoo path (it is what clients request and
+    # what lands in exports); the load path goes through the node-local model
+    # registry so weights stream from /scratch instead of NFS.
+    canonical_source = str(OmegaConf.select(model_cfg, "model_source"))
+    served_name = str(server_cfg.get("served_model_name", "")) or canonical_source
+    from dagspaces.common.model_registry import resolve_model_source
+    model_path = resolve_model_source(canonical_source, stage_name="eval_all.server")
+
+    from dagspaces.common.vllm_inference import _is_harmony_model
+    if _is_harmony_model(canonical_source):
+        raise RuntimeError(
+            "server_mode does not support gpt-oss/harmony models: their "
+            "final-channel extraction needs the in-process harmony path "
+            "(vLLM's openai_gptoss parser is not usable). Run this model "
+            "with server_mode.enabled=false."
+        )
 
     # Pull in TP / max_model_len from model engine_kwargs as defaults.
     ek = OmegaConf.select(model_cfg, "engine_kwargs") or {}
     tp = server_cfg.get("tensor_parallel_size") or ek.get("tensor_parallel_size") or 1
     max_model_len = server_cfg.get("max_model_len") or ek.get("max_model_len")
+
+    # LoRA checkpoint: remap CausalLM-layout adapter keys if the family needs
+    # it (same helper the in-process path uses), then serve the adapter under
+    # a stable name. Clients address it via VLLM_SERVER_LORA_NAME.
+    lora_path = str(OmegaConf.select(model_cfg, "lora_path") or "")
+    lora_name = None
+    if lora_path:
+        from dagspaces.common.vllm_inference import _remap_lora_keys_for_vlm
+        lora_path = _remap_lora_keys_for_vlm(
+            lora_path, model_path, "eval_all.server",
+        )
+        lora_name = "sft"
 
     # Pick a reasoning parser based on the model family, unless disabled.
     reasoning_parser = None
@@ -173,6 +240,17 @@ def launch_vllm_server(
         "tensor_parallel_size": tp,
         "max_model_len": max_model_len,
         "gpu_memory_utilization": server_cfg.get("gpu_memory_utilization", 0.90),
+        # None → vLLM's server default (256); the model yamls' 16 is an
+        # in-process norm-extraction setting, not a serving one.
+        "max_num_seqs": server_cfg.get("max_num_seqs"),
+        # Parity with in-process evals (model yamls set both).
+        "trust_remote_code": bool(ek.get("trust_remote_code", False)),
+        "enforce_eager": bool(
+            server_cfg.get("enforce_eager", ek.get("enforce_eager", False))
+        ),
+        "lora_path": lora_path or None,
+        "lora_name": lora_name,
+        "max_lora_rank": ek.get("max_lora_rank"),
         "reasoning_parser": reasoning_parser,
         "extra_args": list(server_cfg.get("extra_args", []) or []),
     }
@@ -235,6 +313,8 @@ def launch_vllm_server(
         "job": job,
         "url": base_url,
         "served_name": served_name,
+        "canonical_source": canonical_source,
+        "lora_name": lora_name,
         "address_file": address_file,
     }
 

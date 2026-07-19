@@ -573,6 +573,44 @@ def patch_vllm_lora_column_parallel(site_packages: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+# 8. vLLM multimodal/video.py — tolerate a broken torchcodec install
+# ---------------------------------------------------------------------------
+
+def patch_vllm_video_torchcodec(site_packages: Path) -> list[str]:
+    """Widen vLLM's torchcodec import guard from ImportError to Exception.
+
+    torchcodec may be installed while its FFmpeg shared libs are broken or
+    absent on a given node (klara: no libavutil at all; lisbeth: glib symbol
+    clash in the FFmpeg-6 path). Its loader then raises OSError/RuntimeError,
+    NOT ImportError, escaping vLLM's guard and crashing EVERY vllm import on
+    that node (first seen: judge-server job 73358, 2026-07-19). Video decode
+    is never used in this project, so degrading to vLLM's own placeholder is
+    always correct.
+    """
+    changed: list[str] = []
+    video = site_packages / "vllm/multimodal/video.py"
+    try:
+        if _replace_text(
+            video,
+            "try:\n"
+            "    from torchcodec.decoders import VideoDecoder\n"
+            "except ImportError:\n",
+            "try:\n"
+            "    from torchcodec.decoders import VideoDecoder\n"
+            "except Exception:\n"
+            "    # torchcodec may be installed while its FFmpeg shared libs are broken or\n"
+            "    # absent on this node (klara: no libavutil at all; lisbeth: glib symbol\n"
+            "    # clash) — its loader then raises OSError/RuntimeError, not ImportError,\n"
+            "    # which crashed every vllm import. Degrade to the same placeholder as an\n"
+            "    # absent torchcodec; video decode is never used in this project.\n",
+        ):
+            changed.append(str(video))
+    except RuntimeError:
+        pass
+    return changed
+
+
+# ---------------------------------------------------------------------------
 
 def resolve_site_packages(venv_path: Path) -> Path:
     lib_dir = venv_path / "lib"
@@ -590,8 +628,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--venv",
-        default=".venv",
-        help="Path to virtualenv root (default: .venv)",
+        default=".venv-vllm025cu129",
+        help="Path to virtualenv root (default: .venv-vllm025cu129)",
     )
     args = parser.parse_args()
 
@@ -606,6 +644,7 @@ def main() -> int:
     changed.extend(patch_trl_vllm_serve(site_packages))
     changed.extend(patch_transformers_bnb_loading(site_packages))
     changed.extend(patch_vllm_lora_column_parallel(site_packages))
+    changed.extend(patch_vllm_video_torchcodec(site_packages))
 
     if changed:
         print(f"Applied {len(changed)} patches:")

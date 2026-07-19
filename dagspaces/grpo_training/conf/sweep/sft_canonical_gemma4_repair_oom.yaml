@@ -1,0 +1,62 @@
+# @package _global_
+# Repair sweep: re-run ONLY the two canonical-SFT arms that died with CUDA OOM
+# in multirun/2026-07-19_sft_canonical_gemma4/00-11-59 —
+#
+#   job 0  gemma-4-e4b/instruct   (was arm 4; OOM mid-epoch-2, step 236/513)
+#   job 1  gemma-4-12b/instruct   (was arm 5; OOM at first backward, step 0/513)
+#
+# Identical recipe/protocol to sft_canonical_gemma4 (contentless-v6 data,
+# DFT loss, template-overhaul era, same explicit 2026-07-12 Gemma-4-31B-teacher
+# corpus) INCLUDING the 2026-07-19 OOM fix: per_device_batch_size 1 ×
+# gradient_accumulation_steps 16 = effective batch 16, gradient-equivalent to
+# the 2×8 the surviving arms trained with. See the comment block in
+# sft_canonical_gemma4.yaml for the full per-arm diagnosis; keep the two files'
+# training.sft blocks in lockstep.
+#
+# Residual risk (from the 2026-07-19 analysis): gemma-4-12b at batch 1 is
+# estimated ~36GB peak (~10GB headroom on a 48GB A6000) — an estimate, not a
+# measured run. If it OOMs again, next lever is PYTORCH_CUDA_ALLOC_CONF=
+# expandable_segments:True scoped to that job (NOT a blanket slurm_gpu_1x
+# launcher edit — it currently pins max_split_size_mb:512).
+#
+# Output layout (repair runs land in their own experiment dir; point the
+# regenerated sft-canonical model yamls here for these two families):
+#   multirun/<date>_sft_canonical_gemma4_repair_oom/<time>/{0,1}/sft_only/outputs/sft/checkpoint
+#
+# Usage — launch with the ABSOLUTE cu129 venv python (submitit bakes the
+# driver's sys.executable into the monitor srun; shell activation is not
+# enough — see feedback_sweep_driver_venv):
+#   /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/python \
+#     -m dagspaces.grpo_training.cli --multirun +sweep=sft_canonical_gemma4_repair_oom
+
+defaults:
+  - override /pipeline: sft_only
+  - override /model: qwen3.5-9b/instruct   # placeholder; swept below
+
+experiment:
+  name: sft_canonical_gemma4_repair_oom
+
+training:
+  sft:
+    negative_selection: contentless
+    # OOM fix — keep in lockstep with sft_canonical_gemma4.yaml (full
+    # rationale documented there).
+    per_device_batch_size: 1
+    gradient_accumulation_steps: 16
+
+pipeline:
+  sources:
+    ci_reasoning:
+      path: /share/pierson/matt/UAIR/outputs/2026-07-12_fiction10_flows_gemma4/23-14-17/COLM_flows_fiction_gemma4/outputs/ci_reasoning/reasoning.parquet
+    ci_extraction:
+      path: /share/pierson/matt/UAIR/outputs/2026-07-12_fiction10_flows_gemma4/23-14-17/COLM_flows_fiction_gemma4/outputs/ci_extraction/ci_flows.parquet
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # Both arms at once; 2 GPUs, leaves the rest of the box for the judge
+    # server and the per-checkpoint eval sweep.
+    array_parallelism: 2
+  sweeper:
+    params:
+      model: gemma-4-e4b/instruct,gemma-4-12b/instruct

@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-source /share/pierson/matt/UAIR/.venv/bin/activate
+source "${TRAWLER_DRIVER_VENV:-/share/pierson/matt/UAIR/.venv-vllm025cu129}/bin/activate"
 export PYTHONPATH=/share/pierson/matt/UAIR:$PYTHONPATH
 
 # Source data paths

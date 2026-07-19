@@ -585,8 +585,12 @@ def _build_engine_kwargs(cfg) -> Dict[str, Any]:
     _raw_ek = getattr(cfg.model, "engine_kwargs", {})
     ek = _OC.to_container(_raw_ek, resolve=True) if _OC.is_config(_raw_ek) else dict(_raw_ek)
 
-    # Model
-    ek["model"] = model_source
+    # Model — redirected to the node-local /scratch registry mirror when a
+    # completed mirror exists on this node (NFS zoo path otherwise). The
+    # mirror keeps the zoo basename, so the name-based heuristics below and
+    # downstream (AWQ/harmony/parser detection) see the same text either way.
+    from dagspaces.common.model_registry import resolve_model_source
+    ek["model"] = resolve_model_source(model_source, stage_name="vllm_inference")
 
     # Tensor parallelism
     if "tensor_parallel_size" not in ek:
@@ -646,8 +650,14 @@ def _resolve_server_url(cfg) -> Optional[str]:
     """Return the vLLM OpenAI-compatible server URL to use, or ``None``.
 
     Priority (highest wins):
-    1. ``cfg.model.vllm_server_url`` (explicit per-run override)
-    2. ``VLLM_SERVER_URL`` environment variable (set by ``eval_all``)
+    1. ``cfg.model.vllm_server_url`` (explicit per-run override — trusted
+       as-is, no identity check)
+    2. ``VLLM_SERVER_URL`` environment variable (set by ``eval_all``) —
+       honoured ONLY when ``VLLM_SERVER_MODEL`` matches this stage's
+       ``model.model_source``. The env var propagates to every stage in the
+       cell, including stages that run a different model (e.g. a judge);
+       without the identity check those would be silently answered by the
+       task model.
 
     A returned URL should be the base URL (e.g. ``http://host:8000/v1``);
     the trailing ``/v1`` is normalised by the OpenAI client.
@@ -657,9 +667,25 @@ def _resolve_server_url(cfg) -> Optional[str]:
         url = str(getattr(cfg.model, "vllm_server_url", "") or "")
     except Exception:
         url = None
+    if url:
+        return url
+    url = os.environ.get("VLLM_SERVER_URL", "") or None
     if not url:
-        url = os.environ.get("VLLM_SERVER_URL", "") or None
-    return url or None
+        return None
+    server_model = os.environ.get("VLLM_SERVER_MODEL", "")
+    if server_model:
+        try:
+            stage_model = str(getattr(cfg.model, "model_source", "") or "")
+        except Exception:
+            stage_model = ""
+        if stage_model.rstrip("/") != server_model.rstrip("/"):
+            print(
+                f"[vllm_inference] VLLM_SERVER_URL set but serves "
+                f"{server_model!r}, stage needs {stage_model!r} — using a "
+                f"local engine instead."
+            )
+            return None
+    return url
 
 
 def _sp_to_openai_kwargs(sp_dict: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -729,6 +755,22 @@ def _run_server_inference(
         pass
     if not served_name:
         served_name = str(getattr(cfg.model, "model_source", "") or "")
+    # LoRA: when this stage's model is a LoRA checkpoint and the server
+    # advertises a loaded adapter, requests MUST address the adapter name —
+    # requesting the base served name would silently evaluate the base model.
+    _lora_path = str(getattr(cfg.model, "lora_path", "") or "")
+    _server_lora = os.environ.get("VLLM_SERVER_LORA_NAME", "")
+    if _lora_path:
+        if _server_lora:
+            served_name = _server_lora
+        else:
+            raise RuntimeError(
+                f"[{stage_name}] model.lora_path is set but the vLLM server "
+                f"at {server_url} advertises no LoRA adapter "
+                f"(VLLM_SERVER_LORA_NAME unset) — it would evaluate the BASE "
+                f"model under the checkpoint's name. Launch the server with "
+                f"the adapter or disable server mode."
+            )
 
     client = OpenAI(base_url=server_url, api_key="EMPTY", timeout=600.0)
     print(f"[{stage_name}] Server-mode inference → {server_url} (model={served_name})")
@@ -740,6 +782,16 @@ def _run_server_inference(
         _thinking_enabled = resolve_thinking_mode(cfg.model, default=True)
     except Exception:
         _thinking_enabled = True
+    # Forward the model's full chat_template_kwargs (parity with the
+    # in-process path), with enable_thinking resolved on top.
+    try:
+        from omegaconf import OmegaConf as _OC
+        _ctk_cfg = getattr(cfg.model, "chat_template_kwargs", None)
+        if _ctk_cfg is not None:
+            _ctk = _OC.to_container(_ctk_cfg, resolve=True) if _OC.is_config(_ctk_cfg) else dict(_ctk_cfg)
+            ctk_extra.update({k: v for k, v in (_ctk or {}).items()})
+    except Exception:
+        pass
     ctk_extra["enable_thinking"] = _thinking_enabled
     _model_source = str(getattr(cfg.model, "model_source", "") or "")
 
@@ -757,10 +809,15 @@ def _run_server_inference(
     def _make_request(idx: int):
         row = preprocessed_rows[idx]
         if "__preprocess_error__" in row:
-            return idx, "", "", None, row["__preprocess_error__"]
+            return idx, "", "", None, None, row["__preprocess_error__"]
 
         messages = row.get("messages") or []
         sp_dict = row.get("sampling_params") or {}
+        if int(sp_dict.get("n", 1) or 1) > 1:
+            return idx, "", "", None, None, (
+                "request_error: sampling_params.n>1 is not supported in "
+                "server mode (client reads a single choice)"
+            )
         sp_kwargs, extra_body = _sp_to_openai_kwargs(sp_dict)
         extra_body["chat_template_kwargs"] = ctk_extra
 
@@ -1422,6 +1479,8 @@ def _run_transformers_text_inference(
 
     model_source = str(cfg.model.model_source)
     print(f"[{stage_name}] Using native transformers fallback for {model_source}")
+    from dagspaces.common.model_registry import resolve_model_source
+    model_source = resolve_model_source(model_source, stage_name=stage_name)
 
     tokenizer = AutoTokenizer.from_pretrained(model_source, trust_remote_code=True)
     if tokenizer.pad_token is None:

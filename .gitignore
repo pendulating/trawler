@@ -139,6 +139,8 @@ celerybeat.pid
 server.env
 .envrc
 .venv
+.venv-*
+.defunct/
 env/
 venv/
 ENV/

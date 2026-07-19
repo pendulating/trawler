@@ -58,7 +58,7 @@ if [[ -f server.env ]]; then
     set +a
 fi
 # shellcheck source=/dev/null
-source "${TRAWLER_VENV_ACTIVATE:-/share/pierson/matt/UAIR/.venv/bin/activate}"
+source "${TRAWLER_VENV_ACTIVATE:-/share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate}"
 
 export PYTHONPATH="${REPO_DIR}:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1

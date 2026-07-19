@@ -32,12 +32,30 @@ benchmark_filter:
 server_mode:
   enabled: false
   launcher: slurm_gpu_1x
-  port: 8000
-  served_model_name: ""          # default: use model.model_source path
+  port: 0                        # 0 = pick a free ephemeral port (a fixed port
+                                 # collides when two cells' servers share a node);
+                                 # a non-zero request falls back to ephemeral if taken
+  served_model_name: ""          # default: canonical model.model_source path
+                                 # (weights themselves load via the /scratch registry)
   tensor_parallel_size: null     # default: from model.engine_kwargs
-  max_model_len: null            # default: from model.engine_kwargs
+  max_model_len: null            # default: from model.engine_kwargs — NB one engine
+                                 # serves ALL benchmarks, so this must cover the
+                                 # longest (privacylens agent ≈ 13.4k → 16384)
   gpu_memory_utilization: 0.90
+  max_num_seqs: null             # null = vLLM serve default (256). The model yamls'
+                                 # 16 is an in-process norm-extraction setting.
+  enforce_eager: null            # null = inherit model.engine_kwargs.enforce_eager
+                                 # (parity with in-process evals); false for speed
+  max_runtime_min: 720           # server job walltime cap — orphan guard for a
+                                 # SIGKILLed monitor (cleanup is atexit/SIGTERM only)
+  infer_launcher: slurm_cpu      # launcher swapped into server-routable inference
+                                 # nodes (via TRAWLER_EVAL_INFER_LAUNCHER) so they
+                                 # don't hold an idle GPU while routing over HTTP
   reasoning_parser: auto         # "auto" detects from model family; "none" disables
+  # LoRA checkpoints are handled automatically: model.lora_path is key-remapped
+  # if needed, served as adapter "sft" (--enable-lora), and clients address it
+  # via VLLM_SERVER_LORA_NAME. gpt-oss/harmony models are refused (their
+  # final-channel parsing needs the in-process path).
   startup_timeout_s: 900
   extra_args: []                 # additional CLI args passed to api_server
 

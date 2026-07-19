@@ -1,0 +1,88 @@
+# @package _global_
+# Hydra sweep: SFT the canonical model set on the Gemma-4-teacher fiction10 flows.
+#
+# Recipe = contentless-v6 data recipe (all flow_* on, lr 2e-5, 3 epochs, LoRA
+# r64/a128) PLUS training.sft.negative_selection=contentless.
+#
+# ⚠️ PROTOCOL BREAK vs the run that produced qwen3.5-9b/sft-contentless-v6
+# (multirun/2026-06-19_sft_contentless_v6/): as of 2026-07-18 sft/default.yaml
+# carries loss_type=dft (DFT loss — eval_loss NOT comparable to older runs),
+# best-epoch selection on the grouped held-out split, and the chat-template
+# overhaul (TRL-registry-first, stop token inside the loss span, qwen
+# glued-turn/sentinel newline fixes). Do not attribute deltas vs pre-2026-07-18
+# SFT rows to data alone. See wiki + training/sft/default.yaml comments.
+#
+# Training data = the 2026-07-12 Gemma-4-31B-teacher fiction10 flows, wired
+# EXPLICITLY below (not via CI_*_PATH env) so each job's .hydra records the exact
+# corpus — no silent env fallback.
+#   reasoning : 2993 rows   ci_flows : 16200 rows
+#
+# Models (10 × 1-GPU cells). gpt-oss-20b is NOT here — it needs FSDP on 2 GPUs
+# and the gpt_oss recipe; launch it via sweep=sft_canonical_gemma4_gptoss.
+# CIRL + ContextReasoner are comparison baselines, not SFT targets.
+#
+#   job 0  qwen3.5-2b/instruct        job 5  gemma-4-12b/instruct
+#   job 1  qwen3.5-4b/instruct        job 6  openthinker3-7b/instruct
+#   job 2  qwen3.5-9b/instruct        job 7  llama3.1-8b/instruct
+#   job 3  gemma-4-e2b/instruct       job 8  harc-llama3.1-8b/instruct
+#   job 4  gemma-4-e4b/instruct       job 9  phi-4/instruct
+#
+# Each cell submits one orchestrator (slurm_monitor) that fans out to
+# sft_data_prep (slurm_cpu) + sft_training (slurm_gpu_1x). Output layout:
+#   multirun/<date>_sft_canonical_gemma4/<time>/<job>/sft_only/outputs/sft/checkpoint
+#
+# Usage — launch with the ABSOLUTE cu129 venv python (submitit bakes the
+# driver's sys.executable into the monitor srun; shell activation is not
+# enough — see feedback_sweep_driver_venv):
+#   /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/python \
+#     -m dagspaces.grpo_training.cli --multirun +sweep=sft_canonical_gemma4
+
+defaults:
+  - override /pipeline: sft_only
+  - override /model: qwen3.5-9b/instruct   # placeholder; swept below
+
+experiment:
+  name: sft_canonical_gemma4
+
+training:
+  sft:
+    negative_selection: contentless
+    # ── OOM fix (2026-07-19) — micro-batch 1, accum 16 (effective batch 16) ──────
+    # The 2026-07-19 relaunch of this sweep killed two arms with CUDA OOM on the
+    # 48GB A6000s (multirun/2026-07-19_sft_canonical_gemma4/00-11-59):
+    #   • job 5 gemma-4-12b — OOM at the FIRST backward (step 0/513, 55124_0_log.err
+    #     line 14 + 59): 23.3GB bf16 weights + the logits chain blew past 48GB.
+    #   • job 4 gemma-4-e4b — OOM mid-epoch-2 (step 236/513, 54077_0_log.err line
+    #     139): survived epoch 1 but an unlucky pairing of two long sequences in a
+    #     micro-batch-of-2 spiked the logits chain over the limit.
+    # Common root cause: gemma-4 vocab_size=262144, so under loss_type=dft (which
+    # materialises full logits + fp32 upcast + fp32 grad) the peak scales with
+    # per_device_batch_size × seq_len. Halving the micro-batch halves that spike;
+    # a batch of 1 can hold only ONE sequence so the worst case is a single
+    # 8192-token example, not two. gradient_accumulation_steps 8→16 keeps the
+    # effective batch at 16 (== default.yaml's 2×8), so gradients are equivalent
+    # and the sweep stays protocol-comparable across all arms. max_seq_length is
+    # left at 8192 (default) — reducing it would truncate data and break the
+    # cross-arm data protocol.
+    # NOTE: a CLI override of this in an earlier relaunch was never persisted,
+    # which is why the 00-11-59 relaunch OOM'd at batch 2 again — hence it lives
+    # here, in the checked-in sweep definition.
+    per_device_batch_size: 1
+    gradient_accumulation_steps: 16
+
+pipeline:
+  sources:
+    ci_reasoning:
+      path: /share/pierson/matt/UAIR/outputs/2026-07-12_fiction10_flows_gemma4/23-14-17/COLM_flows_fiction_gemma4/outputs/ci_reasoning/reasoning.parquet
+    ci_extraction:
+      path: /share/pierson/matt/UAIR/outputs/2026-07-12_fiction10_flows_gemma4/23-14-17/COLM_flows_fiction_gemma4/outputs/ci_extraction/ci_flows.parquet
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # Concurrent SFT monitor/GPU cells. 5 = two waves over the 10 models;
+    # leaves headroom on the 8×A6000 box for the judge server / other users.
+    array_parallelism: 5
+  sweeper:
+    params:
+      model: qwen3.5-2b/instruct,qwen3.5-4b/instruct,qwen3.5-9b/instruct,gemma-4-e2b/instruct,gemma-4-e4b/instruct,gemma-4-12b/instruct,openthinker3-7b/instruct,llama3.1-8b/instruct,harc-llama3.1-8b/instruct,phi-4/instruct

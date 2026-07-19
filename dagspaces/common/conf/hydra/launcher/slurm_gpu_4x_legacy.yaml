@@ -15,7 +15,10 @@ additional_parameters:
 setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
-  - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv/bin/activate}
+  - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate}
+  # Prefer a node-local /scratch mirror of the driver venv when one exists
+  # (exports TRAWLER_STAGE_PYTHON; see scripts/sync_venv_to_scratch.sh)
+  - source ${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}/scripts/activate_stage_venv.sh
   # Explicitly set CUDA_VISIBLE_DEVICES to local indices (0,1,...,N-1)
   # This is REQUIRED for vLLM V1 multiprocessing - unset causes race conditions
   # where spawned workers see different GPU counts than the parent process

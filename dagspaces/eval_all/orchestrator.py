@@ -32,7 +32,12 @@ from omegaconf import DictConfig, OmegaConf
 # benchmark against it crashes vLLM's multimodal renderer
 # ("'HfRenderer' object has no attribute '_mm_req_counter'"). Re-add only if
 # a genuine multimodal Phi-4 checkpoint is wired up.
-_VLM_FAMILIES = {"qwen2.5-vl", "qwen3-vl", "qwen3.5", "llama-vision", "gemma-3", "internvl2.5", "deepseek-vl2"}
+# NOTE: "gemma-4" added 2026-07-18. The whole gemma-4 line (31B / 12B / E2B /
+# E4B) is any-to-any multimodal, but the family was missing here, so every
+# gemma-4 cell in the 2026-07-1{6,7} canonical sweeps silently self-skipped
+# vlm_geoprivacy as "text-only" and has no Q7 value. Verified before enabling:
+# all four checkpoints render the `<|image|>` token via build_gemma4_prompt.
+_VLM_FAMILIES = {"qwen2.5-vl", "qwen3-vl", "qwen3.5", "llama-vision", "gemma-3", "gemma-4", "internvl2.5", "deepseek-vl2"}
 
 
 def _is_vlm_model(model_cfg: DictConfig) -> bool:
@@ -85,6 +90,23 @@ def run_eval_all(cfg: DictConfig) -> None:
             startup_timeout_s=float(server_cfg.get("startup_timeout_s", 900)),
         )
         child_env["VLLM_SERVER_URL"] = server_info["url"]
+        # Identity guard: run_vllm_inference only routes to the server when
+        # the stage's model matches this — otherwise a stage running a
+        # DIFFERENT model (e.g. vlm_geoprivacy's granularity judge) would be
+        # silently hijacked to the task model.
+        child_env["VLLM_SERVER_MODEL"] = str(server_info["canonical_source"])
+        if server_info.get("lora_name"):
+            child_env["VLLM_SERVER_LORA_NAME"] = str(server_info["lora_name"])
+        # Downgrade server-routable inference nodes to a CPU launcher: their
+        # work is HTTP calls now, and holding a slurm_gpu_1x allocation per
+        # stage while the server owns the GPU would DOUBLE the footprint.
+        # Pipeline yamls opt in via
+        #   launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
+        # Stages that keep a local engine (vlm inference, judge stages with a
+        # different model) keep a plain slurm_gpu_1x and are unaffected.
+        child_env["TRAWLER_EVAL_INFER_LAUNCHER"] = str(
+            server_cfg.get("infer_launcher", "slurm_cpu")
+        )
 
         # Ensure the server is cancelled on any exit path.
         def _cleanup(*_args, **_kwargs):

@@ -13,10 +13,12 @@ Manuscript: `papers/colm26_normative-simulacra/`. Experiment runbook: `EXPERIMEN
 - [metric-trust.md](metric-trust.md) — what to quote in the paper per benchmark, format-adherence FAIL gate, `metric_provenance` schema
 
 **Method deep-dives**
-- [grpo-reward.md](grpo-reward.md) — composite reward components and contrastive scoring
+- [grpo_redesign/](grpo_redesign/README.md) — **⚠️ ACTIVE (2026-07-16): ground-up modular GRPO redesign** for the corrected Gemma-4 data retrain — one module = one sentence, ablation cells = literal take-one-out from a config list; master doc + per-module subpages. Supersedes grpo-reward.md *for new runs*; the v9-ckpt100 keeper path stays frozen
+- [grpo-reward.md](grpo-reward.md) — composite reward components and contrastive scoring (the v9–v12a lineage; keeper-era reference)
 - [grpo_training_field_notes/](grpo_training_field_notes/README.md) — dated scratch notes from training-run analysis (reward traces, sweeps, gold-label behavior)
 - [normative-simulacra.md](normative-simulacra.md) — IFT + Raz norm extraction from fiction
 - [thinking-modes.md](thinking-modes.md) — `<think>` token handling across SFT, GRPO, and eval
+- [mcq-canary-protocol.md](mcq-canary-protocol.md) — **TBD (designed 2026-07-18, not implemented)**: per-epoch MMLU-val canary for SFT checkpoints — parseable-rate (format drift) + accuracy-among-parseable (forgetting), split-level firewall vs reported MMLU, pre-registered veto thresholds
 
 **Benchmarks** — per-benchmark research references (see [benchmarks/README.md](benchmarks/README.md))
 - [benchmarks/confaide.md](benchmarks/confaide.md) — ConfAIde (ICLR 2024)
@@ -49,6 +51,10 @@ Manuscript: `papers/colm26_normative-simulacra/`. Experiment runbook: `EXPERIMEN
 - [howto/geoprivacy-hypotheticals.md](howto/geoprivacy-hypotheticals.md) — run/extend the augmented geoprivacy benchmark (capture-context shifts, CVPR 2027)
 - [howto/ci-heuristic-traversals.md](howto/ci-heuristic-traversals.md) — run the CI decision-heuristic praxis experiments E1–E7 (scaffolding ladder, deliberative structures, probes; CVPR 2027)
 - [howto/run-experiments.md](howto/run-experiments.md) — running training, eval, ablations
+
+**Reviews**
+- [jul19_refactoring.md](jul19_refactoring.md) — 2026-07-19 redundancy/complexity review (orchestrator copy-paste, silent excepts, JSON-extraction sprawl, god modules) with a prioritized roadmap
+- [jul19_orchestrator_unification_plan.md](jul19_orchestrator_unification_plan.md) — test-first plan to unify the 7 eval orchestrators (Finding 1)
 
 ## Related top-level docs
 

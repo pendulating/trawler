@@ -1,4 +1,13 @@
 # @package training.sft
+# SFT loss (added 2026-07-18):
+#   dft  — Dynamic Fine-Tuning (arXiv:2508.05629): per-token NLL rescaled by the
+#          token's detached probability. Default for all new SFT runs.
+#   null — TRL's stock default (chunked_nll in TRL 1.8.0's non-Liger path); what
+#          every pre-2026-07-18 run used. Set this to reproduce those runs.
+# CAVEATS with dft: (1) eval_loss is DFT-weighted — NOT comparable to nll-scale
+# eval curves from earlier sweeps; (2) full logits are materialized (higher peak
+# activation memory than chunked_nll).
+loss_type: dft
 num_epochs: 3
 learning_rate: 2.0e-5
 per_device_batch_size: 2
@@ -14,6 +23,51 @@ bf16: true
 dataloader_num_workers: 4
 logging_steps: 10
 save_strategy: epoch
+
+# ── Held-out evaluation ───────────────────────────────────────────────────────
+# Added 2026-07-18. Before this, SFT ran with NO validation set: every
+# trainer_state.json in the 2026-07-15 canonical sweep logs `eval keys: NONE`,
+# so three epochs of training had no held-out signal and problems only surfaced
+# in downstream benchmarks days later.
+#
+# eval_split:
+#   grouped — hold out whole source novels (DEFAULT). Chunks of one novel share
+#             characters, style and norms, so a random split puts near-duplicates
+#             on both sides and reports an optimistically low eval loss. Grouped
+#             measures transfer to an unseen normative universe, which is the
+#             claim the project actually makes. Picks the single novel closest to
+#             eval_fraction so exactly one universe is withheld; falls back to
+#             accumulating the smallest novels if none is large enough.
+#   random  — plain random split. Faster to reach a target size and keeps every
+#             novel in training, but leaks (see above).
+#   none    — no eval set; training loss is the only signal (pre-2026-07-18).
+#
+# LIMITATION — read before trusting this number: eval loss here is computed on
+# held-out examples of the SAME ci_extraction task in the SAME
+# `{"reasoning": ...}` target format. A model that over-commits to that output
+# shape scores BETTER on this metric while getting WORSE on the ReAct / MCQ /
+# Likert benchmarks (openthinker3-7b emitted the SFT's `{"reasoning"` prefix on
+# 493/493 PrivacyLens vignettes). This catches overfitting and divergence; it
+# does NOT catch format contamination. That needs an out-of-format probe.
+eval_split: grouped
+eval_fraction: 0.05
+eval_seed: 42
+eval_strategy: epoch      # epoch | steps | no
+eval_steps: null          # only used when eval_strategy=steps
+
+# ── Best-epoch selection & overfitting guards (added 2026-07-18) ─────────────
+# select_best_epoch: reload the lowest-eval_loss checkpoint at train end, so
+#   the saved adapter is the BEST epoch rather than the last. Requires the
+#   held-out set above. Under loss_type=dft the metric is DFT-weighted — valid
+#   for within-run ranking only.
+# early_stopping_patience: stop after N consecutive evals without eval_loss
+#   improvement (null = train all epochs; best-epoch selection still discards
+#   overfit epochs, this only saves the compute).
+# save_total_limit: cap on retained epoch checkpoints (best is always kept);
+#   null keeps all.
+select_best_epoch: true
+early_stopping_patience: null
+save_total_limit: null
 
 lora:
   rank: 64

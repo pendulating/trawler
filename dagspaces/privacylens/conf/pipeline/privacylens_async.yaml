@@ -67,7 +67,7 @@ pipeline:
           dataset: load_dataset.dataset
         outputs:
           dataset: outputs/qa_probe_inference/results.parquet
-        launcher: slurm_gpu_1x
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
 
       agent_action_inference:
         stage: agent_action_inference
@@ -76,7 +76,7 @@ pipeline:
           dataset: load_dataset.dataset
         outputs:
           dataset: outputs/agent_action_inference/results.parquet
-        launcher: slurm_gpu_1x
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
 
       # --- Async export: writes requests.jsonl + items.parquet + pending.parquet
       # --- + manifest.json. No GPU; no judge calls. The sidecar fills

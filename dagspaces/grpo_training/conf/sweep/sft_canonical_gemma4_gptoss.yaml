@@ -1,0 +1,58 @@
+# @package _global_
+# Companion to sft_canonical_gemma4.yaml — the gpt-oss-20b cell, isolated.
+#
+# gpt-oss-20b dequantizes (MXFP4 -> bf16, ~40GB) and does NOT fit one A6000, so
+# SFT runs FSDP-sharded on 2 GPUs with the gpt_oss recipe (training/sft=gpt_oss).
+# It speaks harmony: as of 2026-07-18 this cell trains via TRL's registry
+# harmony training template (official system/developer scaffold, <|return|>
+# terminator) — the old manual template was training-corrupting and the stage
+# now HARD-ERRORS if the registry match fails rather than falling back.
+# The 2026-07-15 run's 33% empty-final-channel regression is expected to be
+# attributable to the old template; this rerun tests that.
+# Kept separate because a single Hydra multirun cannot pair a per-cell training/sft
+# group and a per-cell node launcher with the model axis.
+#
+# Same contentless-v6 negatives and same Gemma-4-teacher flows as the main sweep.
+#
+# Usage (absolute cu129 venv python — submitit bakes the driver's
+# sys.executable into the monitor srun):
+#   /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/python \
+#     -m dagspaces.grpo_training.cli --multirun +sweep=sft_canonical_gemma4_gptoss
+
+defaults:
+  - override /pipeline: sft_only
+  - override /model: gpt-oss-20b/instruct
+  - override /training/sft: gpt_oss
+
+experiment:
+  name: sft_canonical_gemma4_gptoss
+
+# Raise host RAM for the 2-GPU FSDP training node: the ~40GB MXFP4->bf16
+# dequant across 2 ranks OOM-killed at the default 64GB. slurm_train_2x's
+# mem_gb = ${runtime.job_memory_gb}.
+runtime:
+  job_memory_gb: 200
+
+training:
+  sft:
+    negative_selection: contentless
+
+pipeline:
+  sources:
+    ci_reasoning:
+      path: /share/pierson/matt/UAIR/outputs/2026-07-12_fiction10_flows_gemma4/23-14-17/COLM_flows_fiction_gemma4/outputs/ci_reasoning/reasoning.parquet
+    ci_extraction:
+      path: /share/pierson/matt/UAIR/outputs/2026-07-12_fiction10_flows_gemma4/23-14-17/COLM_flows_fiction_gemma4/outputs/ci_extraction/ci_flows.parquet
+  graph:
+    nodes:
+      sft_training:
+        # 2-GPU FSDP instead of the default slurm_gpu_1x.
+        launcher: slurm_train_2x
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 1
+  sweeper:
+    params:
+      model: gpt-oss-20b/instruct

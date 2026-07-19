@@ -244,7 +244,7 @@ bound, so the manual two-step install dance in [models.md](models.md) (vLLM 0.19
 falsely declaring `transformers<5`) can be deleted. Plus Qwen3.5 LoRA fixes that may
 obsolete `_remap_lora_keys_for_vlm()` — retest before removing it.
 
-**Sequencing.** Do not upgrade `.venv` in place while a gold-label chain is running:
+**Sequencing.** Do not upgrade the canonical venv (`.venv-vllm025cu129`) in place while a gold-label chain is running:
 stages import vLLM fresh from the venv when SLURM starts them, so an in-place upgrade
 can break an in-flight run *and* split a corpus across two engine versions. Validate in
 a parallel venv, then cut over when the queue drains.

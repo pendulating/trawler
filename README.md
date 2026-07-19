@@ -135,7 +135,10 @@ Organized as `{family}/{variant}.yaml`:
 
 ```bash
 git clone <repo-url> && cd trawler
-uv venv --python 3.12 && source .venv/bin/activate
+# Canonical venv name — all launchers/scripts expect .venv-vllm025cu129
+# (see server.env TRAWLER_VENV_ACTIVATE). NB: use `uv pip install`, never
+# `uv add`/`uv sync`, which prune this non-lock-managed venv.
+uv venv --python 3.12 .venv-vllm025cu129 && source .venv-vllm025cu129/bin/activate
 uv pip install -e .
 
 # Site-specific configuration

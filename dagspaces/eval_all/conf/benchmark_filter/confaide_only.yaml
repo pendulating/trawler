@@ -1,0 +1,9 @@
+# @package _global_
+# Single-benchmark whitelist for ConfAIde. Pair with
+# `benchmarks.confaide.pipeline=confaide_tier2_only` to restrict to the
+# tier-2a/2b Likert branches as well (the common "I only care about the
+# tier-2 correlations" case).
+benchmark_filter:
+  include:
+    - confaide
+  exclude: []
