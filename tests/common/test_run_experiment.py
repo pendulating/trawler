@@ -311,7 +311,9 @@ class TestRunExperimentLocal:
 # Migration parity gate — extended as each eval dagspace is migrated.
 # ---------------------------------------------------------------------------
 
-_MIGRATED: List[str] = []  # e.g. ["dagspaces.mmlu.orchestrator", ...]
+_MIGRATED: List[str] = [  # extended as each eval dagspace lands
+    "dagspaces.mmlu.orchestrator",
+]
 
 
 @pytest.mark.parametrize("module_path", _MIGRATED or ["__skip__"])
