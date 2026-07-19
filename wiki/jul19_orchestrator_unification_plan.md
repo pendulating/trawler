@@ -1,7 +1,18 @@
 # Plan — Unify the eval orchestrators (Finding 1)
 
 **Date:** 2026-07-19 · **Addresses:** `jul19_refactoring.md` Finding 1 (and, as a
-by-product, Finding 2 and Finding 10) · **Status:** proposal, not started
+by-product, Finding 2 and Finding 10) · **Status:** ✅ **Phase 1 COMPLETE
+(2026-07-19)** — all nine eval dagspaces migrated; Phase 2 (historical_norms,
+grpo_training) still open
+
+> **Completion note.** Nine eval dagspaces (the seven named below **plus**
+> `vlm_geoprivacy_aug` and `ci_heuristic`, which the survey missed) now run on
+> the shared loop. Commits `7d79921` (generic loop + tests), `6c34574` (mmlu),
+> `5aedadb` (remaining 8). Full suite green (807 passed); parity test
+> `test_migrated_dagspaces_expose_hooks` covers all nine. The one remaining
+> acceptance item is the **runtime byte-parity baseline** (§8) — a debug run of
+> each dagspace on cluster GPU+data to confirm outputs/W&B keys/SLURM job names
+> are byte-identical; that needs a cluster job and is left as a manual check.
 
 Replace the seven near-identical eval-dagspace `orchestrator.py` files with one
 shared, tested run loop in `dagspaces/common/`, leaving each dagspace a small
