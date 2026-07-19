@@ -2,8 +2,8 @@
 
 **Date:** 2026-07-19 · **Addresses:** `jul19_refactoring.md` Finding 1 (and, as a
 by-product, Finding 2 and Finding 10) · **Status:** ✅ **Phase 1 COMPLETE
-(2026-07-19)** — all nine eval dagspaces migrated; Phase 2 (historical_norms,
-grpo_training) still open
+(2026-07-19)** — all nine eval dagspaces migrated · **Phase 2 DECLINED
+(2026-07-19)** — `historical_norms` + `grpo_training` deliberately left as-is
 
 > **Completion note.** Nine eval dagspaces (the seven named below **plus**
 > `vlm_geoprivacy_aug` and `ci_heuristic`, which the survey missed) now run on
@@ -24,18 +24,25 @@ stubs, and it makes the eval harnesses *provably* identical.
 
 ## 1. Scope
 
-**In scope (Phase 1) — the seven eval dagspaces**, whose `orchestrator.py`
-files are documented copies of one another and differ only in six parameters:
+**In scope (Phase 1) — the eval dagspaces**, whose `orchestrator.py`
+files are documented copies of one another and differ only in six parameters.
+Nine in total (the seven below **plus** `vlm_geoprivacy_aug` and `ci_heuristic`,
+which the original survey missed):
 
-`goldcoin_hipaa`, `vlm_geoprivacy_bench`, `privacylens`, `confaide`,
-`cirl_vignettes`, `mmlu`, `simpleqa_verified`.
+`goldcoin_hipaa`, `vlm_geoprivacy_bench`, `vlm_geoprivacy_aug`, `privacylens`,
+`confaide`, `cirl_vignettes`, `mmlu`, `simpleqa_verified`, `ci_heuristic`.
 
-**Out of scope (Phase 2, follow-up):** `historical_norms` and `grpo_training`.
-They share the same run-loop skeleton and SLURM-wait block, but their
-`execute_stage_job` bodies carry extra stage-specific logic (e.g. grpo's
-`_GPU_STAGES` set, conditional table logging, `set_summary`, prompt injection
-into `cfg`). Fold them in only after Phase 1 lands, by extending the hooks with
-an optional `post_run` callback (see §9).
+**Declined (Phase 2): `historical_norms` and `grpo_training`.** Decision
+2026-07-19 (Matt): these two are *different in purpose* — norm extraction from
+fiction vs. policy training — and consolidating them does not make sense.
+Technical investigation confirmed it: they are **not** copies of the eval loop
+but a distinct, richer "training loop" shape (WANDB_GROUP propagation,
+per-stage GPU sanitization, `set_summary` lifecycle, bespoke per-stage table
+logging, orchestrator-level metrics). Their NFS result-wait algorithms differ
+from the eval `await_slurm_result` **and from each other**, so unifying them
+would change waiting behavior on the paper's core training pipeline — which the
+`grpo_redesign` wiki requires to stay byte-frozen (keeper path) — for a 2-file
+payoff. Wrong abstraction + wrong risk/reward. Left as-is by design.
 
 ---
 
@@ -271,7 +278,7 @@ diff the post-refactor baseline against the golden files from step 1.
 | privacylens perturb-culture `wandb_dagspace` or `privacylens_eval` subdir regresses | Migrate privacylens last; add a focused test for `_perturb_qualified_dagspace` and assert `output_subdir` independently of `dagspace_name`. |
 | W&B run-id collision change alters resume behavior | `wandb_dagspace` callable reproduces today's exact `pipeline_run_id` argument; parity check compares W&B run configs. |
 | Hidden per-dagspace divergence we didn't diff | The byte-identical baseline diff (§6 step 1/3) catches anything the inventory missed. |
-| grpo/historical_norms look tempting to fold in early | Explicitly Phase 2; their `execute_stage_job` extras (`_GPU_STAGES`, `set_summary`, prompt injection) need an optional `post_run`/`pre_run` hook addition first. |
+| grpo/historical_norms look tempting to fold in | **Declined (2026-07-19).** They are a distinct "training loop" shape, different in purpose, with divergent result-wait algorithms; consolidating risks the frozen training pipeline for a 2-file payoff. Left as-is by design. |
 
 ---
 
@@ -281,9 +288,14 @@ diff the post-refactor baseline against the golden files from step 1.
 - **Finding 10** is done as part of this (the new test file).
 - **Finding 3** (`DataFrameStage` runner base) becomes safe to attempt *after*
   this lands, because the runner↔orchestrator contract is now stable and single.
-- **Phase 2:** extend `OrchestratorHooks` with optional `pre_run(cfg, node)` /
-  `post_run(logger, node, result)` callbacks and migrate `historical_norms` and
-  `grpo_training`, deleting their run-loop copies too.
+- **Phase 2 — DECLINED (2026-07-19):** `historical_norms` and `grpo_training`
+  are deliberately *not* migrated. They differ in purpose (norm extraction vs.
+  policy training) and in orchestration shape (WANDB_GROUP propagation,
+  per-stage GPU sanitization, bespoke table logging, and NFS result-wait
+  algorithms that differ from the eval loop and from each other). Forcing a
+  shared loop would be the wrong abstraction and would change waiting behavior
+  on the frozen training pipeline. The high-value dedup (nine eval dagspaces)
+  is done; these two stay as-is.
 
 ---
 
