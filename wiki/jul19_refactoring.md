@@ -20,7 +20,7 @@ Effort: S (<1 day) · M (1–3 days) · L (>3 days)
 
 | # | Finding | Severity | Effort |
 |---|---------|----------|--------|
-| 1 | 9 dagspace orchestrators each re-implement the same run loop (7 eval dagspaces are ~95% copy-paste; ~2400 duplicated lines total) | 🔴 | M |
+| 1 | 9 eval dagspaces each re-implemented the same run loop (~95% copy-paste; ~3000 duplicated lines) — **DONE 2026-07-19**, see plan | ✅ | M |
 | 2 | The SLURM/NFS result-waiting block (~120 lines) is duplicated verbatim in every orchestrator | 🔴 | S |
 | 3 | Runner boilerplate: every runner is "read parquet → call fn → write parquet → StageResult" | 🟡 | M |
 | 4 | Deprecated dagspaces (`.uair`, `.rule_tuples`) still in tree, ~12k lines — but `common/` still imports one symbol from `.uair` | 🟡 | S |
@@ -28,10 +28,20 @@ Effort: S (<1 day) · M (1–3 days) · L (>3 days)
 
 ---
 
-## Finding 1 — Orchestrator copy-paste across dagspaces 🔴 (M)
+## Finding 1 — Orchestrator copy-paste across dagspaces ✅ DONE (2026-07-19)
 
-> **Plan:** a concrete, test-first migration plan for this finding lives in
-> [jul19_orchestrator_unification_plan.md](jul19_orchestrator_unification_plan.md).
+> **Status: implemented.** All **nine** eval dagspaces now run on one shared
+> loop in `dagspaces/common/orchestrator.py` (`OrchestratorHooks` +
+> `run_experiment` + `await_slurm_result`); each `orchestrator.py` is a thin
+> stub whose only dagspace-specific code is `_log_eval_metrics`. ~3000 lines
+> deleted; full suite green; parity test covers all nine. Commits:
+> `7d79921` (generic loop), `6c34574` (mmlu), `5aedadb` (remaining 8).
+>
+> **Correction vs. the original review:** there were **nine** copies, not seven
+> — `vlm_geoprivacy_aug` and `ci_heuristic` were additional copies the initial
+> survey missed; both migrated too.
+>
+> **Plan:** [jul19_orchestrator_unification_plan.md](jul19_orchestrator_unification_plan.md).
 
 **Evidence.** Nine dagspaces ship their own `orchestrator.py` with a `run_experiment`
 loop. Seven of them (the eval benchmarks) are 441–501 lines explicitly
