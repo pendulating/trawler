@@ -337,3 +337,67 @@ def test_migrated_dagspaces_expose_hooks(module_path):
     assert hooks.dagspace_module == module_path
     assert callable(mod.get_stage_registry)
     assert isinstance(mod.get_stage_registry(), dict)
+
+
+# ---------------------------------------------------------------------------
+# Behavior-preservation guard: each migrated dagspace's hooks must reproduce
+# the OLD hardcoded orchestrator params exactly (output paths, W&B run-id key,
+# SLURM job names). This is the local half of the byte-parity acceptance check
+# (the other half — identical outputs/W&B keys on a real GPU+data run — needs a
+# cluster job and is a manual step; see jul19_orchestrator_unification_plan.md §8).
+# wandb_dagspace is asserted with an empty cfg (no perturb culture).
+# ---------------------------------------------------------------------------
+
+_GOLDEN_PARAMS: Dict[str, Dict[str, Any]] = {
+    "dagspaces.mmlu.orchestrator": dict(
+        dagspace_name="mmlu", output_subdir="mmlu", job_prefix="MMLU",
+        wandb_dagspace="mmlu", use_srun=False),
+    "dagspaces.simpleqa_verified.orchestrator": dict(
+        dagspace_name="simpleqa_verified", output_subdir="simpleqa_verified",
+        job_prefix="SimpleQAVerified", wandb_dagspace="simpleqa_verified", use_srun=False),
+    "dagspaces.goldcoin_hipaa.orchestrator": dict(
+        dagspace_name="goldcoin_hipaa", output_subdir="goldcoin_hipaa",
+        job_prefix="GoldCoin", wandb_dagspace="goldcoin", use_srun=False),
+    "dagspaces.vlm_geoprivacy_bench.orchestrator": dict(
+        dagspace_name="vlm_geoprivacy_bench", output_subdir="vlm_geoprivacy_bench",
+        job_prefix="VLM", wandb_dagspace="vlm_geoprivacy", use_srun=False),
+    "dagspaces.vlm_geoprivacy_aug.orchestrator": dict(
+        dagspace_name="vlm_geoprivacy_aug", output_subdir="vlm_geoprivacy_aug",
+        job_prefix="VLM", wandb_dagspace="vlm_geoprivacy_aug", use_srun=False),
+    "dagspaces.confaide.orchestrator": dict(
+        dagspace_name="confaide", output_subdir="confaide", job_prefix="CONFAIDE",
+        wandb_dagspace="confaide", use_srun=False),
+    "dagspaces.cirl_vignettes.orchestrator": dict(
+        dagspace_name="cirl_vignettes", output_subdir="cirl_vignettes",
+        job_prefix="CIRLVignettes", wandb_dagspace="cirl_vignettes", use_srun=False),
+    "dagspaces.privacylens.orchestrator": dict(
+        dagspace_name="privacylens", output_subdir="privacylens_eval",
+        job_prefix="PLens", wandb_dagspace="privacylens", use_srun=False),
+    "dagspaces.ci_heuristic.orchestrator": dict(
+        dagspace_name="ci_heuristic", output_subdir="ci_heuristic",
+        job_prefix="CIH", wandb_dagspace="ci_heuristic", use_srun=False),
+}
+
+
+@pytest.mark.parametrize("module_path", sorted(_GOLDEN_PARAMS))
+def test_migrated_dagspace_golden_params(module_path):
+    """Hooks reproduce the pre-refactor hardcoded params exactly."""
+    import importlib
+    mod = importlib.import_module(module_path)
+    hooks = mod.ORCHESTRATOR_HOOKS
+    expected = _GOLDEN_PARAMS[module_path]
+    assert hooks.dagspace_name == expected["dagspace_name"]
+    assert hooks.output_subdir == expected["output_subdir"]
+    assert hooks.job_prefix == expected["job_prefix"]
+    assert hooks.use_srun is expected["use_srun"]
+    assert hooks.wandb_dagspace(OmegaConf.create({})) == expected["wandb_dagspace"]
+
+
+def test_privacylens_culture_qualifies_wandb_dagspace():
+    """privacylens folds perturb.culture into the run-id key (preserves the
+    pre-refactor _perturb_qualified_dagspace behavior)."""
+    import importlib
+    mod = importlib.import_module("dagspaces.privacylens.orchestrator")
+    hooks = mod.ORCHESTRATOR_HOOKS
+    assert hooks.wandb_dagspace(OmegaConf.create({})) == "privacylens"
+    assert hooks.wandb_dagspace(OmegaConf.create({"perturb": {"culture": "us"}})) == "privacylens:us"
