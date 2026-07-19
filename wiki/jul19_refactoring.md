@@ -42,6 +42,15 @@ Effort: S (<1 day) · M (1–3 days) · L (>3 days)
 > survey missed; both migrated too.
 >
 > **Plan:** [jul19_orchestrator_unification_plan.md](jul19_orchestrator_unification_plan.md).
+>
+> **Phase 2 declined (2026-07-19):** `historical_norms` and `grpo_training`
+> are deliberately *not* consolidated. They differ in purpose (norm extraction
+> vs. policy training) and are a distinct "training loop" shape — WANDB_GROUP
+> propagation, per-stage GPU sanitization, bespoke table logging, and NFS
+> result-wait algorithms that differ from the eval loop *and from each other*.
+> Unifying them would be the wrong abstraction and would change waiting
+> behavior on the frozen training pipeline for a 2-file payoff. Left as-is by
+> design.
 
 **Evidence.** Nine dagspaces ship their own `orchestrator.py` with a `run_experiment`
 loop. Seven of them (the eval benchmarks) are 441–501 lines explicitly
