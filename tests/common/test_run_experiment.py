@@ -313,6 +313,14 @@ class TestRunExperimentLocal:
 
 _MIGRATED: List[str] = [  # extended as each eval dagspace lands
     "dagspaces.mmlu.orchestrator",
+    "dagspaces.simpleqa_verified.orchestrator",
+    "dagspaces.goldcoin_hipaa.orchestrator",
+    "dagspaces.vlm_geoprivacy_bench.orchestrator",
+    "dagspaces.vlm_geoprivacy_aug.orchestrator",
+    "dagspaces.confaide.orchestrator",
+    "dagspaces.cirl_vignettes.orchestrator",
+    "dagspaces.privacylens.orchestrator",
+    "dagspaces.ci_heuristic.orchestrator",
 ]
 
 
