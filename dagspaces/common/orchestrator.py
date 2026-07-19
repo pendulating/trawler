@@ -239,6 +239,7 @@ def build_run_config(
         sft_cfg = OmegaConf.select(cfg, "training.sft")
         if sft_cfg is not None:
             run_config["sft"] = {
+                "loss_type": sft_cfg.get("loss_type") or "trl-default",
                 "flow_context": sft_cfg.get("flow_context", True),
                 "flow_appropriateness": sft_cfg.get("flow_appropriateness", True),
                 "flow_norms_meta": sft_cfg.get("flow_norms_meta", True),
@@ -765,7 +766,11 @@ def _probe_single_gpu(device: str) -> Dict[str, Any]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=15,
+            # A fresh interpreter importing torch from NFS + CUDA context init
+            # can exceed 15s on a loaded node (2026-07-16: two role-abstraction
+            # stages on klara beside the judge + eval vLLM servers timed out on
+            # all 4 healthy GPUs, twice). 60s still bounds a truly hung device.
+            timeout=60,
         )
         return {
             "ok": result.returncode == 0,
@@ -1074,8 +1079,28 @@ def _create_submitit_executor(
             "See wiki/slurm-and-env.md."
         )
 
+    # Stage interpreter: submitit bakes `sys.executable` (an NFS path) into the
+    # sbatch script verbatim. Cold imports of torch/vllm/flashinfer over NFS
+    # cost ~13 min per process spawn (x3 processes per vLLM stage; measured
+    # 2026-07-17 on klara, vs seconds from node-local disk). The bash expansion
+    # below defers interpreter choice to job runtime on the assigned node:
+    # `activate_stage_venv.sh` (sourced from the launcher setup block) exports
+    # TRAWLER_STAGE_PYTHON only when that node holds a complete /scratch mirror
+    # of the driver's venv; otherwise the expansion falls back to the same
+    # sys.executable submitit would have used.
+    python_spec = launcher_cfg.get("python") or (
+        f'"${{TRAWLER_STAGE_PYTHON:-{sys.executable}}}"'
+    )
     with _clean_slurm_env():
-        executor = submitit.AutoExecutor(folder=log_folder)
+        executor = submitit.AutoExecutor(
+            folder=log_folder, slurm_python=python_spec
+        )
+
+    # Tell the setup block which venv the driver runs from, so the scratch
+    # mirror is only substituted when it mirrors *this* venv (guards against
+    # silently swapping engine versions on mixed-venv clusters).
+    setup_lines: List[str] = [f"export TRAWLER_DRIVER_VENV={sys.prefix}"]
+    setup_lines.extend(launcher_cfg.get("setup", []))
 
     params: Dict[str, Any] = dict(
         timeout_min=int(launcher_cfg.get("timeout_min", 120)),
@@ -1088,7 +1113,7 @@ def _create_submitit_executor(
         slurm_array_parallelism=int(launcher_cfg.get("array_parallelism", 1)),
         name=f"matt-{job_name}",
         slurm_additional_parameters=launcher_cfg.get("additional_parameters", {}),
-        slurm_setup=launcher_cfg.get("setup", []),
+        slurm_setup=setup_lines,
     )
     if not use_srun:
         params["slurm_use_srun"] = False

@@ -1,4 +1,16 @@
 # @package training.sft
+# SFT loss: dft = Dynamic Fine-Tuning (arXiv:2508.05629), the 2026-07-18+
+# default; null = TRL stock loss (chunked_nll), used by all earlier runs.
+# NOTE dft materializes full logits (B x 4096 x ~200k vocab) — watch VRAM on
+# this 2-rank FSDP cell; fall back to null if it OOMs.
+loss_type: dft
+
+# Best-epoch selection OFF for this cell only: load_best_model_at_end + PEFT
+# adapter reload under 2-rank FSDP is the least-proven combo in the sweep, and
+# this is a ~22h run — do not risk an end-of-train failure. Per-epoch
+# checkpoints are still saved (save_strategy: epoch) and eval_loss per epoch
+# is in trainer_state.json, so the best epoch can be picked post-hoc.
+select_best_epoch: false
 # SFT config for GPT-OSS-20B on 2×A6000 with FSDP.
 # Dequantized from Mxfp4 to bf16 (~40GB), too large for single GPU.
 # FSDP shards the model across GPUs (DDP replicates, which OOMs).

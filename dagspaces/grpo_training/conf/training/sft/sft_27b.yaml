@@ -1,4 +1,7 @@
 # @package training.sft
+# SFT loss: dft = Dynamic Fine-Tuning (arXiv:2508.05629), the 2026-07-18+
+# default; null = TRL stock loss (chunked_nll), used by all earlier runs.
+loss_type: dft
 # SFT config for Qwen3.5-27B on 1×A6000 (48GB).
 # QLoRA (4-bit) brings the 27B model down to ~14GB, fitting on a single GPU.
 # Same approach as smaller Qwen models — no FSDP needed.

@@ -46,12 +46,12 @@ echo ""
 cd "$REPO_DIR"
 pwd
 
-if [ ! -d ".venv" ]; then
-    echo "ERROR: .venv not found. Create the uv virtualenv before submitting this job." >&2
+if [ ! -d ".venv-vllm025cu129" ]; then
+    echo "ERROR: .venv-vllm025cu129 not found. Create the uv virtualenv before submitting this job." >&2
     exit 1
 fi
 
-source .venv/bin/activate
+source .venv-vllm025cu129/bin/activate
 echo "Python: $(which python)"
 echo "Python version: $(python --version)"
 

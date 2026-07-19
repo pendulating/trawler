@@ -28,7 +28,7 @@ pipeline:
           dataset: load_dataset.dataset
         outputs:
           dataset: outputs/trajectory_inference/dataset.parquet
-        launcher: slurm_gpu_1x
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
 
       judge_leakage:
         stage: judge_leakage

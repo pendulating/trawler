@@ -56,12 +56,12 @@ HF_HOME="${HF_HOME:-/share/pierson/matt/.cache/huggingface}"
 # ------------------------------ ENVIRONMENT ------------------------------ #
 cd "$REPO_DIR"
 
-if [ ! -d ".venv" ]; then
-    echo "ERROR: .venv not found." >&2
+if [ ! -d ".venv-vllm025cu129" ]; then
+    echo "ERROR: .venv-vllm025cu129 not found." >&2
     exit 1
 fi
 
-source .venv/bin/activate
+source .venv-vllm025cu129/bin/activate
 echo "Python: $(which python) ($(python --version))"
 
 export HF_HOME

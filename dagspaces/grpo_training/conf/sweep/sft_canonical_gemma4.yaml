@@ -1,10 +1,16 @@
 # @package _global_
 # Hydra sweep: SFT the canonical model set on the Gemma-4-teacher fiction10 flows.
 #
-# Recipe = contentless-v6 (the keeper's SFT recipe): sft/default.yaml as-is
-# (all flow_* on, lr 2e-5, 3 epochs, LoRA r64/a128) PLUS
-# training.sft.negative_selection=contentless. Matches the invocation that
-# produced qwen3.5-9b/sft-contentless-v6 (multirun/2026-06-19_sft_contentless_v6/).
+# Recipe = contentless-v6 data recipe (all flow_* on, lr 2e-5, 3 epochs, LoRA
+# r64/a128) PLUS training.sft.negative_selection=contentless.
+#
+# ⚠️ PROTOCOL BREAK vs the run that produced qwen3.5-9b/sft-contentless-v6
+# (multirun/2026-06-19_sft_contentless_v6/): as of 2026-07-18 sft/default.yaml
+# carries loss_type=dft (DFT loss — eval_loss NOT comparable to older runs),
+# best-epoch selection on the grouped held-out split, and the chat-template
+# overhaul (TRL-registry-first, stop token inside the loss span, qwen
+# glued-turn/sentinel newline fixes). Do not attribute deltas vs pre-2026-07-18
+# SFT rows to data alone. See wiki + training/sft/default.yaml comments.
 #
 # Training data = the 2026-07-12 Gemma-4-31B-teacher fiction10 flows, wired
 # EXPLICITLY below (not via CI_*_PATH env) so each job's .hydra records the exact
@@ -25,12 +31,11 @@
 # sft_data_prep (slurm_cpu) + sft_training (slurm_gpu_1x). Output layout:
 #   multirun/<date>_sft_canonical_gemma4/<time>/<job>/sft_only/outputs/sft/checkpoint
 #
-# Usage:
-#   python -m dagspaces.grpo_training.cli --multirun +sweep=sft_canonical_gemma4
-#
-# Note: transformers 5.6.2 in .venv — verify the three gemma-4 cells load
-# (Gemma4/Gemma4Unified arch) before trusting them; they are the likeliest to
-# fail at model-load. Qwen3.5 loads via trust_remote_code.
+# Usage — launch with the ABSOLUTE cu129 venv python (submitit bakes the
+# driver's sys.executable into the monitor srun; shell activation is not
+# enough — see feedback_sweep_driver_venv):
+#   /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/python \
+#     -m dagspaces.grpo_training.cli --multirun +sweep=sft_canonical_gemma4
 
 defaults:
   - override /pipeline: sft_only
@@ -42,6 +47,28 @@ experiment:
 training:
   sft:
     negative_selection: contentless
+    # ── OOM fix (2026-07-19) — micro-batch 1, accum 16 (effective batch 16) ──────
+    # The 2026-07-19 relaunch of this sweep killed two arms with CUDA OOM on the
+    # 48GB A6000s (multirun/2026-07-19_sft_canonical_gemma4/00-11-59):
+    #   • job 5 gemma-4-12b — OOM at the FIRST backward (step 0/513, 55124_0_log.err
+    #     line 14 + 59): 23.3GB bf16 weights + the logits chain blew past 48GB.
+    #   • job 4 gemma-4-e4b — OOM mid-epoch-2 (step 236/513, 54077_0_log.err line
+    #     139): survived epoch 1 but an unlucky pairing of two long sequences in a
+    #     micro-batch-of-2 spiked the logits chain over the limit.
+    # Common root cause: gemma-4 vocab_size=262144, so under loss_type=dft (which
+    # materialises full logits + fp32 upcast + fp32 grad) the peak scales with
+    # per_device_batch_size × seq_len. Halving the micro-batch halves that spike;
+    # a batch of 1 can hold only ONE sequence so the worst case is a single
+    # 8192-token example, not two. gradient_accumulation_steps 8→16 keeps the
+    # effective batch at 16 (== default.yaml's 2×8), so gradients are equivalent
+    # and the sweep stays protocol-comparable across all arms. max_seq_length is
+    # left at 8192 (default) — reducing it would truncate data and break the
+    # cross-arm data protocol.
+    # NOTE: a CLI override of this in an earlier relaunch was never persisted,
+    # which is why the 00-11-59 relaunch OOM'd at batch 2 again — hence it lives
+    # here, in the checked-in sweep definition.
+    per_device_batch_size: 1
+    gradient_accumulation_steps: 16
 
 pipeline:
   sources:

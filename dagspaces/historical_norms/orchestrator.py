@@ -349,8 +349,18 @@ def run_experiment(cfg: DictConfig) -> None:
                         # Method 1: Set environment variable on executor
                         # This ensures it's available in the SLURM job's environment
                         try:
-                            # Get current setup commands and prepend WANDB_GROUP export
-                            current_setup = list(launcher_cfg.get("setup", []))
+                            # Get current setup commands and prepend WANDB_GROUP export.
+                            # NB: _create_submitit_executor() prepends
+                            # `export TRAWLER_DRIVER_VENV={sys.prefix}` so the launcher's
+                            # activate_stage_venv.sh can match the node-local /scratch venv
+                            # mirror. update_parameters(slurm_setup=...) below *replaces*
+                            # the executor's setup wholesale, so we must re-add that prepend
+                            # here — rebuilding from the raw launcher_cfg alone drops it and
+                            # forces every stage onto the NFS venv (slow cold imports ->
+                            # GPU-sanitize probe timeouts).
+                            current_setup = [
+                                f"export TRAWLER_DRIVER_VENV={sys.prefix}"
+                            ] + list(launcher_cfg.get("setup", []))
                             # Insert explicit WANDB_GROUP export at the beginning (after shebang/source commands)
                             # Find insertion point (after source commands)
                             insert_idx = 0

@@ -754,7 +754,11 @@ def run_grpo_training_stage(
     # TRL's vLLM weight sync (sync_weights) doesn't reliably apply LoRA
     # for Qwen3 + vLLM 0.17, so we give vLLM the fully-merged checkpoint.
     # The trainer still uses LoRA for memory-efficient training.
-    base_model_path = str(OmegaConf.select(cfg, "model.model_source"))
+    from dagspaces.common.model_registry import resolve_model_source
+    base_model_path = resolve_model_source(
+        str(OmegaConf.select(cfg, "model.model_source")),
+        stage_name="grpo_training",
+    )
     print(f"[grpo_training] Merging LoRA into base model for vLLM...")
     print(f"[grpo_training]   base: {base_model_path}")
     print(f"[grpo_training]   adapter: {sft_checkpoint}")

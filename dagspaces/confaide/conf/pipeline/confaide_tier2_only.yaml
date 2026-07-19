@@ -1,0 +1,106 @@
+# @package _global_
+# CONFAIDE evaluation, Tier 2 ONLY (2a template + 2b narrative Likert
+# vignettes -> Pearson correlation). The four Tier-3 branches of
+# confaide_eval.yaml are omitted — use this via
+# `benchmarks.confaide.pipeline=confaide_tier2_only` in eval_all when only
+# the tier-2 sensitivity correlations are needed (~1/3 of the full
+# ConfAIde wall-clock, 2 GPU stages instead of 6).
+defaults:
+  - /model: qwen2.5-7b/instruct
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/confaide
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      # ── Tier 2a: template vignettes (Likert rating → Pearson correlation) ──
+      load_dataset_tier2a:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset_tier2a/dataset.parquet
+        overrides:
+          prompt:
+            tier: "2a"
+
+      llm_inference_tier2a:
+        stage: llm_inference
+        depends_on: [load_dataset_tier2a]
+        inputs:
+          dataset: load_dataset_tier2a.dataset
+        outputs:
+          dataset: outputs/llm_inference_tier2a/dataset.parquet
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
+        overrides:
+          prompt:
+            tier: "2a"
+
+      parse_responses_tier2a:
+        stage: parse_responses
+        depends_on: [llm_inference_tier2a]
+        inputs:
+          dataset: llm_inference_tier2a.dataset
+        outputs:
+          dataset: outputs/parse_responses_tier2a/dataset.parquet
+        overrides:
+          prompt:
+            tier: "2a"
+
+      compute_metrics_tier2a:
+        stage: compute_metrics
+        depends_on: [parse_responses_tier2a]
+        inputs:
+          dataset: parse_responses_tier2a.dataset
+        outputs:
+          dataset: outputs/compute_metrics_tier2a/metrics.parquet
+        overrides:
+          prompt:
+            tier: "2a"
+
+      # ── Tier 2b: narrative vignettes (Likert rating → Pearson correlation) ──
+      load_dataset_tier2b:
+        stage: load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset_tier2b/dataset.parquet
+        overrides:
+          prompt:
+            tier: "2b"
+
+      llm_inference_tier2b:
+        stage: llm_inference
+        depends_on: [load_dataset_tier2b]
+        inputs:
+          dataset: load_dataset_tier2b.dataset
+        outputs:
+          dataset: outputs/llm_inference_tier2b/dataset.parquet
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
+        overrides:
+          prompt:
+            tier: "2b"
+
+      parse_responses_tier2b:
+        stage: parse_responses
+        depends_on: [llm_inference_tier2b]
+        inputs:
+          dataset: llm_inference_tier2b.dataset
+        outputs:
+          dataset: outputs/parse_responses_tier2b/dataset.parquet
+        overrides:
+          prompt:
+            tier: "2b"
+
+      compute_metrics_tier2b:
+        stage: compute_metrics
+        depends_on: [parse_responses_tier2b]
+        inputs:
+          dataset: parse_responses_tier2b.dataset
+        outputs:
+          dataset: outputs/compute_metrics_tier2b/metrics.parquet
+        overrides:
+          prompt:
+            tier: "2b"

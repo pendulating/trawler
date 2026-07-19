@@ -36,7 +36,7 @@ MAX_MODEL_LEN=32768
 HF_HOME="${HF_HOME:-/share/pierson/matt/.cache/huggingface}"
 
 cd "$REPO_DIR"
-source .venv/bin/activate
+source .venv-vllm025cu129/bin/activate
 echo "Python: $(which python) ($(python --version))"
 python -c "import vllm; print('vllm', vllm.__version__)"
 

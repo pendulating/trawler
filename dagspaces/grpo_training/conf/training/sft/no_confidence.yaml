@@ -1,4 +1,7 @@
 # @package training.sft
+# SFT loss: dft = Dynamic Fine-Tuning (arXiv:2508.05629), the 2026-07-18+
+# default; null = TRL stock loss (chunked_nll), used by all earlier runs.
+loss_type: dft
 # Ablation: SFT without per-flow `confidence` field. Drops `confidence` from
 # both the assistant JSON and the user-side instruction prose.
 # Use: training/sft=no_confidence

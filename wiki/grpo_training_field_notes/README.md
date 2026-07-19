@@ -138,3 +138,16 @@ camera-ready generative stage.
   run). Ships `scripts/analyze_grpo_verdict_traces.py`, per-call `vignette/*`
   W&B verdict stats, and realised force-mix fields in
   training_metadata/prescreen_report.
+- [2026-07-16_rl_papers_synthesis.md](2026-07-16_rl_papers_synthesis.md)
+  — synthesis of three external GRPO papers (Memory-R1 ACL'26, URPO AAAI'26,
+  SEC'25 privacy rewriting) vs our stack. Most recommendations already in the
+  keeper (DAPO loss, scale_rewards none, token_truncate, β=0.02, vignette
+  anchor); two live gaps: (1) `epsilon_high=0.28` Clip-Higher is **inert at
+  μ=1** and the v9 "re-evaluate μ>1 if movement stalls" condition is met →
+  **v13a staged** (`scripts/run_grpo_v13a_mu2.sh`, μ=2, single variable vs the
+  v11 probe, hedge tier pinned back to null); (2) reward is judge-opinion-heavy
+  with **no outcome-grounded component** — Memory-R1's EM-vs-judge ablation is
+  external evidence this breeds the 72% hedge equilibrium → outcome-grounded
+  R_ground ranked as the v14 candidate. Also records that v12a **never ran**
+  (07-03 launch CANCELLED at 0s) and corrects a default.yaml-vs-keeper
+  profiling error.

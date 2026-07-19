@@ -14,7 +14,7 @@
 
 set -u
 cd /share/pierson/matt/UAIR
-source .venv/bin/activate 2>/dev/null || true
+source "${TRAWLER_DRIVER_VENV:-.venv-vllm025cu129}/bin/activate" 2>/dev/null || true
 
 LOGDIR=/share/pierson/matt/UAIR/.bench/overnight_2026_07_12
 mkdir -p "$LOGDIR"

@@ -7,7 +7,7 @@ Site-specific settings. Copy `server.env.example` → `server.env` and edit. Loa
 ```bash
 SLURM_PARTITION=pierson
 TRAWLER_PROJECT_ROOT=/share/pierson/matt/UAIR
-TRAWLER_VENV_ACTIVATE=/share/pierson/matt/UAIR/.venv/bin/activate
+TRAWLER_VENV_ACTIVATE=/share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
 
 # NCCL: P2P/IB off for PCIe-only (no NVLink). SHM must stay ON — see below.
 NCCL_P2P_DISABLE=1
@@ -83,6 +83,50 @@ Per-node override inside a pipeline YAML:
 ```yaml
 pipeline.graph.nodes.sft_training.launcher: slurm_train_2x
 ```
+
+## Node-local venv mirrors (`/scratch`) — cold-import fix
+
+**Problem** (diagnosed 2026-07-17): the vLLM venvs hold ~83k mostly-small files
+on NFS. NFS *bandwidth* is fine (~170 MB/s sequential — model weights load in
+seconds) but per-file round trips dominate imports: a cold
+`torch`+`vllm`+`flashinfer` import chain costs **~13 min per process spawn**,
+and a vLLM stage spawns three processes (parent, EngineCore, Worker). Under
+vLLM 0.25 (which actively imports FlashInfer — 1.9 GB / 20k files in
+`flashinfer_cubin`; 0.19 never loaded it) that put ~29 min of dead boot time in
+front of every eval stage, e.g. 45-min ConfAIDE stages doing ~1 min of
+inference.
+
+**Fix**: mirror the venv onto node-local `/scratch` and launch stage jobs from
+the mirror. A symlink would not help — the bytes must live on local disk.
+
+```bash
+# one-time per node (or after any pip install into the shared venv):
+scripts/sync_venv_to_scratch.sh                     # default: .venv-vllm025cu129
+# then build the fast-deploy tarball for other nodes:
+scripts/sync_venv_to_scratch.sh --make-tarball      # → .venv-mirrors/<name>.tar.zst
+```
+
+Mechanics (all backward compatible; no behavior change on nodes without a
+mirror):
+
+- `scripts/sync_venv_to_scratch.sh` deploys to
+  `/scratch/$USER/venvs/<name-without-leading-dot>`. First deploy prefers the
+  NFS tarball (one sequential stream, ~2 min); otherwise a 24-way parallel
+  rsync fan-out (latency-bound NFS work scales with streams). A final serial
+  `rsync --delete` pass enforces 1:1 parity, then a `.sync_complete` marker is
+  stamped — **a mirror without the marker is never used**, so interrupted syncs
+  are harmless. Re-run the script after changing the shared venv; it's
+  incremental.
+- `scripts/activate_stage_venv.sh` (sourced from every GPU/train launcher's
+  `setup:` block) activates the mirror and exports `TRAWLER_STAGE_PYTHON` —
+  but only when the marker exists **and** records the same source venv as
+  `TRAWLER_DRIVER_VENV`, so a mirror of the wrong venv can never silently swap
+  engine versions.
+- `_create_submitit_executor` (orchestrator) prepends
+  `export TRAWLER_DRIVER_VENV=<sys.prefix>` to the setup block and sets the
+  submitit interpreter to `"${TRAWLER_STAGE_PYTHON:-<sys.executable>}"` — the
+  choice happens *at job runtime on the assigned node*, falling back to
+  exactly the old behavior when no valid mirror exists there.
 
 ## ⚠️ Running a driver under `sbatch`: the `srun` trap
 

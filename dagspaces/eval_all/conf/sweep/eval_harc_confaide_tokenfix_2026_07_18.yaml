@@ -1,0 +1,99 @@
+# @package _global_
+# Hydra sweep: ConfAIde ONLY for harc-llama3.1-8b/instruct, with raised token
+# budgets. Repairs the one cell that failed in eval_canonical_repair.
+#
+# What actually failed (reproduced twice — 2026-07-17 instruct sweep and the
+# 2026-07-18 repair sweep, identical both times):
+#
+#   [orchestrator] PIPELINE FAILED: sanity FAILURE in confaide.parse_responses_2a
+#     - parseable_rate=0.0714 < 0.7 (fail)
+#
+# NOT a crash and NOT a parser bug — the sanity gate correctly refused to emit
+# metrics it could not trust. Root cause is token truncation. This checkpoint
+# opens every ConfAIde answer with a refusal preamble:
+#
+#   "I'm just an AI, I don't have personal opinions or feelings, but I can
+#    provide a rating based on general societal attitudes towards privacy.
+#    \n\nI would"
+#
+# ...and the budget runs out mid-sentence, right before the rating. 31 of 98
+# tier-2a completions end on the literal string "I would". Measured
+# `finish_reason` by tier:
+#
+#   tier2a          70% length-truncated   (budget 32, the config.yaml default)
+#   tier2b          65% length-truncated   (budget 32, same default)
+#   tier3_control   84% length-truncated   (budget 16, node override)
+#   tier3_free       0%                    (budget 256)  <- fine
+#   tier3_info       0%                    (budget 128)  <- fine
+#   tier3_sharing    0%                    (budget 128)  <- fine
+#
+# So three tiers need raising, not just the one that tripped the gate: fixing
+# tier2a alone would simply move the failure to tier2b (which is the tier
+# backing the paper's `r` column) and then to tier3_control.
+#
+# Budget chosen: 128 for all three — enough for the ~35-token preamble plus the
+# answer, and equal to what tier3_info / tier3_sharing already use successfully
+# in this same benchmark, so it is not an unusual setting.
+#
+# Is this still comparable to the other rows? Yes. max_tokens is a throughput
+# knob, not part of the benchmark definition: prompt, temperature (0.0), seed
+# (42) and parser are all unchanged. Capping this model at 32 measured its
+# verbosity, not its privacy reasoning. Other models are unaffected — they
+# answer tersely and never approach even the old budget, so raising it for them
+# would change nothing. Per-model ConfAIde overrides are established practice
+# here (cf. reasoning_revalidate_openthinker_2026_06_08.yaml).
+#
+# Note the SFT counterpart harc-llama3.1-8b/sft-canonical needs no fix and
+# already produced r=61.2 — SFT trained the disclaimer preamble out of it.
+#
+# ConfAIde is gold-scored -> no judge traffic, sidecar off.
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun \
+#       +sweep=eval_harc_confaide_tokenfix_2026_07_18
+#
+# Verify afterwards that the gate cleared — parseable_rate should be >=0.7 on
+# every parse_responses_* stage, not merely "the job exited 0".
+
+experiment:
+  name: eval_harc_confaide_tokenfix
+
+benchmark_filter:
+  include:
+    - confaide
+  exclude: []
+
+judge_sidecar:
+  enabled: false
+
+benchmarks:
+  confaide:
+    extra_args:
+      # Raises tier2a + tier2b, which inherit the global default of 32.
+      - sampling_params.max_tokens=128
+      # tier3_control carries its own node-level override (16), so the global
+      # bump does not reach it; it needs an explicit path. `++` because we are
+      # overwriting an existing nested key.
+      - ++pipeline.graph.nodes.llm_inference_tier3_control.overrides.sampling_params.max_tokens=128
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 1
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      model: harc-llama3.1-8b/instruct

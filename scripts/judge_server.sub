@@ -2,8 +2,16 @@
 #SBATCH --job-name=judge-server
 #SBATCH --partition=pierson
 #SBATCH --gres=gpu:2
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=8
+# 32G was sized for Qwen3-32B-AWQ (quantized, ~1 GPU). The default judge is now
+# Gemma-4-31B-it: 59G of bf16 shards read off /share. Page cache counts against
+# the cgroup, so a 32G cap forces continuous reclaim while streaming those shards
+# and starves startup — jobs 916397/918170 spent 17min before engine init and
+# were killed by the readiness timeout having never loaded a weight. The
+# comparable extraction job (853177) ran the SAME model on the SAME node at 64G
+# and reached engine init in ~90s. RSS stays ~3G either way; this is cache, not
+# resident memory.
+#SBATCH --mem=96G
 #SBATCH --time=480:00:00
 #SBATCH --output=.slurm_jobs/judge-server/%j.out
 #SBATCH --error=.slurm_jobs/judge-server/%j.err
@@ -43,7 +51,18 @@ echo ""
 
 # ----------------------------- CONFIGURATION ----------------------------- #
 REPO_DIR="/share/pierson/matt/UAIR"
-JUDGE_MODEL="${JUDGE_MODEL:-/share/pierson/matt/zoo/models/Qwen3.6-27B}"
+JUDGE_MODEL="${JUDGE_MODEL:-/share/pierson/matt/zoo/models/Gemma-4-31B-it}"
+# Node-local model registry: load weights from the /scratch mirror when one is
+# synced (scripts/sync_model_registry_to_scratch.sh) — this sidesteps the
+# NFS-streaming/page-cache problem documented at the top of this file — but
+# keep SERVING under the canonical path via --served-model-name so /v1/models,
+# and therefore judge-row bookkeeping, is identical either way.
+JUDGE_MODEL_LOAD="$JUDGE_MODEL"
+_registry="${TRAWLER_MODEL_REGISTRY:-/scratch/mwf62/registry/models}"
+_mirror="$_registry/$(basename "$JUDGE_MODEL")"
+if [ -f "$_mirror/.sync_complete" ] && grep -q "src=$JUDGE_MODEL\$" "$_mirror/.sync_complete"; then
+    JUDGE_MODEL_LOAD="$_mirror"
+fi
 JUDGE_PORT="${JUDGE_PORT:-8002}"
 JUDGE_TP="${JUDGE_TP:-2}"
 JUDGE_MAX_MODEL_LEN="${JUDGE_MAX_MODEL_LEN:-24576}"
@@ -52,19 +71,60 @@ HF_HOME="${HF_HOME:-/share/pierson/matt/.cache/huggingface}"
 # ------------------------------ ENVIRONMENT ------------------------------ #
 cd "$REPO_DIR"
 
-if [ ! -d ".venv" ]; then
-    echo "ERROR: .venv not found." >&2
+# vLLM 0.25 venv, not the 0.19.1 .venv. The default judge is now Gemma-4-31B-it
+# (extraction + judging moved to the gemma family, 2026-07-16), and Gemma-4 is
+# only validated on >=0.25 — the 0.19.1 registry lacks Gemma4Unified entirely and
+# job 916397 hung 20min at engine init trying to serve the 31B under it.
+# Override with JUDGE_VENV= for a different env.
+JUDGE_VENV="${JUDGE_VENV:-.venv-vllm025cu129}"
+
+if [ ! -d "$JUDGE_VENV" ]; then
+    echo "ERROR: $JUDGE_VENV not found." >&2
     exit 1
 fi
 
-source .venv/bin/activate
-echo "Python: $(which python) ($(python --version))"
+# Prefer the node-local /scratch mirror of the venv (same selector the stage
+# launchers use — see scripts/activate_stage_venv.sh). Cold torch/vllm imports
+# over NFS cost ~10 min PER PROCESS, and a TP=2 serve spawns four processes
+# (API server, engine core, 2 workers): job 74219 spent >30 min initializing
+# from the NFS venv where the mirror takes a few minutes end-to-end. Falls
+# back to the NFS venv when no matching mirror exists on this node.
+case "$JUDGE_VENV" in
+  /*) _judge_venv_abs="$JUDGE_VENV" ;;
+  *)  _judge_venv_abs="$REPO_DIR/$JUDGE_VENV" ;;
+esac
+export TRAWLER_DRIVER_VENV="${TRAWLER_DRIVER_VENV:-$_judge_venv_abs}"
+source "$REPO_DIR/scripts/activate_stage_venv.sh"
+if [ -z "${TRAWLER_STAGE_PYTHON:-}" ]; then
+    source "$_judge_venv_abs/bin/activate"
+fi
+# The mirror's bin/activate is an rsync'd copy with the NFS VIRTUAL_ENV baked
+# in, and every console script's shebang points at the NFS interpreter — so
+# PATH lookups silently land back on /share (observed: job 75077). Bypass PATH
+# entirely: run the vllm entry script under the explicit interpreter, exactly
+# how submitit stages use TRAWLER_STAGE_PYTHON.
+JUDGE_PYTHON="${TRAWLER_STAGE_PYTHON:-$_judge_venv_abs/bin/python}"
+JUDGE_VLLM_SCRIPT="$(dirname "$JUDGE_PYTHON")/vllm"
+echo "Python: $JUDGE_PYTHON ($("$JUDGE_PYTHON" --version))"
+echo "vLLM:   $("$JUDGE_PYTHON" -c 'import vllm; print(vllm.__version__)' 2>/dev/null || echo '??')"
 
 export HF_HOME
 export WANDB_MODE=disabled
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ENABLE_V1_MULTIPROCESSING=0
 export TOKENIZERS_PARALLELISM=false
+
+# Keep every cache OFF $HOME. /home/mwf62 is a 250G NFS export that is
+# write-limited to 20G, and HF_HOME was the only redirect here — so vLLM's
+# compile cache and Triton's JIT cache were silently landing in home
+# (measured 2026-07-16: ~/.triton = 1.1G, ~/.cache/vllm = 109M). Gemma-4
+# forces the TRITON_ATTN backend (heterogeneous head dims), so the Triton
+# cache is on the hot path for this judge, over NFS, in a capped directory.
+export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-/share/pierson/matt/.cache/vllm}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/share/pierson/matt/.cache/triton}"
+export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-/share/pierson/matt/.cache/inductor}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/share/pierson/matt/.cache}"
+mkdir -p "$VLLM_CACHE_ROOT" "$TRITON_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
 
 # ------------------------------ GPU SANITY ------------------------------- #
 echo "--- All machine GPUs ---"
@@ -106,8 +166,13 @@ if [ "$JUDGE_TP" -gt 1 ]; then
         echo "OK: GPUs are PIX/PXB-connected (same PCIe switch)"
     fi
 
+    # Keep P2P off — that is the one that hangs ncclCommInitRank on this stack.
+    # SHM must stay ENABLED (=0): disabling it forces every TP collective onto
+    # TCP sockets and cost 2-3.5x throughput. server.env has said
+    # NCCL_SHM_DISABLE=0 since that was diagnosed; this script still hardcoded
+    # =1 and, being a .sub rather than a launcher, never read server.env.
     export NCCL_P2P_DISABLE=1
-    export NCCL_SHM_DISABLE=1
+    export NCCL_SHM_DISABLE=0
     export NCCL_CUMEM_HOST_ENABLE=0
     export NCCL_IB_DISABLE=1
     export NCCL_DEBUG=WARN
@@ -117,6 +182,7 @@ fi
 
 echo ""
 echo "Model: $JUDGE_MODEL"
+echo "Weights loaded from: $JUDGE_MODEL_LOAD"
 echo "Port:  $JUDGE_PORT"
 echo "TP:    $JUDGE_TP"
 echo "Max model len: $JUDGE_MAX_MODEL_LEN"
@@ -128,7 +194,8 @@ mkdir -p "$REPO_DIR/.slurm_jobs/judge-server"
 echo "[$(date)] Launching judge server..."
 
 SERVE_ARGS=(
-    vllm serve "$JUDGE_MODEL"
+    "$JUDGE_PYTHON" "$JUDGE_VLLM_SCRIPT" serve "$JUDGE_MODEL_LOAD"
+    --served-model-name "$JUDGE_MODEL"
     --port "$JUDGE_PORT"
     --host 0.0.0.0
     --tensor-parallel-size "$JUDGE_TP"
@@ -143,16 +210,37 @@ echo "Command: ${SERVE_ARGS[*]}"
 "${SERVE_ARGS[@]}" &
 SERVER_PID=$!
 
-# Wait for health check
-for i in $(seq 1 240); do
+# Wait for health check.
+#
+# Budget generously: this kills a server that is merely slow, and a false kill
+# costs a full reload. Gemma-4-31B-it is 59GB bf16 on shared storage and took
+# 17min just to reach engine init with a cold page cache (jobs 916397 + 918170
+# both died here at the old 1200s ceiling, having never started loading weights).
+# Qwen3.6-27B reached ready in 4-10min, which is what 1200s was sized for.
+# Override with JUDGE_READY_TIMEOUT= (seconds).
+JUDGE_READY_TIMEOUT="${JUDGE_READY_TIMEOUT:-3600}"
+READY_POLLS=$(( JUDGE_READY_TIMEOUT / 5 ))
+echo "[$(date)] Waiting up to ${JUDGE_READY_TIMEOUT}s for readiness..."
+
+for i in $(seq 1 "$READY_POLLS"); do
     if curl -sf "http://localhost:${JUDGE_PORT}/health" > /dev/null 2>&1; then
         echo "[$(date)] Judge server ready on port ${JUDGE_PORT}"
         break
     fi
-    if [ "$i" -eq 240 ]; then
-        echo "[$(date)] ERROR: server not ready after 600s" >&2
+    # Surface death immediately rather than polling a corpse until the ceiling.
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "[$(date)] ERROR: vllm serve exited before becoming ready" >&2
+        wait "$SERVER_PID" 2>/dev/null || true
+        exit 1
+    fi
+    if [ "$i" -eq "$READY_POLLS" ]; then
+        echo "[$(date)] ERROR: server not ready after ${JUDGE_READY_TIMEOUT}s" >&2
         kill $SERVER_PID 2>/dev/null || true
         exit 1
+    fi
+    # Heartbeat every 2min so a slow load is distinguishable from a hang.
+    if [ $(( i % 24 )) -eq 0 ]; then
+        echo "[$(date)] ... still waiting ($(( i * 5 ))s elapsed, pid $SERVER_PID alive)"
     fi
     sleep 5
 done
