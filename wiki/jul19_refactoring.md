@@ -21,7 +21,7 @@ Effort: S (<1 day) · M (1–3 days) · L (>3 days)
 | # | Finding | Severity | Effort |
 |---|---------|----------|--------|
 | 1 | 9 eval dagspaces each re-implemented the same run loop (~95% copy-paste; ~3000 duplicated lines) — **DONE 2026-07-19**, see plan | ✅ | M |
-| 2 | The SLURM/NFS result-waiting block (~120 lines) is duplicated verbatim in every orchestrator | 🔴 | S |
+| 2 | The SLURM/NFS result-waiting block (~120 lines) duplicated verbatim across the eval orchestrators — **DONE 2026-07-19** (folded into Finding 1 as `await_slurm_result`) | ✅ | S |
 | 3 | Runner boilerplate: every runner is "read parquet → call fn → write parquet → StageResult" | 🟡 | M |
 | 4 | Deprecated dagspaces (`.uair`, `.rule_tuples`) still in tree, ~12k lines — but `common/` still imports one symbol from `.uair` | 🟡 | S |
 | 5 | Pervasive bare `except Exception: pass` swallows errors silently (anti-pattern for science code) | 🔴 | M |
@@ -118,31 +118,24 @@ makes the eval harnesses provably identical.
 
 ---
 
-## Finding 2 — SLURM/NFS result-waiting block duplicated verbatim 🔴 (S)
+## Finding 2 — SLURM/NFS result-waiting block duplicated verbatim ✅ DONE (2026-07-19)
 
-**Evidence.** Inside each `run_experiment`, the branch that handles
-`node.launcher` contains a ~120-line block that:
-
-- calls `job.result()`,
-- on a "has not produced any output" / result_pickle error, polls for the
-  result pickle up to `submitit_result_wait_s`,
-- falls back to polling `squeue -j <id>` for R/PD/CG states,
-- waits again for NFS to propagate the pickle,
-- unpacks the `(outcome, payload)` tuple.
-
-This block is identical in all 9 orchestrators and is the part most likely to
-need fixes (it is littered with dated war-story comments about NFS races).
-
-**Proposed fix.** This is a pure function of `(job, cfg, node_key)` →
-`StageResult`. Extract to `common/orchestrator.py`:
-
-```python
-def await_slurm_result(job, cfg, node_key: str) -> StageResult: ...
-```
-
-Fold into Finding 1's generic `run_experiment`. Even done standalone, this is a
-~120-line × 9 = ~1080-line deletion. (S effort because it is a mechanical
-extract-and-import with no logic change.)
+> **Status: implemented as part of Finding 1 (PR #4).** The block was extracted
+> verbatim into `await_slurm_result(job, cfg, node_key) -> StageResult`
+> (`dagspaces/common/orchestrator.py`), called once by the generic
+> `run_experiment`. All nine eval dagspaces now use it; none retain a local
+> copy (`grep result_pickle dagspaces/*/orchestrator.py` → only `common`,
+> `grpo_training`, `historical_norms`). Covered by
+> `tests/common/test_run_experiment.py::TestAwaitSlurmResult` (happy path,
+> tuple unpack ok/error, pickle recovery, squeue fallback, all-fail re-raise).
+>
+> **Remaining (out of scope):** `grpo_training` and `historical_norms` each
+> still carry their *own* result-wait block, but those are **different
+> algorithms** — not verbatim copies of the eval block nor of each other — in
+> the two dagspace whose consolidation was declined (Phase 2). So the
+> "duplicated verbatim" problem this finding names is resolved; unifying the
+> training waits would be a behavior change on the frozen training pipeline and
+> was deliberately not pursued.
 
 ---
 
@@ -457,10 +450,10 @@ Recorded so the review is balanced and nobody "fixes" these by mistake:
 
 Ordered by leverage (lines deleted / correctness risk per unit effort):
 
-1. **Finding 2 → 1: extract the generic orchestrator + SLURM-wait helper** (🔴).
-   Biggest single win: ~2400 duplicated lines across 9 files → one tested
-   module + ~40-line dagspace stubs. Do Finding 2 first (pure extract, S) to
-   de-risk, then Finding 1 (hooks dataclass, M). Gate on Finding 10's tests.
+1. ~~**Finding 2 → 1: extract the generic orchestrator + SLURM-wait helper**~~
+   ✅ **DONE (2026-07-19, PRs #4/#6).** Nine eval dagspaces on one shared loop;
+   `await_slurm_result` extracted; golden-params + run-loop tests added.
+   Phase 2 (training orchestrators) declined — see Finding 1 status.
 2. **Finding 8: consolidate JSON extraction** (🔴, S–M). Small, high
    correctness value for cross-benchmark comparability.
 3. **Finding 5: retire silent `except Exception: pass`** (🔴, M). Add ruff
@@ -478,9 +471,10 @@ Ordered by leverage (lines deleted / correctness risk per unit effort):
 8. **Finding 6: tracked only** — lands via `grpo_redesign/`; keep keeper frozen.
 
 ### Suggested sequencing note
-Findings 1, 2, 3, 10 are one coherent program ("make the eval harness a single
-tested thing") and should be done together against a git branch with the
-existing suite green as the bar (`python -m pytest tests/ -q`). Findings 5 and
+~~Findings 1, 2, 3, 10 are one coherent program ("make the eval harness a single
+tested thing")~~ — **Findings 1, 2, 10 are done**; Finding 3 (`DataFrameStage`)
+remains and is now safe to attempt since the runner↔orchestrator contract is
+stable. Findings 5 and
 8 are independent and can proceed in parallel. Finding 7 is independent but
 touches hot inference code — do it behind the existing harmony/reasoning tests
 and add new ones first.
