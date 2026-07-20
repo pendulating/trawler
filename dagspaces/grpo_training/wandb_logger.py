@@ -22,6 +22,7 @@ from dagspaces.common.wandb_logger import (
 from dagspaces.common.wandb_logger import (
     collect_compute_metadata,
     ensure_local_tmpdir,
+    pipeline_run_id,  # re-export: common/orchestrator.make_wandb_logger calls wl.pipeline_run_id on this shim
 )
 
 ensure_local_tmpdir("grpo_training")
