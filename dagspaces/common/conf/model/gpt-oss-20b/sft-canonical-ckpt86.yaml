@@ -1,0 +1,27 @@
+# @package _global_
+# Per-checkpoint eval variant of gpt-oss-20b/sft-canonical (generated
+# 2026-07-19): epoch checkpoint 86/258 of the 2026-07-19
+# canonical SFT run (template-overhaul + DFT era). lora_path is
+# DELIBERATELY hardcoded — a ${sft_ckpt} interpolation broke inside
+# eval_all's re-rooted child configs (InterpolationKeyError, sweep
+# 2026-07-19/13-46-08). Engine kwargs inherited verbatim from this
+# family's sft-canonical.yaml.
+# Source run: 2026-07-19_sft_canonical_gemma4_gptoss/00-11-59/0
+model:
+  model_source: /share/pierson/matt/zoo/models/GPT-OSS-20B
+  model_family: gpt-oss
+  lora_path: /share/pierson/matt/UAIR/multirun/2026-07-19_sft_canonical_gemma4_gptoss/00-11-59/0/sft_only/outputs/sft/checkpoint/checkpoint-86
+  chat_template_kwargs: {}
+  engine_kwargs:
+    max_model_len: 8192
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    max_num_batched_tokens: 8192
+    enable_lora: true
+    max_lora_rank: 64
+    enforce_eager: false
+  batch_size: 0
+  concurrency: 1
+sampling_params:
+  temperature: 1.0
