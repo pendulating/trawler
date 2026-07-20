@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dagspaces.common.runners.base import DataFrameStageRunner, StageRunner
 
-from dagspaces.common.runners.base import StageRunner
-
-if TYPE_CHECKING:
-    from ..orchestrator import StageExecutionContext, StageResult
-
-__all__ = ["StageRunner"]
-
+__all__ = ["StageRunner", "DataFrameStageRunner"]

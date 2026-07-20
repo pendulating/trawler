@@ -2,21 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
-import pandas as pd
-
-from ..orchestrator import (
-    StageExecutionContext,
-    StageResult,
-    _collect_outputs,
-    _save_stage_outputs,
-    prepare_stage_input,
-)
-from ..stages.ci_extraction import run_ci_extraction_stage
-from .base import StageRunner
+from dagspaces.common.runners.base import DataFrameStageRunner
 
 
-class CIExtractionRunner(StageRunner):
+class CIExtractionRunner(DataFrameStageRunner):
     """Runner for the ci_extraction stage.
 
     Converts CI reasoning traces into structured 5-component
@@ -26,26 +15,7 @@ class CIExtractionRunner(StageRunner):
 
     stage_name = "ci_extraction"
 
-    def run(self, context: StageExecutionContext) -> StageResult:
-        """Execute the ci_extraction stage."""
-        dataset_path = context.inputs.get("dataset")
-        if not dataset_path:
-            raise ValueError(f"Node '{context.node.key}' requires 'dataset' input")
+    def transform(self, df, cfg):
+        from ..stages.ci_extraction import run_ci_extraction_stage
 
-        cfg = context.cfg
-        df, _, _ = prepare_stage_input(cfg, dataset_path, self.stage_name)
-
-        out = run_ci_extraction_stage(df, cfg)
-
-        _save_stage_outputs(out, context.output_paths)
-
-        metadata: Dict[str, Any] = {
-            "rows": len(out) if isinstance(out, pd.DataFrame) else None,
-            "streaming": False,
-        }
-
-        outputs = _collect_outputs(
-            context,
-            {name: spec.optional for name, spec in context.node.outputs.items()},
-        )
-        return StageResult(outputs=outputs, metadata=metadata)
+        return run_ci_extraction_stage(df, cfg)
