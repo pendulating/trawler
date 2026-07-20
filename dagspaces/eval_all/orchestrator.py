@@ -361,6 +361,9 @@ def _launch_judge_sidecar(
     parallel = sidecar_cfg.get("parallel_manifests")
     if parallel is not None:
         cmd += ["--parallel-manifests", str(int(parallel))]
+    max_inflight = sidecar_cfg.get("max_inflight")
+    if max_inflight is not None:
+        cmd += ["--max-inflight", str(int(max_inflight))]
     timeout = sidecar_cfg.get("timeout")
     if timeout is not None:
         cmd += ["--timeout", str(float(timeout))]

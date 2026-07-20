@@ -1,0 +1,112 @@
+# @package _global_
+# Hydra sweep: full eval_all PER EPOCH CHECKPOINT — batch 2 (overnight
+# 2026-07-19). Batch 1 (eval_sft_per_checkpoint_2026_07_19) covered
+# qwen3.5-9b + gemma-4-e2b; this batch covers the REST of the 2026-07-19
+# canonical SFT cohort (template-overhaul + DFT era) that finished today.
+#
+# Roster (25 cells, checkpoints = epochs 1/2/3):
+#   qwen3.5-2b / qwen3.5-4b / openthinker3-7b / llama3.1-8b /
+#   harc-llama3.1-8b / phi-4      ckpt 171/342/513   (00-11-59 arms 0,1,6,7,8,9)
+#   gemma-4-e4b                   ckpt 171/342/513   (repair_oom/12-49-41/0)
+#   gemma-4-12b                   ckpt 171 ONLY      (repair_oom/12-49-41/1 —
+#     still training as of launch; ckpt 342/513 need a follow-up sweep once
+#     the run finishes and the yamls are generated)
+#   gpt-oss-20b                   ckpt 86/172/258    (gptoss/00-11-59/0 —
+#     its own step count: 258 total = 3 epochs)
+#
+# Same roster tweaks + engine tuning as batch 1 (see
+# eval_sft_per_checkpoint_2026_07_19.yaml for the derivation):
+#   - confaide restricted to tiers 2a/2b
+#   - cirl_vignettes runs TRAJECTORY probing via the async-judge flow
+#   - per-benchmark max_model_len / max_num_seqs from measured profiles
+# NB: gpt-oss-20b and phi-4 model yamls cap max_model_len at 8192 —
+# the per-benchmark extra_args below only ever shrink it further, and
+# privacylens/cirl keep each family's canonical default (comparability
+# with the 07-17/07-19 canonical cells trumps truncation-free headroom).
+#
+# NOT protocol-comparable with keeper-era (pre-2026-07-18) SFT evals.
+#
+# Required cluster setup:
+#   sbatch scripts/judge_server.sub      # must report /v1/models before launch
+# Judge: Gemma-4-31B-it on klara:8002. Sidecars run with the 2026-07-19
+# max_inflight=16 global request cap (judge saturated at ~55 concurrent).
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_sft_per_checkpoint_b2_2026_07_19
+
+experiment:
+  name: eval_sft_per_checkpoint_b2
+
+benchmarks:
+  confaide:
+    pipeline: confaide_tier2_only
+    extra_args:
+      - model.engine_kwargs.max_model_len=5120
+      - model.engine_kwargs.max_num_seqs=64
+  cirl_vignettes:
+    pipeline: cirl_trajectory_async
+    finalize_pipeline: cirl_trajectory_async_finalize
+  goldcoin:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+  mmlu:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=128
+  vlm_geoprivacy:
+    extra_args:
+      - model.engine_kwargs.max_model_len=3072
+      - model.engine_kwargs.max_num_seqs=32
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 3 concurrent cells: shares the cluster overnight with the still-running
+    # gemma-4-12b repair arm, batch-1 cells 3-5, and the judge server —
+    # and 3 cells x max_inflight 16 = 48 concurrent judge requests, just
+    # under the server's observed capacity (~55).
+    array_parallelism: 3
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      model: >-
+        qwen3.5-2b/sft-canonical-ckpt171,
+        qwen3.5-2b/sft-canonical-ckpt342,
+        qwen3.5-2b/sft-canonical-ckpt513,
+        qwen3.5-4b/sft-canonical-ckpt171,
+        qwen3.5-4b/sft-canonical-ckpt342,
+        qwen3.5-4b/sft-canonical-ckpt513,
+        openthinker3-7b/sft-canonical-ckpt171,
+        openthinker3-7b/sft-canonical-ckpt342,
+        openthinker3-7b/sft-canonical-ckpt513,
+        llama3.1-8b/sft-canonical-ckpt171,
+        llama3.1-8b/sft-canonical-ckpt342,
+        llama3.1-8b/sft-canonical-ckpt513,
+        harc-llama3.1-8b/sft-canonical-ckpt171,
+        harc-llama3.1-8b/sft-canonical-ckpt342,
+        harc-llama3.1-8b/sft-canonical-ckpt513,
+        phi-4/sft-canonical-ckpt171,
+        phi-4/sft-canonical-ckpt342,
+        phi-4/sft-canonical-ckpt513,
+        gemma-4-e4b/sft-canonical-ckpt171,
+        gemma-4-e4b/sft-canonical-ckpt342,
+        gemma-4-e4b/sft-canonical-ckpt513,
+        gemma-4-12b/sft-canonical-ckpt171,
+        gpt-oss-20b/sft-canonical-ckpt86,
+        gpt-oss-20b/sft-canonical-ckpt172,
+        gpt-oss-20b/sft-canonical-ckpt258

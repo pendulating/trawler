@@ -77,6 +77,14 @@ import requests
 DEFAULT_POLL_INTERVAL_S = 5.0
 DEFAULT_TICK_INTERVAL_S = 30.0
 DEFAULT_PER_MANIFEST_CONCURRENCY = 8
+#: Hard cap on simultaneous HTTP requests to the judge across ALL
+#: manifests in this sidecar process. Without it, effective concurrency
+#: is parallel_manifests x concurrency (4x8=32) PER CELL, and a 3-cell
+#: sweep put 96 potential / 70 observed concurrent requests on the
+#: judge server (55 running + 15 capacity-queued, 2026-07-19). Queued
+#: requests burn toward the 240s client timeout -> timeout->retry storm.
+#: 16/cell keeps a 3-cell sweep under the server's observed capacity.
+DEFAULT_MAX_INFLIGHT_REQUESTS = 16
 DEFAULT_PER_REQUEST_TIMEOUT_S = 240.0
 DEFAULT_HTTP_RETRIES = 3
 DEFAULT_HTTP_BACKOFF_S = 1.5
@@ -366,7 +374,9 @@ def process_manifest(
     backoff: float = DEFAULT_HTTP_BACKOFF_S,
     on_progress: Optional[Any] = None,
     on_failure: Optional[Any] = None,
+    on_start: Optional[Any] = None,
     stop_event: Optional[threading.Event] = None,
+    global_sem: Optional[threading.Semaphore] = None,
 ) -> ManifestStats:
     """Fan-out one manifest's requests; resume-safe; emit output.jsonl + done.flag.
 
@@ -382,8 +392,18 @@ def process_manifest(
             emit per-tick W&B updates).
         on_failure: Optional callback ``(rec: FailureRecord) -> None``
             invoked once per row whose retries are exhausted.
+        on_start: Optional callback ``(stats: ManifestStats) -> None``
+            invoked once, right after the stats record is created —
+            lets run_sidecar register the live object so the tick line
+            can report in-flight row progress (not just finished
+            manifests).
         stop_event: Optional shutdown signal — when set, the worker pool
             stops accepting new rows; in-flight rows still complete.
+        global_sem: Optional semaphore shared across ALL concurrent
+            process_manifest calls in this process — bounds total
+            simultaneous HTTP requests to the judge regardless of how
+            many manifests are in flight. Held for the full retry loop
+            of one row (retries are judge load too).
 
     Returns the final :class:`ManifestStats`. Raises if the manifest
     itself can't be read (i.e. corrupt JSON), but never on per-row
@@ -418,6 +438,8 @@ def process_manifest(
         n_skipped=len(completed_already),
         started_at=time.time(),
     )
+    if on_start is not None:
+        on_start(stats)
 
     print(
         f"[sidecar] {stats.dagspace}.{stats.stage}: "
@@ -441,13 +463,20 @@ def process_manifest(
         if stop_event is not None and stop_event.is_set():
             return None
         cid = str(req.get("custom_id") or "")
-        t0 = time.time()
-        resp_json, err, attempts = _post_one(
-            session, base_url, req,
-            timeout=timeout, retries=retries, backoff=backoff,
-            api_key=api_key,
-        )
-        latency_ms = (time.time() - t0) * 1000.0
+        if global_sem is not None:
+            global_sem.acquire()
+        try:
+            # t0 after acquire: latency measures the judge, not our queue.
+            t0 = time.time()
+            resp_json, err, attempts = _post_one(
+                session, base_url, req,
+                timeout=timeout, retries=retries, backoff=backoff,
+                api_key=api_key,
+            )
+            latency_ms = (time.time() - t0) * 1000.0
+        finally:
+            if global_sem is not None:
+                global_sem.release()
         stats.latencies_ms.append(latency_ms)
         _emit_response_line(
             partial_path,
@@ -519,9 +548,12 @@ class _SidecarRuntime:
     def __init__(self) -> None:
         self.stop_event = threading.Event()
         self.in_flight_manifests: Set[str] = set()
+        # Live ManifestStats for in-flight manifests, registered via
+        # process_manifest's on_start hook — this is what lets the tick
+        # line report row progress BEFORE a manifest finishes.
+        self.active_stats: Dict[str, ManifestStats] = {}
         self.completed_manifests: Dict[str, ManifestStats] = {}
         self.cumulative_failures: int = 0
-        self.cumulative_completed_rows: int = 0
         self.failure_buffer: List[FailureRecord] = []
         self.lock = threading.Lock()
         self.start_time = time.time()
@@ -669,6 +701,7 @@ def run_sidecar(
     api_key: Optional[str] = None,
     concurrency: int = DEFAULT_PER_MANIFEST_CONCURRENCY,
     parallel_manifests: int = 4,
+    max_inflight_requests: int = DEFAULT_MAX_INFLIGHT_REQUESTS,
     poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
     tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
     timeout: float = DEFAULT_PER_REQUEST_TIMEOUT_S,
@@ -688,6 +721,14 @@ def run_sidecar(
     Returns the final ``{manifest_path: ManifestStats}`` map.
     """
     runtime = _SidecarRuntime()
+    # Global request-level backpressure: bounds simultaneous judge HTTP
+    # requests across all manifests (see DEFAULT_MAX_INFLIGHT_REQUESTS).
+    # <=0 disables the cap (old behavior: parallel_manifests x concurrency).
+    global_sem: Optional[threading.Semaphore] = (
+        threading.BoundedSemaphore(max_inflight_requests)
+        if max_inflight_requests and max_inflight_requests > 0
+        else None
+    )
 
     # Health check before doing anything destructive.
     if health_check:
@@ -717,12 +758,13 @@ def run_sidecar(
         concurrency=concurrency,
     )
 
-    def _on_progress(stats: ManifestStats) -> None:
-        # Cheap counter update; full per-tick log is in the tick thread.
+    def _on_start(stats: ManifestStats) -> None:
+        # Register the live stats object so the tick line can report
+        # in-flight row progress. (The previous cumulative_completed_rows
+        # counter computed here was never surfaced AND was racy across
+        # concurrent manifests — replaced by this registry.)
         with runtime.lock:
-            runtime.cumulative_completed_rows = sum(
-                s.n_completed for s in runtime.completed_manifests.values()
-            ) + stats.n_completed
+            runtime.active_stats[stats.manifest_path] = stats
 
     def _on_failure(rec: FailureRecord) -> None:
         with runtime.lock:
@@ -730,31 +772,57 @@ def run_sidecar(
             if len(runtime.failure_buffer) < SIDECAR_FAILURE_CAP:
                 runtime.failure_buffer.append(rec)
 
-    # Tick thread — periodic W&B + log line.
+    # Tick thread — periodic W&B + log line. ``done=`` counts done.flag
+    # files on disk (ground truth), not just manifests this process
+    # finished; ``rows=`` includes live in-flight progress, so it moves
+    # every tick instead of jumping only when a manifest finalizes.
     def _tick_loop() -> None:
         while not runtime.stop_event.is_set():
             time.sleep(tick_interval_s)
+            # NFS glob outside the lock — it can stall for seconds.
+            manifests = _discover_manifests(watch_root)
+            done_disk = sum(
+                1 for m in manifests if os.path.exists(_output_paths(m)[3])
+            )
             with runtime.lock:
-                pending = _aggregate_pending(watch_root, runtime)
-                inflight = len(runtime.in_flight_manifests)
-                done_count = len(runtime.completed_manifests)
-                done_rows = sum(
+                inflight_set = set(runtime.in_flight_manifests)
+                active = list(runtime.active_stats.values())
+                finalized_rows = sum(
                     s.n_completed for s in runtime.completed_manifests.values()
                 )
                 err_rows = runtime.cumulative_failures
                 wall = time.time() - runtime.start_time
+            n_pending = sum(
+                1 for m in manifests
+                if m not in inflight_set
+                and not os.path.exists(_output_paths(m)[3])
+            )
+            live_rows = sum(
+                s.n_completed + s.n_failed + s.n_skipped for s in active
+            )
+            progress = " ".join(
+                f"{s.dagspace}.{s.stage}:"
+                f"{s.n_completed + s.n_failed + s.n_skipped}/{s.n_requests}"
+                for s in active
+            )
             payload = {
-                "sidecar/pending_manifests": len(pending),
-                "sidecar/inflight_manifests": inflight,
-                "sidecar/done_manifests": done_count,
-                "sidecar/done_rows": done_rows,
+                "sidecar/pending_manifests": n_pending,
+                "sidecar/inflight_manifests": len(inflight_set),
+                "sidecar/done_manifests": done_disk,
+                "sidecar/done_rows": finalized_rows,
+                "sidecar/live_rows": live_rows,
                 "sidecar/error_rows": err_rows,
                 "sidecar/wall_seconds": wall,
-                "sidecar/throughput_rpm": (done_rows / max(wall, 1.0)) * 60.0,
+                "sidecar/throughput_rpm": (
+                    (finalized_rows + live_rows) / max(wall, 1.0)
+                ) * 60.0,
             }
             print(
-                f"[sidecar][tick] pending={len(pending)} inflight={inflight} "
-                f"done={done_count} rows={done_rows} errors={err_rows}",
+                f"[sidecar][tick] manifests pending={n_pending} "
+                f"inflight={len(inflight_set)} done={done_disk}/{len(manifests)} | "
+                f"rows finalized={finalized_rows} live={live_rows} "
+                f"errors={err_rows}"
+                + (f" | {progress}" if progress else ""),
                 flush=True,
             )
             _wandb_log_with_retries(wandb_run, payload)
@@ -799,9 +867,10 @@ def run_sidecar(
                     timeout=timeout,
                     retries=retries,
                     backoff=backoff,
-                    on_progress=_on_progress,
                     on_failure=_on_failure,
+                    on_start=_on_start,
                     stop_event=runtime.stop_event,
+                    global_sem=global_sem,
                 )
                 running_futures[fut] = manifest_path
 
@@ -816,6 +885,7 @@ def run_sidecar(
                     stats = ManifestStats(manifest_path=mp)
                 with runtime.lock:
                     runtime.in_flight_manifests.discard(mp)
+                    runtime.active_stats.pop(mp, None)
                     runtime.completed_manifests[mp] = stats
                 _wandb_log_manifest_summary(wandb_run, stats)
 
@@ -839,6 +909,7 @@ def run_sidecar(
             mp = running_futures[fut]
             with runtime.lock:
                 runtime.in_flight_manifests.discard(mp)
+                runtime.active_stats.pop(mp, None)
                 runtime.completed_manifests[mp] = stats
             _wandb_log_manifest_summary(wandb_run, stats)
 
@@ -907,6 +978,7 @@ def oneshot(
     api_key: Optional[str] = None,
     concurrency: int = DEFAULT_PER_MANIFEST_CONCURRENCY,
     parallel_manifests: int = 4,
+    max_inflight_requests: int = DEFAULT_MAX_INFLIGHT_REQUESTS,
     timeout: float = DEFAULT_PER_REQUEST_TIMEOUT_S,
     retries: int = DEFAULT_HTTP_RETRIES,
     backoff: float = DEFAULT_HTTP_BACKOFF_S,
@@ -927,6 +999,7 @@ def oneshot(
         api_key=api_key,
         concurrency=concurrency,
         parallel_manifests=parallel_manifests,
+        max_inflight_requests=max_inflight_requests,
         timeout=timeout,
         retries=retries,
         backoff=backoff,
@@ -957,6 +1030,11 @@ def _build_parser() -> argparse.ArgumentParser:
     common.add_argument("--model", default="", help="Judge model name (telemetry only)")
     common.add_argument("--concurrency", type=int, default=DEFAULT_PER_MANIFEST_CONCURRENCY)
     common.add_argument("--parallel-manifests", type=int, default=4)
+    common.add_argument(
+        "--max-inflight", type=int, default=DEFAULT_MAX_INFLIGHT_REQUESTS,
+        help="Global cap on simultaneous judge HTTP requests across all "
+             "manifests (0 disables; default %(default)s)",
+    )
     common.add_argument("--timeout", type=float, default=DEFAULT_PER_REQUEST_TIMEOUT_S)
     common.add_argument("--retries", type=int, default=DEFAULT_HTTP_RETRIES)
     common.add_argument("--backoff", type=float, default=DEFAULT_HTTP_BACKOFF_S)
@@ -995,6 +1073,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             api_key=api_key,
             concurrency=args.concurrency,
             parallel_manifests=args.parallel_manifests,
+            max_inflight_requests=args.max_inflight,
             timeout=args.timeout,
             retries=args.retries,
             backoff=args.backoff,

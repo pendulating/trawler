@@ -58,6 +58,13 @@ judge_sidecar:
   model: ${oc.env:JUDGE_MODEL,Qwen3.6-27B}
   concurrency: 8
   parallel_manifests: 4
+  # Global cap on simultaneous judge HTTP requests across ALL manifests
+  # in this cell's sidecar (0 disables). Without it effective concurrency
+  # is parallel_manifests x concurrency = 32 per cell; a 3-cell sweep
+  # saturated the judge server (55 running + 15 capacity-queued,
+  # 2026-07-19) and queued requests burn toward the 240s client timeout.
+  # 16/cell keeps a 3-cell sweep under the server's observed capacity.
+  max_inflight: 16
   # Drain timeout is the upper bound on "how long after every benchmark
   # has dispatched are we willing to wait for judges to finish." 6h is
   # generous for a 5-model sweep; tune down for smaller runs.

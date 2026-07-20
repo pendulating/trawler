@@ -69,7 +69,13 @@ benchmarks:
       - model.engine_kwargs.max_model_len=5120
       - model.engine_kwargs.max_num_seqs=64
   cirl_vignettes:
-    pipeline: cirl_trajectory_eval
+    # Async-judge flow (2026-07-19): the sync cirl_trajectory_eval blocked
+    # each cell at judge_leakage while 493×N judge calls drained through
+    # klara:8002. Export now; the sidecar fills output.jsonl while other
+    # benchmarks run; finalize aggregates after the drain — same pattern
+    # as privacylens.
+    pipeline: cirl_trajectory_async
+    finalize_pipeline: cirl_trajectory_async_finalize
   goldcoin:
     extra_args:
       - model.engine_kwargs.max_model_len=6144

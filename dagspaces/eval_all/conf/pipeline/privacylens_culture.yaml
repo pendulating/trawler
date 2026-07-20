@@ -31,6 +31,10 @@ judge_sidecar:
   model: ${oc.env:JUDGE_MODEL,Qwen3.6-27B}
   concurrency: 8
   parallel_manifests: 4
+  # Global in-flight request cap across all manifests (see
+  # all_benchmarks.yaml for rationale — protects the shared judge server
+  # when several cells' sidecars run at once).
+  max_inflight: 16
   # The leakage judge is the throughput bottleneck: ~1487 per-secret requests
   # per culture (3x helpfulness) all funnel into one shared judge server. With
   # multiple culture/model jobs contending, a 6h drain window (the old default)
