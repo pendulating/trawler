@@ -48,19 +48,22 @@ def _parse_json_artifact(text: str) -> Tuple[Dict[str, Any], str]:
     Returns (artifact, parse_status) where parse_status is
     'parsed' | 'recovered' (needed brace-slicing) | 'unparseable'.
     """
+    from dagspaces.common.json_extraction import extract_json_from_text
+
     if not text or not text.strip():
         return {"parse_error": "empty"}, "unparseable"
     raw = text.strip()
+    # Fast path: clean JSON
     try:
-        return json.loads(raw), "parsed"
-    except json.JSONDecodeError:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            return obj, "parsed"
+    except (json.JSONDecodeError, ValueError):
         pass
-    start, end = raw.find("{"), raw.rfind("}") + 1
-    if 0 <= start < end:
-        try:
-            return json.loads(raw[start:end]), "recovered"
-        except json.JSONDecodeError:
-            pass
+    # Delegate to canonical extractor (outermost span)
+    obj, _ = extract_json_from_text(raw)
+    if obj is not None:
+        return obj, "recovered"
     return {"parse_error": raw[:500]}, "unparseable"
 
 

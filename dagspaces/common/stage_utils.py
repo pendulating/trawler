@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Optional
 
 __all__ = [
     "ensure_dotenv",
@@ -206,46 +206,15 @@ def serialize_arrow_unfriendly_in_row(
 
 
 def extract_last_json(text: str) -> Optional[Dict[str, Any]]:
-    """Extract the last JSON object from *text*.
+    """Extract a JSON object from *text*.
 
-    First attempts to parse the entire string.  On failure, uses a regex to
-    locate all ``{…}`` blocks and tries each from the last one backwards.
-
-    Parameters
-    ----------
-    text:
-        Raw text that may contain one or more embedded JSON objects.
-
-    Returns
-    -------
-    dict | None
-        The parsed dict, or ``None`` if no valid JSON object was found.
+    Delegates to :func:`dagspaces.common.json_extraction.extract_last_json`
+    (the canonical, well-tested extractor).  Kept here for backward
+    compatibility — new code should import from ``json_extraction`` directly.
     """
-    try:
-        if not isinstance(text, str) or not text.strip():
-            return None
-        try:
-            obj = json.loads(text)
-            if isinstance(obj, dict):
-                return obj
-        except Exception:
-            pass
-        try:
-            import re as _re
+    from dagspaces.common.json_extraction import extract_last_json as _impl
 
-            snippets = _re.findall(r"\{[\s\S]*\}", text)
-            for snip in reversed(snippets or []):
-                try:
-                    obj = json.loads(snip)
-                    if isinstance(obj, dict):
-                        return obj
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        return None
-    except Exception:
-        return None
+    return _impl(text)
 
 
 def sanitize_for_json(value: Any) -> Any:

@@ -1,15 +1,9 @@
 """Shared utilities for historical_norms stage implementations."""
 
 import json
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Sequence
 
 import pandas as pd
-
-try:
-    from json_repair import repair_json
-    _JSON_REPAIR_OK = True
-except ImportError:
-    _JSON_REPAIR_OK = False
 
 
 def announce_prompt(stage_name: str, prompt_cfg: Any, system_prompt: str) -> str:
@@ -36,40 +30,18 @@ def announce_prompt(stage_name: str, prompt_cfg: Any, system_prompt: str) -> str
 
 
 def extract_json(gen_text: str) -> tuple[dict | None, str | None]:
-    """Parse JSON from LLM output, with optional repair.
+    """Parse JSON from LLM output, with ``json_repair`` fallback.
 
-    Extracts the outermost ``{…}`` block from *gen_text*, parses it with
-    :func:`json.loads`, and falls back to ``json_repair`` if available.
+    Delegates to :func:`dagspaces.common.json_extraction.extract_json_from_text`
+    with ``repair=True`` (matching this function's historical behavior of
+    always attempting ``json_repair`` when installed).
 
     Returns ``(parsed_dict, None)`` on success or ``(None, error_message)``
     on failure.
     """
-    obj = None
-    parse_error = None
-    json_text = gen_text
+    from dagspaces.common.json_extraction import extract_json_from_text
 
-    if "{" in gen_text:
-        start = gen_text.find("{")
-        end = gen_text.rfind("}") + 1
-        if start < end:
-            json_text = gen_text[start:end]
-
-    try:
-        obj = json.loads(json_text)
-    except json.JSONDecodeError as e:
-        parse_error = e
-        if _JSON_REPAIR_OK:
-            try:
-                repaired = repair_json(json_text, return_objects=True)
-                if isinstance(repaired, dict):
-                    obj = repaired
-                    parse_error = None
-            except Exception as repair_err:
-                parse_error = f"JSON repair failed: {repair_err}"
-        else:
-            parse_error = str(parse_error)
-
-    return obj, parse_error
+    return extract_json_from_text(gen_text, repair=True)
 
 
 # Columns that commonly cause Arrow serialization failures across all stages.

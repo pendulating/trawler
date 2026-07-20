@@ -17,22 +17,17 @@ from ..prompts import normalize_yes_no
 
 def _extract_yes_no_json(text: str) -> str | None:
     """Try to extract Yes/No from a structured JSON response."""
-    text = str(text).strip()
-    try:
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            obj = json.loads(text[start:end])
-            if isinstance(obj, dict):
-                answer = obj.get("answer") or obj.get("has_secret_leaked")
-                if answer is not None:
-                    val = str(answer).strip().lower()
-                    if val in ("yes", "true"):
-                        return "yes"
-                    if val in ("no", "false"):
-                        return "no"
-    except (json.JSONDecodeError, TypeError):
-        pass
+    from dagspaces.common.json_extraction import extract_json_from_text
+
+    obj, _ = extract_json_from_text(str(text).strip())
+    if isinstance(obj, dict):
+        answer = obj.get("answer") or obj.get("has_secret_leaked")
+        if answer is not None:
+            val = str(answer).strip().lower()
+            if val in ("yes", "true"):
+                return "yes"
+            if val in ("no", "false"):
+                return "no"
     return None
 
 
@@ -192,7 +187,6 @@ def parse_helpfulness_responses(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with added columns: helpfulness_score, helpfulness_binary.
     """
-    import re
 
     df = df.copy()
 

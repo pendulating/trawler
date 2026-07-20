@@ -18,7 +18,6 @@ accuracy.
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Optional
 
@@ -31,18 +30,14 @@ _BOUNDED_LETTER = re.compile(r"\b([ABCD])\b")
 
 
 def _try_json_answer(response: str) -> Optional[str]:
+    from dagspaces.common.json_extraction import extract_json_from_text
+
     text = _strip_think_blocks(response).strip()
-    try:
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            obj = json.loads(text[start:end])
-            if isinstance(obj, dict):
-                a = str(obj.get("answer", "")).strip().upper()
-                if a in ("A", "B", "C", "D"):
-                    return a
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
+    obj, _ = extract_json_from_text(text)
+    if isinstance(obj, dict):
+        a = str(obj.get("answer", "")).strip().upper()
+        if a in ("A", "B", "C", "D"):
+            return a
     return None
 
 

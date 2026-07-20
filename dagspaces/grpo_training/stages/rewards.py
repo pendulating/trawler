@@ -20,10 +20,8 @@ import re
 from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
-from pydantic import ValidationError
 
 from dagspaces.common.vllm_inference import _strip_think_blocks
-from ..schemas import CICompletionResult
 
 # Reward for valid no-flow declarations (has_information_exchange=false,
 # empty flows).  Asymmetric based on gold labels from SFT data:
@@ -68,17 +66,10 @@ def _parse_completion(text: str) -> Optional[Dict[str, Any]]:
     """
     if not text:
         return None
-    obj = None
-    try:
-        obj = json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r'\{[\s\S]*\}', text)
-        if match:
-            try:
-                obj = json.loads(match.group())
-            except json.JSONDecodeError:
-                pass
-    if obj is None or not isinstance(obj, dict):
+    from dagspaces.common.json_extraction import extract_json_from_text
+
+    obj, _ = extract_json_from_text(text)
+    if obj is None:
         return None
 
     # --- Normalise flat SFT format → nested canonical format ---
@@ -784,7 +775,6 @@ class CompositeRewardFunction:
         # re-encode the same reference set on every call.
         self._source_context_embeddings: Dict[str, Any] = {}
         if context_embedding_model is not None and self.source_contexts:
-            import numpy as np
             for sid, ctx_list in self.source_contexts.items():
                 if ctx_list:
                     try:

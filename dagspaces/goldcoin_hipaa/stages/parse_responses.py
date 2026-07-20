@@ -7,7 +7,6 @@ Ported from GoldCoin/eval/parse_eval_result.py with improvements:
 
 from __future__ import annotations
 
-import json
 import re
 from typing import List, Optional, Tuple
 
@@ -124,16 +123,12 @@ def first_applicability_result(response: str) -> Optional[str]:
 
 def _try_json_classification(response: str) -> Optional[str]:
     """Try to extract classification from a structured JSON response."""
+    from dagspaces.common.json_extraction import extract_json_from_text
+
     text = _strip_think_blocks(response).strip()
-    try:
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            obj = json.loads(text[start:end])
-            if isinstance(obj, dict) and "classification" in obj:
-                return obj["classification"]
-    except (json.JSONDecodeError, TypeError):
-        pass
+    obj, _ = extract_json_from_text(text)
+    if isinstance(obj, dict) and "classification" in obj:
+        return obj["classification"]
     return None
 
 
@@ -220,7 +215,7 @@ def parse_responses(df: pd.DataFrame, task: str) -> pd.DataFrame:
     print(f"[parse_responses] Task={task}: {total} responses, "
           f"{unparseable} unparseable ({unparseable/total*100:.1f}%), "
           f"{empty} empty", flush=True)
-    print(f"[parse_responses] Prediction distribution:", flush=True)
+    print("[parse_responses] Prediction distribution:", flush=True)
     print(df["prediction"].value_counts().to_string(), flush=True)
 
     if unparseable_rate > 0.2:
