@@ -16,6 +16,7 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             JudgeLeakageBatchExportRunner,
             JudgeHelpfulnessBatchExportRunner,
             ComputeTrajectoryMetricsRunner,
+            CirlTrajectoryFinalizeAsyncRunner,
         )
 
         _STAGE_REGISTRY = {
@@ -29,5 +30,6 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             "judge_leakage_batch_export": JudgeLeakageBatchExportRunner(),
             "judge_helpfulness_batch_export": JudgeHelpfulnessBatchExportRunner(),
             "compute_trajectory_metrics": ComputeTrajectoryMetricsRunner(),
+            "cirl_finalize_async": CirlTrajectoryFinalizeAsyncRunner(),
         }
     return _STAGE_REGISTRY.copy()

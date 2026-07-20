@@ -1,0 +1,33 @@
+# @package _global_
+#
+# Finalize half of the async-judge trajectory flow. Run AFTER
+# cirl_trajectory_async has exported AND the sidecar has filled both
+# output.jsonl files (done.flag present). Reads from the same output_root
+# as the export pipeline — invoke with the same hydra.run.dir (eval_all's
+# finalize dispatch does this automatically):
+#
+#   python -m dagspaces.cirl_vignettes.cli pipeline=cirl_trajectory_async_finalize \
+#       hydra.run.dir=outputs/<RUN>
+defaults:
+  - /model: qwen2.5-7b/instruct
+  - override /hydra/launcher: slurm_monitor
+
+judge:
+  mode: async
+
+wandb:
+  phase: finalize
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/cirl_vignettes
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      finalize:
+        stage: cirl_finalize_async
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/compute_trajectory_metrics/metrics.parquet
+          metrics_json: outputs/compute_trajectory_metrics/metrics.json

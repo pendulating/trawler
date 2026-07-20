@@ -315,3 +315,61 @@ class ComputeTrajectoryMetricsRunner(StageRunner):
             outputs={"dataset": out_path, "metrics_json": metrics_json_path},
             metadata=run_metadata,
         )
+
+
+class CirlTrajectoryFinalizeAsyncRunner(StageRunner):
+    """Merge sidecar-filled judge outputs and compute trajectory metrics.
+
+    Async counterpart of the sync judge_leakage → judge_helpfulness →
+    compute_trajectory_metrics tail: reads
+    ``outputs/judge_{leakage,helpfulness}_batch/{pending,items}.parquet``
+    + ``output.jsonl`` from the pipeline ``output_root`` (filled by the
+    eval_all judge sidecar between export and finalize), aggregates
+    per-row leakage/helpfulness, and emits ``metrics.json`` +
+    ``metrics.parquet``. Raises loudly when an ``output.jsonl`` is
+    missing — that means the drain step never completed.
+    """
+
+    stage_name = "cirl_finalize_async"
+
+    def run(self, context: Any) -> StageResult:
+        from ..stages.finalize_async import finalize_trajectory_async
+
+        metrics_parquet_out = context.output_paths.get("dataset")
+        metrics_dir = (
+            os.path.dirname(metrics_parquet_out) if metrics_parquet_out else None
+        )
+
+        result = finalize_trajectory_async(
+            context.output_root, metrics_dir=metrics_dir,
+        )
+        combined = result["combined_df"]
+
+        thresholds, _ = sanity_overrides(context.cfg)
+        run_metadata: Dict[str, Any] = {
+            "rows": len(combined),
+            "metrics": result["metrics"],
+        }
+        # Same format-health gate as the sync compute_trajectory_metrics
+        # path — defaulted-zero rows must not be quoted as real rates.
+        if "agent_action_format_status" in combined.columns:
+            format_report = compute_format_health(
+                combined,
+                dagspace="cirl_vignettes",
+                stage="agent_action_format",
+                format_col="agent_action_format_status",
+                model=task_model_name(context.cfg),
+                id_col="record_id" if "record_id" in combined.columns else None,
+                raw_response_col="final_action_generated"
+                    if "final_action_generated" in combined.columns else None,
+                thresholds=thresholds,
+            )
+            log_sanity_to_context(context, format_report, metadata=run_metadata)
+
+        return StageResult(
+            outputs={
+                "dataset": result["metrics_parquet"],
+                "metrics_json": result["metrics_json"],
+            },
+            metadata=run_metadata,
+        )
