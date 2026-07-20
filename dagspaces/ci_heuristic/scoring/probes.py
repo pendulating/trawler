@@ -11,7 +11,7 @@ Known limitation: lexicons under-detect paraphrase; rates are lower bounds.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 PROBES = ["a_context_place", "b_change_as_violation", "c_purpose_in_tp",
            "d_premature_evaluation", "e_violation_auto_reject", "f_incompleteness_blindness"]
@@ -49,7 +49,7 @@ _PURPOSE_RE = re.compile(
 
 def _texts_of(node: Any) -> str:
     """Flatten an artifact (dict/list/str) into one lowercase text blob."""
-    parts: List[str] = []
+    parts: list[str] = []
 
     def walk(x: Any) -> None:
         if isinstance(x, dict):
@@ -67,7 +67,7 @@ def _texts_of(node: Any) -> str:
     return " ".join(parts)
 
 
-def probe_a_context_place(state: Dict[str, Any]) -> Optional[bool]:
+def probe_a_context_place(state: dict[str, Any]) -> bool | None:
     """(a) Step 2 names a platform or place as the prevailing context."""
     s2 = state.get("s2") or {}
     domain = str(s2.get("domain", "")).strip().lower()
@@ -77,7 +77,7 @@ def probe_a_context_place(state: Dict[str, Any]) -> Optional[bool]:
     return bool(tokens & _PLATFORM_BRANDS) or bool(tokens & _PLACE_WORDS)
 
 
-def probe_b_change_as_violation(state: Dict[str, Any]) -> Optional[bool]:
+def probe_b_change_as_violation(state: dict[str, Any]) -> bool | None:
     """(b) Step 6 fires 'yes' without step-5 entrenchment support: no norms,
     no departures recorded, or all located norms marked incomplete."""
     s6 = state.get("s6") or {}
@@ -91,7 +91,7 @@ def probe_b_change_as_violation(state: Dict[str, Any]) -> Optional[bool]:
     return (not has_departure) or all_incomplete
 
 
-def probe_c_purpose_in_tp(state: Dict[str, Any]) -> Optional[bool]:
+def probe_c_purpose_in_tp(state: dict[str, Any]) -> bool | None:
     """(c) Step 4 TPs contain explicit purpose-language (purpose belongs in
     step 2 per Nissenbaum/Kumar)."""
     tps = (state.get("s4") or {}).get("transmission_principles") or []
@@ -100,13 +100,13 @@ def probe_c_purpose_in_tp(state: Dict[str, Any]) -> Optional[bool]:
     return any(_PURPOSE_RE.search(str(tp.get("principle", ""))) for tp in tps if isinstance(tp, dict))
 
 
-def sentiment_leakage(state: Dict[str, Any], steps: List[str] = ("s1", "s2", "s3", "s4")) -> Dict[str, Any]:
+def sentiment_leakage(state: dict[str, Any], steps: list[str] = ("s1", "s2", "s3", "s4")) -> dict[str, Any]:
     """Evaluative language in descriptive steps (the firewall's detector).
 
     s5 is excluded by default: 'points of departure' legitimately uses
     change-language, and norms may quote evaluative expectations.
     """
-    hits: Dict[str, List[str]] = {}
+    hits: dict[str, list[str]] = {}
     for step in steps:
         text = _texts_of(state.get(step) or {})
         found = sorted(set(m.group(0).lower() for m in _EVALUATIVE_RE.finditer(text)))
@@ -115,7 +115,7 @@ def sentiment_leakage(state: Dict[str, Any], steps: List[str] = ("s1", "s2", "s3
     return {"leaked": bool(hits), "hits": hits}
 
 
-def probe_d_premature_evaluation(state: Dict[str, Any]) -> Optional[bool]:
+def probe_d_premature_evaluation(state: dict[str, Any]) -> bool | None:
     """(d) Premature evaluation / stopping at step 6: sentiment leakage in
     the descriptive steps OR degenerate steps 7-8 after a 'yes' at step 6."""
     leak = sentiment_leakage(state)["leaked"]
@@ -129,7 +129,7 @@ def probe_d_premature_evaluation(state: Dict[str, Any]) -> Optional[bool]:
     return leak or degenerate_tail
 
 
-def probe_e_violation_auto_reject(state: Dict[str, Any]) -> Optional[bool]:
+def probe_e_violation_auto_reject(state: dict[str, Any]) -> bool | None:
     """(e) Step 9 rejects with no negative weighing in steps 7-8."""
     s9 = state.get("s9") or {}
     if s9.get("decision") != "reject":
@@ -142,7 +142,7 @@ def probe_e_violation_auto_reject(state: Dict[str, Any]) -> Optional[bool]:
     return not (any_harm or any_undermines)
 
 
-def probe_f_incompleteness_blindness(state: Dict[str, Any], gold_prima_facie: str) -> Optional[bool]:
+def probe_f_incompleteness_blindness(state: dict[str, Any], gold_prima_facie: str) -> bool | None:
     """(f) Forced yes/no verdict on a norm-incomplete case (Tier B only)."""
     if gold_prima_facie != "incomplete_norms":
         return None
@@ -152,7 +152,7 @@ def probe_f_incompleteness_blindness(state: Dict[str, Any], gold_prima_facie: st
     return verdict != "incomplete_norms"
 
 
-def run_probes(state: Dict[str, Any], gold_prima_facie: str = "") -> Dict[str, Optional[bool]]:
+def run_probes(state: dict[str, Any], gold_prima_facie: str = "") -> dict[str, bool | None]:
     """All probes on one traversal state. None = not applicable/assessable."""
     return {
         "a_context_place": probe_a_context_place(state),
@@ -164,9 +164,9 @@ def run_probes(state: Dict[str, Any], gold_prima_facie: str = "") -> Dict[str, O
     }
 
 
-def probe_rates(per_case_flags: List[Dict[str, Optional[bool]]]) -> Dict[str, Dict[str, Any]]:
+def probe_rates(per_case_flags: list[dict[str, bool | None]]) -> dict[str, dict[str, Any]]:
     """Aggregate per-case flags into the failure-distribution profile."""
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for probe in PROBES:
         applicable = [f[probe] for f in per_case_flags if f.get(probe) is not None]
         out[probe] = {

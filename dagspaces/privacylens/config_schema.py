@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional
 import os
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
 
-def _to_dict(obj: Any) -> Dict[str, Any]:
+def _to_dict(obj: Any) -> dict[str, Any]:
     if isinstance(obj, DictConfig):
         return OmegaConf.to_container(obj, resolve=True)  # type: ignore[return-value]
     if isinstance(obj, dict):
@@ -44,7 +45,7 @@ class ArtifactSpec:
     optional: bool = False
 
     @classmethod
-    def from_config(cls, key: str, value: Any) -> "ArtifactSpec":
+    def from_config(cls, key: str, value: Any) -> ArtifactSpec:
         if isinstance(value, str):
             artifact_path = value
             art_type = _infer_artifact_type(artifact_path)
@@ -72,18 +73,18 @@ class OutputSpec(ArtifactSpec):
 class PipelineNodeSpec:
     key: str
     stage: str
-    depends_on: List[str] = field(default_factory=list)
-    inputs: Dict[str, str] = field(default_factory=dict)
-    outputs: Dict[str, OutputSpec] = field(default_factory=dict)
-    overrides: Dict[str, Any] = field(default_factory=dict)
-    launcher: Optional[str] = None
-    parallel_group: Optional[str] = None
+    depends_on: list[str] = field(default_factory=list)
+    inputs: dict[str, str] = field(default_factory=dict)
+    outputs: dict[str, OutputSpec] = field(default_factory=dict)
+    overrides: dict[str, Any] = field(default_factory=dict)
+    launcher: str | None = None
+    parallel_group: str | None = None
     max_attempts: int = 1
     retry_backoff_s: float = 0.0
-    wandb_suffix: Optional[str] = None
+    wandb_suffix: str | None = None
 
     @classmethod
-    def from_config(cls, key: str, value: Any) -> "PipelineNodeSpec":
+    def from_config(cls, key: str, value: Any) -> PipelineNodeSpec:
         data = _to_dict(value)
         stage = str(data.get("stage")) if data.get("stage") is not None else None
         if not stage:
@@ -96,7 +97,7 @@ class PipelineNodeSpec:
         inputs_val = data.get("inputs", {})
         inputs = {str(k): str(v) for k, v in _to_dict(inputs_val).items()} if inputs_val else {}
         outputs_val = data.get("outputs", {})
-        outputs: Dict[str, OutputSpec] = {}
+        outputs: dict[str, OutputSpec] = {}
         for out_key, out_value in _to_dict(outputs_val).items():
             outputs[str(out_key)] = OutputSpec.from_config(str(out_key), out_value)
         overrides_val = data.get("overrides", {})
@@ -123,20 +124,20 @@ class PipelineNodeSpec:
 
 @dataclass
 class PipelineGraphSpec:
-    sources: Dict[str, SourceSpec] = field(default_factory=dict)
-    nodes: Dict[str, PipelineNodeSpec] = field(default_factory=dict)
-    output_root: Optional[str] = None
+    sources: dict[str, SourceSpec] = field(default_factory=dict)
+    nodes: dict[str, PipelineNodeSpec] = field(default_factory=dict)
+    output_root: str | None = None
     allow_partial: bool = False
 
-    def topological_order(self) -> List[str]:
-        indegree: Dict[str, int] = {node_id: 0 for node_id in self.nodes.keys()}
+    def topological_order(self) -> list[str]:
+        indegree: dict[str, int] = {node_id: 0 for node_id in self.nodes.keys()}
         for node in self.nodes.values():
             for dep in node.depends_on:
                 if dep not in self.nodes:
                     raise ValueError(f"Node '{node.key}' depends on unknown node '{dep}'")
                 indegree[node.key] += 1
         ready = [node_id for node_id, degree in indegree.items() if degree == 0]
-        ordered: List[str] = []
+        ordered: list[str] = []
         while ready:
             current = ready.pop(0)
             ordered.append(current)
@@ -156,7 +157,7 @@ def load_pipeline_graph(cfg: DictConfig) -> PipelineGraphSpec:
         raise ValueError("Configuration is missing required 'pipeline' section")
     pipeline_section = cfg.pipeline
     sources_cfg = getattr(pipeline_section, "sources", {})
-    sources: Dict[str, SourceSpec] = {}
+    sources: dict[str, SourceSpec] = {}
     for src_key, src_val in _to_dict(sources_cfg).items():
         sources[src_key] = SourceSpec.from_config(src_key, src_val)
     graph_cfg = getattr(pipeline_section, "graph", None)
@@ -165,7 +166,7 @@ def load_pipeline_graph(cfg: DictConfig) -> PipelineGraphSpec:
     nodes_cfg = getattr(graph_cfg, "nodes", None)
     if nodes_cfg is None:
         raise ValueError("'pipeline.graph.nodes' must be defined in the configuration")
-    nodes: Dict[str, PipelineNodeSpec] = {}
+    nodes: dict[str, PipelineNodeSpec] = {}
     for node_key, node_val in _to_dict(nodes_cfg).items():
         nodes[node_key] = PipelineNodeSpec.from_config(node_key, node_val)
     output_root = getattr(pipeline_section, "output_root", None)
@@ -196,7 +197,7 @@ def resolve_output_root(graph_spec: PipelineGraphSpec, cfg: DictConfig) -> str:
     return os.path.abspath(os.getcwd())
 
 
-def iter_topologically(nodes: Dict[str, PipelineNodeSpec]) -> Iterable[PipelineNodeSpec]:
+def iter_topologically(nodes: dict[str, PipelineNodeSpec]) -> Iterable[PipelineNodeSpec]:
     graph = PipelineGraphSpec(nodes=nodes)
     for node_id in graph.topological_order():
         yield nodes[node_id]

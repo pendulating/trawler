@@ -7,7 +7,6 @@ Gutenberg cache and the legacy fetch stage can share one implementation.
 from __future__ import annotations
 
 import re
-from typing import List
 
 START_MARKERS = (
     r"\*\*\* START OF THIS PROJECT GUTENBERG EBOOK .* \*\*\*",
@@ -42,7 +41,7 @@ def clean_gutenberg_boilerplate(text: str) -> str:
     return text.strip()
 
 
-def chunk_text(text: str, chunk_size: int = 6000, overlap: int = 1000) -> List[str]:
+def chunk_text(text: str, chunk_size: int = 6000, overlap: int = 1000) -> list[str]:
     """Paragraph-aware chunking with character overlap; matches the legacy stage.
 
     Invariant: no emitted chunk exceeds *chunk_size* characters.  Content
@@ -52,7 +51,7 @@ def chunk_text(text: str, chunk_size: int = 6000, overlap: int = 1000) -> List[s
     holds content beyond its overlap seed (no duplicate-only chunks).
     """
     paragraphs = re.split(r"\n\s*\n", text)
-    chunks: List[str] = []
+    chunks: list[str] = []
     current = ""
     seed_len = 0  # length of the overlap seed at the head of `current`
 

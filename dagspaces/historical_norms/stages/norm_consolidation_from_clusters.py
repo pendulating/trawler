@@ -8,20 +8,21 @@
 # embeddings are computed offline (e.g. via scripts/recluster_norms_qwen3emb.py).
 
 import json
-import pandas as pd
-import numpy as np
-from typing import Any, Dict, List
+from typing import Any
 
+import numpy as np
+import pandas as pd
 from omegaconf import OmegaConf
+
 from dagspaces.common.vllm_inference import run_vllm_inference
 
 from ._utils import extract_json
 from .norm_consolidation import (
     _CONSOLIDATED_COLUMNS,
     _build_cluster_df,
-    _singleton_result,
-    _merged_result,
     _fallback_result,
+    _merged_result,
+    _singleton_result,
 )
 
 
@@ -94,7 +95,7 @@ def run_norm_consolidation_from_clusters_stage(
     print(f"[norm_consol_clusters] {len(singletons)} singletons (pass-through), "
           f"{len(multi)} multi-norm clusters (LLM merge)")
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
 
     # Pass-through singletons
     for _, crow in singletons.iterrows():
@@ -131,7 +132,7 @@ def run_norm_consolidation_from_clusters_stage(
 
         _MAX_MEMBERS_PER_PROMPT = 25
 
-        def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+        def _preprocess(row: dict[str, Any]) -> dict[str, Any]:
             result_row = dict(row)
             member_norms_json = row["member_norms_json"]
             cluster_size = row["cluster_size"]
@@ -159,7 +160,7 @@ def run_norm_consolidation_from_clusters_stage(
             result_row["sampling_params"] = sampling_params
             return result_row
 
-        def _postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+        def _postprocess(row: dict[str, Any]) -> dict[str, Any]:
             result_row = dict(row)
             result_row.pop("messages", None)
             result_row.pop("sampling_params", None)

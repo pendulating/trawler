@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import pandas as pd
 
 from .benchmark_adapters import normalize_benchmark_frame
@@ -11,11 +9,11 @@ from .benchmark_adapters import normalize_benchmark_frame
 
 def load_dataset(
     hf_dataset: str = "SALT-NLP/PrivacyLens",
-    hf_config: Optional[str] = None,
+    hf_config: str | None = None,
     split: str = "train",
     max_examples: int = 0,
-    hf_token: Optional[str] = None,
-    sample_n: Optional[int] = None,
+    hf_token: str | None = None,
+    sample_n: int | None = None,
 ) -> pd.DataFrame:
     """Load the PrivacyLens dataset from HuggingFace.
 

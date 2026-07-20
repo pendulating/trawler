@@ -17,7 +17,7 @@ audit whether the headline number rested on a parseable majority.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
@@ -30,7 +30,7 @@ def _acc(correct: int, total: int) -> float:
     return round(correct / total, 6) if total else 0.0
 
 
-def compute_metrics(df: pd.DataFrame) -> Dict[str, Any]:
+def compute_metrics(df: pd.DataFrame) -> dict[str, Any]:
     """Return the MMLU metric dict.
 
     Args:
@@ -69,7 +69,7 @@ def compute_metrics(df: pd.DataFrame) -> Dict[str, Any]:
 
     # ── by category (STEM / humanities / social_sciences / other) ────
     df_parseable["category"] = df_parseable["subject"].apply(category_for)
-    cat_breakdown: Dict[str, Dict[str, Any]] = {}
+    cat_breakdown: dict[str, dict[str, Any]] = {}
     for cat in CATEGORIES:
         sub = df_parseable[df_parseable["category"] == cat]
         n = len(sub)
@@ -88,7 +88,7 @@ def compute_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     em.emit_raw("by_category", cat_breakdown)
 
     # ── per subject (57 rows) ────────────────────────────────────────
-    per_subject: Dict[str, Dict[str, Any]] = {}
+    per_subject: dict[str, dict[str, Any]] = {}
     for subj, sub in df_parseable.groupby("subject"):
         n = len(sub)
         n_correct = int(sub["is_correct"].sum())
@@ -105,9 +105,9 @@ def compute_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     return em.to_dict()
 
 
-def metrics_to_dataframe(metrics: Dict[str, Any]) -> pd.DataFrame:
+def metrics_to_dataframe(metrics: dict[str, Any]) -> pd.DataFrame:
     """Flatten metrics dict into a single-row DataFrame for parquet storage."""
-    flat: Dict[str, Any] = {}
+    flat: dict[str, Any] = {}
     for k, v in metrics.items():
         if isinstance(v, dict):
             flat[k] = json.dumps(v, default=str)

@@ -4,20 +4,24 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
-from dagspaces.common.runners.base import StageRunner
-from dagspaces.common.orchestrator import StageResult
 from dagspaces.common.eval_sanity import (
     compute_format_health,
     compute_judge_health,
     compute_parse_health,
 )
+from dagspaces.common.orchestrator import StageResult
+from dagspaces.common.runners.base import StageRunner
 from dagspaces.common.runners.sanity import (
     log_sanity_to_context as _log_sanity,
+)
+from dagspaces.common.runners.sanity import (
     sanity_overrides as _sanity_overrides,
+)
+from dagspaces.common.runners.sanity import (
     task_model_name as _model_name,
 )
 
@@ -136,7 +140,7 @@ class QAProbeInferenceRunner(StageRunner):
             refusal_patterns=patterns,
             thresholds=thresholds,
         )
-        metadata: Dict[str, Any] = {"rows": len(result_df)}
+        metadata: dict[str, Any] = {"rows": len(result_df)}
         _log_sanity(context, report, metadata=metadata)
         return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
@@ -194,7 +198,7 @@ class LeakageJudgeInferenceRunner(StageRunner):
             refusal_patterns=patterns,
             thresholds=thresholds,
         )
-        metadata: Dict[str, Any] = {"rows": len(result_df)}
+        metadata: dict[str, Any] = {"rows": len(result_df)}
         _log_sanity(context, report, metadata=metadata)
         return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
@@ -231,7 +235,7 @@ class HelpfulnessJudgeInferenceRunner(StageRunner):
             refusal_patterns=patterns,
             thresholds=thresholds,
         )
-        metadata: Dict[str, Any] = {"rows": len(result_df)}
+        metadata: dict[str, Any] = {"rows": len(result_df)}
         _log_sanity(context, report, metadata=metadata)
         return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
@@ -342,7 +346,7 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
             thresholds=thresholds,
         )
 
-        outputs: Dict[str, str] = {
+        outputs: dict[str, str] = {
             "metrics_json": result["metrics_json"],
         }
         # If the pipeline declared a `dataset` output, point it at the
@@ -353,7 +357,7 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
         leak_metrics = result["metrics"].get("leakage", {}) or {}
         help_metrics = result["metrics"].get("helpfulness", {}) or {}
         adj_metrics = result["metrics"].get("adjusted_leakage", {}) or {}
-        metadata: Dict[str, Any] = {
+        metadata: dict[str, Any] = {
             "rows": len(result["leakage_df"]),
             "leakage": result["leakage_meta"],
             "helpfulness": result["helpfulness_meta"],
@@ -389,7 +393,7 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
         try:
             if context.logger is not None:
                 m = result["metrics"]
-                wb_metrics: Dict[str, Any] = {}
+                wb_metrics: dict[str, Any] = {}
                 qa = m.get("qa_probing") or {}
                 leak = m.get("leakage") or {}
                 helpf = m.get("helpfulness") or {}
@@ -674,7 +678,7 @@ class ComputeMetricsRunner(StageRunner):
             raw_response_col="generated_action",
             thresholds=thresholds,
         )
-        run_metadata: Dict[str, Any] = {"rows": len(metrics_df), "metrics": metrics}
+        run_metadata: dict[str, Any] = {"rows": len(metrics_df), "metrics": metrics}
         _log_sanity(context, format_report, metadata=run_metadata)
 
         return StageResult(

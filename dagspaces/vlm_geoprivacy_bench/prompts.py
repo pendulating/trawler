@@ -6,7 +6,6 @@ Ported from VLM-GeoPrivacyBench/src/prompts.py and VLM-GeoPrivacyBench/src/utils
 from __future__ import annotations
 
 import json
-from typing import List, Tuple
 
 from dagspaces.common.vllm_inference import _strip_think_blocks
 
@@ -147,7 +146,7 @@ def prepare_question_prompt(
     is_free_form: bool,
     include_heuristics: bool,
     enforce_format: bool = True,
-) -> Tuple[str, List[str]]:
+) -> tuple[str, list[str]]:
     """Build system prompt and user prompt parts for VLM-GeoPrivacyBench.
 
     Returns:
@@ -155,7 +154,7 @@ def prepare_question_prompt(
         to be concatenated into the user message.
     """
     sys_prompt = SYS_MSG.get(mode.split("-")[0], "You are a helpful assistant.")
-    usr_prompts: List[str] = []
+    usr_prompts: list[str] = []
 
     if is_free_form:
         usr_prompts.append(INST_FREE_FORM)
@@ -179,7 +178,7 @@ def prepare_question_prompt(
     return sys_prompt, usr_prompts
 
 
-def parse_answers(generated: str, free_form: bool) -> List[str]:
+def parse_answers(generated: str, free_form: bool) -> list[str]:
     """Parse model-generated text into per-question answer labels.
 
     For MCQ: returns list of 7 single-letter labels (or 'N/A').
@@ -203,7 +202,7 @@ def parse_answers(generated: str, free_form: bool) -> List[str]:
         pass
 
     # Legacy line-based parsing
-    answers: List[str] = []
+    answers: list[str] = []
     generated = generated.replace("*", "")
 
     for i in range(1, NUM_QUESTIONS + 1):

@@ -6,10 +6,10 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
     global _STAGE_REGISTRY
     if _STAGE_REGISTRY is None:
         from .eval_stages import (
-            LoadDatasetRunner,
-            LLMInferenceRunner,
-            ParseResponsesRunner,
             ComputeMetricsRunner,
+            LLMInferenceRunner,
+            LoadDatasetRunner,
+            ParseResponsesRunner,
         )
 
         _STAGE_REGISTRY = {

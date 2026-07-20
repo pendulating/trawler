@@ -6,9 +6,9 @@ from text. Separate from the IG 2.0 schemas in schema.py.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Literal
-from pydantic import BaseModel, Field
+from typing import Literal
 
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Reasoning stage schemas
@@ -67,7 +67,7 @@ class CIReasoningList(BaseModel):
             "monologue, or action without information transfer."
         ),
     )
-    flows: List[CIReasoningEntry] = Field(
+    flows: list[CIReasoningEntry] = Field(
         ...,
         description=(
             "Information flows identified in the text. "
@@ -88,7 +88,7 @@ class CIReasoningList(BaseModel):
 
 class InformationFlowTuple(BaseModel):
     """Nissenbaum's 5-component CI information flow tuple."""
-    subject: Optional[str] = Field(
+    subject: str | None = Field(
         None,
         description="The individual about whom information pertains (may be the same as sender)",
     )
@@ -121,7 +121,7 @@ class ContextualIntegrityFlow(BaseModel):
         ...,
         description="Whether the flow is treated as appropriate or inappropriate within its context",
     )
-    norms_invoked: List[str] = Field(
+    norms_invoked: list[str] = Field(
         default_factory=list,
         description="Explicit or implicit norms that govern the appropriateness of this flow",
     )
@@ -198,7 +198,7 @@ class RazNormTuple(BaseModel):
             "NEVER reference specific characters or scene-specific plot events."
         ),
     )
-    condition_of_application: Optional[str] = Field(
+    condition_of_application: str | None = Field(
         None,
         description=(
             "The recurring social circumstances under which the norm applies. "
@@ -245,7 +245,7 @@ class PrescriptiveNormExtraction(BaseModel):
             "concealment, or withholding of information between agents"
         ),
     )
-    information_flow_note: Optional[str] = Field(
+    information_flow_note: str | None = Field(
         None,
         description=(
             "If governs_information_flow is true, a brief CI-vocabulary "
@@ -269,7 +269,7 @@ class PrescriptiveNormExtraction(BaseModel):
 
 class PrescriptiveNormExtractionResult(BaseModel):
     """Top-level extraction output for Raz norms from prescriptive texts."""
-    norms: List[PrescriptiveNormExtraction] = Field(
+    norms: list[PrescriptiveNormExtraction] = Field(
         ...,
         description="All extracted norms (Raz anatomy) from the text",
     )
@@ -293,7 +293,7 @@ class ConsolidatedNormTuple(BaseModel):
         ...,
         description="The action prescribed or proscribed, merged into a single verb phrase",
     )
-    condition_of_application: Optional[str] = Field(
+    condition_of_application: str | None = Field(
         None,
         description="The broadest condition satisfied by all cluster members, or null",
     )
@@ -305,7 +305,7 @@ class AbstractionMapEntry(BaseModel):
         ...,
         description="The canonical (merged) term chosen for this component",
     )
-    originals: List[str] = Field(
+    originals: list[str] = Field(
         ...,
         description="The original terms from cluster members that were abstracted",
     )
@@ -335,11 +335,11 @@ class ConsolidatedNormResult(BaseModel):
         ...,
         description="Whether the canonical norm regulates information exchange",
     )
-    information_flow_note: Optional[str] = Field(
+    information_flow_note: str | None = Field(
         None,
         description="CI-vocabulary description if governs_information_flow is true",
     )
-    abstraction_map: Optional[Dict[str, AbstractionMapEntry]] = Field(
+    abstraction_map: dict[str, AbstractionMapEntry] | None = Field(
         None,
         description=(
             "Map of Raz components where abstraction occurred. "
@@ -400,7 +400,7 @@ class RazNormReasoningList(BaseModel):
     Replaces CIReasoningList / NormReasoningList for prescriptive-text
     pipelines that use Raz's anatomy of norms.
     """
-    norms: List[RazNormReasoning] = Field(
+    norms: list[RazNormReasoning] = Field(
         ...,
         description=(
             "Norms identified in the text. "
@@ -447,7 +447,7 @@ class RoleAbstractedNorm(BaseModel):
             "names or plot-specific references. Must be a generalizable verb phrase."
         ),
     )
-    condition_of_application: Optional[str] = Field(
+    condition_of_application: str | None = Field(
         None,
         description=(
             "The condition rewritten to remove character names, place names, "

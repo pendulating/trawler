@@ -10,10 +10,8 @@ appear in every published MMLU leaderboard.
 
 from __future__ import annotations
 
-from typing import Dict
-
 #: subject string (as it appears on cais/mmlu) → canonical category name.
-SUBJECT_CATEGORY: Dict[str, str] = {
+SUBJECT_CATEGORY: dict[str, str] = {
     # ── STEM (19) ─────────────────────────────────────────────────────
     "abstract_algebra": "STEM",
     "anatomy": "STEM",

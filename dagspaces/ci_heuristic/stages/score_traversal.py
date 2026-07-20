@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 
@@ -21,21 +21,21 @@ from ..scoring.consistency import check_entailment
 from ..scoring.coverage import score_factor_coverage
 from ..scoring.extraction import score_vs_tier_a, score_vs_tier_b
 from ..scoring.prima_facie import score_prima_facie
-from ..scoring.probes import PROBES, probe_rates, run_probes, sentiment_leakage
+from ..scoring.probes import probe_rates, run_probes, sentiment_leakage
 
 logger = logging.getLogger(__name__)
 
 EXTRACTION_PARAMS = ["senders", "recipients", "subjects", "information_types", "transmission_principles"]
 
 
-def _reconstruct_states(traverse_df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
+def _reconstruct_states(traverse_df: pd.DataFrame) -> dict[str, dict[str, Any]]:
     """case_id -> {step: artifact} from the long-format traverse output.
 
     Monolithic (L0/L1) rows: an L1 artifact is exploded into per-step keys
     (s1_flows -> s1, ...); L0 verdicts map onto a pseudo-s9 for probe/
     consistency purposes only.
     """
-    states: Dict[str, Dict[str, Any]] = {}
+    states: dict[str, dict[str, Any]] = {}
     for _, row in traverse_df.iterrows():
         cid = str(row["case_id"])
         artifact = json.loads(row["artifact_json"])
@@ -56,20 +56,20 @@ def _reconstruct_states(traverse_df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
     return states
 
 
-def score_traversals(traverse_df: pd.DataFrame, cases_df: pd.DataFrame) -> Dict[str, Any]:
+def score_traversals(traverse_df: pd.DataFrame, cases_df: pd.DataFrame) -> dict[str, Any]:
     """Full no-judge scoring pass. Returns (metrics dict, per-case DataFrame)."""
     states = _reconstruct_states(traverse_df)
     cases = cases_df.set_index("case_id")
 
     em = MetricEmitter()
     em.emit_raw("n_cases", len(states))
-    per_case_rows: List[Dict[str, Any]] = []
-    probe_flags: List[Dict[str, Any]] = []
-    tier_b_pf_cases: List[Dict[str, Any]] = []
-    tier_a_extraction: List[Dict[str, Any]] = []
-    tier_b_extraction_hits: Dict[str, List[int]] = {}
-    coverage_scores: List[Dict[str, Any]] = []
-    entailment_results: List[Dict[str, Any]] = []
+    per_case_rows: list[dict[str, Any]] = []
+    probe_flags: list[dict[str, Any]] = []
+    tier_b_pf_cases: list[dict[str, Any]] = []
+    tier_a_extraction: list[dict[str, Any]] = []
+    tier_b_extraction_hits: dict[str, list[int]] = {}
+    coverage_scores: list[dict[str, Any]] = []
+    entailment_results: list[dict[str, Any]] = []
 
     for cid, state in states.items():
         if cid not in cases.index:
@@ -85,7 +85,7 @@ def score_traversals(traverse_df: pd.DataFrame, cases_df: pd.DataFrame) -> Dict[
         entail = check_entailment(state)
         entailment_results.append(entail)
 
-        row: Dict[str, Any] = {
+        row: dict[str, Any] = {
             "case_id": cid, "tier": tier,
             "sentiment_leaked": leak["leaked"],
             "leak_hits": json.dumps(leak["hits"]),

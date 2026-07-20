@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Probing question suffix (shared across levels)
@@ -39,7 +39,7 @@ THINK_SUFFIX = (
 # Seed-level probing (abstract CI parameters only)
 # ---------------------------------------------------------------------------
 
-def build_seed_prompt(row: Dict[str, Any], think: bool = False) -> str:
+def build_seed_prompt(row: dict[str, Any], think: bool = False) -> str:
     """Build a seed-level probing prompt matching the paper exactly.
 
     Template: 'Is it acceptable for {sender_name}, {sender}, to share
@@ -59,7 +59,7 @@ def build_seed_prompt(row: Dict[str, Any], think: bool = False) -> str:
 # Vignette-level probing (narrative context + concrete names)
 # ---------------------------------------------------------------------------
 
-def build_vignette_prompt(row: Dict[str, Any], think: bool = False) -> str:
+def build_vignette_prompt(row: dict[str, Any], think: bool = False) -> str:
     """Build a vignette-level probing prompt matching the paper exactly.
 
     Template: '{story}\\nIs it acceptable for {sender_concrete} to share
@@ -82,7 +82,7 @@ def build_vignette_prompt(row: Dict[str, Any], think: bool = False) -> str:
 # Dispatcher
 # ---------------------------------------------------------------------------
 
-def build_prompt_for_row(row: Dict[str, Any], think: bool = False) -> str:
+def build_prompt_for_row(row: dict[str, Any], think: bool = False) -> str:
     """Build the probing prompt for a row based on its probing_level."""
     level = row.get("probing_level", "seed")
     if level == "vignette":
@@ -97,6 +97,8 @@ def build_prompt_for_row(row: Dict[str, Any], think: bool = False) -> str:
 # full agent system prompt with tool specifications via toolemu/procoder,
 # then appends the execution block with the trajectory.
 
+from procoder.functional import add_refnames, format_multiple_prompts
+
 from dagspaces.common.toolemu.prompts.agent import (
     AGENT_DUMMY_VARS,
     AGENT_NAIVE_PROMPT,
@@ -105,7 +107,6 @@ from dagspaces.common.toolemu.prompts.agent import (
     AGENT_PRIVACY_ENHANCED_SYSTEM_INFO,
 )
 from dagspaces.common.toolemu.tools import get_toolkits_by_names
-from procoder.functional import add_refnames, format_multiple_prompts
 
 # Think-format task suffix (from get_final_action.py)
 _AGENT_TASK_THINK = (
@@ -135,7 +136,7 @@ _AGENT_TASK_THINK = (
 
 
 def build_agent_prompt(
-    row: Dict[str, Any],
+    row: dict[str, Any],
     prompt_type: str = "naive",
     think: bool = False,
 ) -> str:

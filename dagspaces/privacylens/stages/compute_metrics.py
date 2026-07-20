@@ -36,12 +36,11 @@ are still meaningful.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
 from dagspaces.common.metric_provenance import MetricEmitter
-
 
 # ---------------------------------------------------------------------------
 # Column conventions stamped by stages/llm_inference.py
@@ -136,7 +135,7 @@ def emit_qa_metrics(em: MetricEmitter, df: pd.DataFrame) -> None:
         n_total=n_parseable,
     )
 
-    per_axis: Dict[str, Any] = {}
+    per_axis: dict[str, Any] = {}
     for axis in sorted(df["_qa_axis"].unique()):
         mask = df["_qa_axis"] == axis
         axis_df = df[mask]
@@ -338,7 +337,7 @@ def compute_metrics(
     qa_df: pd.DataFrame,
     leakage_df: pd.DataFrame,
     helpfulness_df: pd.DataFrame | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Compute the full metrics dict for a PrivacyLens evaluation.
 
     Returns a dict with the conventional ``benchmark`` / ``qa_probing`` /
@@ -358,14 +357,14 @@ def compute_metrics(
     return em.to_dict()
 
 
-def metrics_to_dataframe(metrics: Dict[str, Any]) -> pd.DataFrame:
+def metrics_to_dataframe(metrics: dict[str, Any]) -> pd.DataFrame:
     """Flatten metrics dict into a single-row DataFrame for parquet storage.
 
     Both the primary (``*_among_parseable``) and audit
     (``*_overall_with_default_zero``) variants are surfaced as flat
     columns. ``agent_action_format_rate`` is the headline trust metric.
     """
-    flat: Dict[str, Any] = {"benchmark": metrics.get("benchmark", "PrivacyLens")}
+    flat: dict[str, Any] = {"benchmark": metrics.get("benchmark", "PrivacyLens")}
 
     qa = metrics.get("qa_probing", {}) or {}
     flat["qa_accuracy"] = qa.get("accuracy", 0.0)

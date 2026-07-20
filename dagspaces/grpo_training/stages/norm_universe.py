@@ -9,11 +9,10 @@ No consolidation step — embedding similarity replaces LLM merging.
 """
 
 import os
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 import pandas as pd
-
 
 # Instruction prefix for Qwen3-Embedding-8B (instruction-aware model)
 EMBED_INSTRUCTION = (
@@ -94,7 +93,7 @@ def run_norm_universe_stage(
     df: pd.DataFrame,
     cfg: Any,
     output_dir: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build per-book normative universes with Qwen3-Embedding-8B embeddings.
 
     Args:
@@ -175,7 +174,9 @@ def run_norm_universe_stage(
 
     # Free GPU memory
     del embed_model
-    import gc, torch
+    import gc
+
+    import torch
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -186,7 +187,7 @@ def run_norm_universe_stage(
     os.makedirs(emb_dir, exist_ok=True)
 
     available_fields = [f for f in _NORM_FIELDS if f in df.columns]
-    norm_universes: Dict[str, list] = {}
+    norm_universes: dict[str, list] = {}
 
     for source_id, group in df.groupby(source_col):
         source_key = str(source_id)

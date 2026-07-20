@@ -29,8 +29,9 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import requests
 
@@ -69,7 +70,7 @@ def _guess_provider(base_url: str) -> str:
 
 
 def _resolve_api_key(
-    api_key: Optional[str], api_key_env: Optional[str], provider: str,
+    api_key: str | None, api_key_env: str | None, provider: str,
 ) -> str:
     """Resolve an API key from args / env vars, in priority order."""
     if api_key:
@@ -129,9 +130,9 @@ class JudgeClient:
         temperature: float = 0.0,
         max_tokens: int = 1024,
         *,
-        api_key: Optional[str] = None,
-        api_key_env: Optional[str] = None,
-        provider: Optional[str] = None,
+        api_key: str | None = None,
+        api_key_env: str | None = None,
+        provider: str | None = None,
         offline: bool = False,
     ):
         self.base_url = base_url.rstrip("/")
@@ -232,7 +233,7 @@ class JudgeClient:
             )
         return True
 
-    def _auth_header(self) -> Dict[str, str]:
+    def _auth_header(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
 
     # ------------------------------------------------------------------
@@ -240,8 +241,8 @@ class JudgeClient:
     # ------------------------------------------------------------------
     def _call_single(
         self,
-        messages: List[Dict[str, str]],
-        json_schema: Optional[Dict[str, Any]] = None,
+        messages: list[dict[str, str]],
+        json_schema: dict[str, Any] | None = None,
     ) -> str:
         """Send one chat completion. Returns the assistant content string.
 
@@ -256,7 +257,7 @@ class JudgeClient:
                 "JudgeClient is in offline mode; live judging is disabled. "
                 "Use export_batch_jsonl() to emit a Batch API input file."
             )
-        kwargs: Dict[str, Any] = dict(
+        kwargs: dict[str, Any] = dict(
             model=self.model_name,
             messages=messages,
             temperature=self.temperature,
@@ -300,11 +301,11 @@ class JudgeClient:
     # ------------------------------------------------------------------
     def judge_batch(
         self,
-        items: List[Dict[str, Any]],
-        build_messages_fn: Callable[[Dict[str, Any]], List[Dict[str, str]]],
-        json_schema: Optional[Dict[str, Any]] = None,
+        items: list[dict[str, Any]],
+        build_messages_fn: Callable[[dict[str, Any]], list[dict[str, str]]],
+        json_schema: dict[str, Any] | None = None,
         progress_every: int = 50,
-    ) -> List[str]:
+    ) -> list[str]:
         """Judge a batch of items concurrently via a thread pool.
 
         Args:
@@ -316,7 +317,7 @@ class JudgeClient:
         Returns:
             List of response strings in the same order as ``items``.
         """
-        results: List[Optional[str]] = [None] * len(items)
+        results: list[str | None] = [None] * len(items)
         completed = 0
 
         def _process(idx: int) -> tuple[int, str]:
@@ -340,14 +341,14 @@ class JudgeClient:
     # ------------------------------------------------------------------
     def export_batch_jsonl(
         self,
-        items: List[Dict[str, Any]],
-        build_messages_fn: Callable[[Dict[str, Any]], List[Dict[str, str]]],
+        items: list[dict[str, Any]],
+        build_messages_fn: Callable[[dict[str, Any]], list[dict[str, str]]],
         output_path: str,
-        custom_id_fn: Callable[[Dict[str, Any], int], str],
-        json_schema: Optional[Dict[str, Any]] = None,
+        custom_id_fn: Callable[[dict[str, Any], int], str],
+        json_schema: dict[str, Any] | None = None,
         schema_name: str = "result",
         endpoint_url: str = "/v1/chat/completions",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Write items as an OpenAI Batch API input JSONL file.
 
         Produces one JSONL line per item with the exact same chat-completions
@@ -421,7 +422,7 @@ class JudgeClient:
                 seen_ids.add(cid)
 
                 messages = build_messages_fn(item)
-                body: Dict[str, Any] = {
+                body: dict[str, Any] = {
                     "model": self.model_name,
                     "messages": messages,
                     "temperature": self.temperature,
@@ -461,7 +462,7 @@ class JudgeClient:
                 flush=True,
             )
 
-        manifest: Dict[str, Any] = {
+        manifest: dict[str, Any] = {
             "path": output_path,
             "count": count,
             "model": self.model_name,

@@ -11,12 +11,10 @@ Matches the paper's parsing logic from eval.py.
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 import pandas as pd
 
 from dagspaces.common.vllm_inference import _strip_think_blocks
-
 
 # String-to-numeric mapping for Tier 2 (from paper's eval.py)
 _LIKERT_STR_MAP = {
@@ -37,7 +35,7 @@ _LIKERT_STR_MAP = {
 _VALID_RATINGS = {-100, -50, 0, 50, 100}
 
 
-def parse_tier2_response(response: str) -> Optional[float]:
+def parse_tier2_response(response: str) -> float | None:
     """Parse a Tier 2 Likert rating. Returns float or None if unparseable."""
     text = _strip_think_blocks(response).strip()
 

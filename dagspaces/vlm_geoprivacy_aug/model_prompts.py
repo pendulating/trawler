@@ -6,10 +6,10 @@ prompt string formatted for that model family's expected chat template.
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List
+from collections.abc import Callable
 
 
-def build_qwen2_5_vl_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -> str:
+def build_qwen2_5_vl_prompt(model_source: str, sys_msg: str, usr_msgs: list[str]) -> str:
     """Qwen2.5-VL and Qwen3-VL chat template (manual)."""
     return (
         f"<|im_start|>system\n{sys_msg}<|im_end|>\n"
@@ -18,7 +18,7 @@ def build_qwen2_5_vl_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]
     )
 
 
-def build_qwen3_5_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -> str:
+def build_qwen3_5_prompt(model_source: str, sys_msg: str, usr_msgs: list[str]) -> str:
     """Qwen3.5 VLM chat template with thinking disabled."""
     return (
         f"<|im_start|>system\n{sys_msg}<|im_end|>\n"
@@ -27,7 +27,7 @@ def build_qwen3_5_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -
     )
 
 
-def build_llama_vision_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -> str:
+def build_llama_vision_prompt(model_source: str, sys_msg: str, usr_msgs: list[str]) -> str:
     """Llama 3.2 Vision — uses AutoTokenizer.apply_chat_template."""
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_source, use_fast=True)
@@ -38,7 +38,7 @@ def build_llama_vision_prompt(model_source: str, sys_msg: str, usr_msgs: List[st
     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
 
-def build_gemma3_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -> str:
+def build_gemma3_prompt(model_source: str, sys_msg: str, usr_msgs: list[str]) -> str:
     """Gemma-3 — uses AutoProcessor.apply_chat_template."""
     from transformers import AutoProcessor
     processor = AutoProcessor.from_pretrained(model_source, use_fast=True)
@@ -49,7 +49,7 @@ def build_gemma3_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) ->
     return processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
 
-def build_internvl2_5_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -> str:
+def build_internvl2_5_prompt(model_source: str, sys_msg: str, usr_msgs: list[str]) -> str:
     """InternVL2.5 — uses AutoTokenizer with <image> prefix."""
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_source, trust_remote_code=True, use_fast=True)
@@ -60,7 +60,7 @@ def build_internvl2_5_prompt(model_source: str, sys_msg: str, usr_msgs: List[str
     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
 
-def build_deepseek_vl2_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -> str:
+def build_deepseek_vl2_prompt(model_source: str, sys_msg: str, usr_msgs: list[str]) -> str:
     """DeepSeek-VL2 manual template."""
     return (
         f"<|System|>:{sys_msg}\n\n<|User|>: <image>\n"
@@ -69,7 +69,7 @@ def build_deepseek_vl2_prompt(model_source: str, sys_msg: str, usr_msgs: List[st
     )
 
 
-def build_phi4mm_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) -> str:
+def build_phi4mm_prompt(model_source: str, sys_msg: str, usr_msgs: list[str]) -> str:
     """Phi-4-multimodal-instruct — uses <|image_1|> token."""
     return (
         f"<|system|>{sys_msg}<|end|>"
@@ -79,7 +79,7 @@ def build_phi4mm_prompt(model_source: str, sys_msg: str, usr_msgs: List[str]) ->
 
 
 # Registry: model_family -> prompt builder
-PROMPT_BUILDERS: Dict[str, Callable[[str, str, List[str]], str]] = {
+PROMPT_BUILDERS: dict[str, Callable[[str, str, list[str]], str]] = {
     "qwen2.5-vl": build_qwen2_5_vl_prompt,
     "qwen3-vl": build_qwen2_5_vl_prompt,  # Same chat template
     "qwen3.5": build_qwen3_5_prompt,
@@ -91,7 +91,7 @@ PROMPT_BUILDERS: Dict[str, Callable[[str, str, List[str]], str]] = {
 }
 
 
-def get_prompt_builder(model_family: str) -> Callable[[str, str, List[str]], str]:
+def get_prompt_builder(model_family: str) -> Callable[[str, str, list[str]], str]:
     """Look up the prompt builder for a given model family."""
     builder = PROMPT_BUILDERS.get(model_family)
     if builder is None:

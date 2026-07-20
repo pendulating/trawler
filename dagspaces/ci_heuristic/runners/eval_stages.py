@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 from omegaconf import OmegaConf
@@ -63,7 +63,7 @@ class TraverseRunner(StageRunner):
         result_df.to_parquet(out_path, index=False)
 
         # Parse-health summary for the orchestrator's metric logging
-        by_step: Dict[str, Any] = {}
+        by_step: dict[str, Any] = {}
         for step, sub in result_df.groupby("step"):
             by_step[str(step)] = {
                 "parseable_rate": round(float((sub["parse_status"] != "unparseable").mean()), 6),

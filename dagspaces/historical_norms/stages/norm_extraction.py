@@ -1,15 +1,14 @@
 # Norm extraction stage using the shared direct vLLM helper.
 
-import re
+from typing import Any
+
 import pandas as pd
-import json
 from omegaconf import OmegaConf
-from typing import Any, Dict, List
 
 from dagspaces.common.vllm_inference import run_vllm_inference
-from ..ci_schema import PrescriptiveNormExtractionResult
-from ._utils import announce_prompt, extract_json, clean_for_parquet
 
+from ..ci_schema import PrescriptiveNormExtractionResult
+from ._utils import announce_prompt, clean_for_parquet, extract_json
 
 # All raz_* columns that the extraction stage produces.  Used to guarantee
 # every output row has the same schema regardless of parse success/failure.
@@ -97,7 +96,7 @@ def _get_character_blocklist(cfg: Any) -> set[str]:
     }
 
 
-def _validate_norm_quality(flat: Dict[str, Any], detector) -> Dict[str, Any]:
+def _validate_norm_quality(flat: dict[str, Any], detector) -> dict[str, Any]:
     """Flag norms that contain named characters or plot-specific details.
 
     Detection is layered (see ``..name_detection.PersonNameDetector``):
@@ -143,9 +142,9 @@ def _to_str(v):
     return str(v)
 
 
-def _flatten_norm(norm_entry: Dict[str, Any]) -> Dict[str, Any]:
+def _flatten_norm(norm_entry: dict[str, Any]) -> dict[str, Any]:
     """Flatten a single PrescriptiveNormExtraction dict into raz_* columns."""
-    flat: Dict[str, Any] = {}
+    flat: dict[str, Any] = {}
     norm_tuple = norm_entry.get("norm", {})
     for k, v in norm_tuple.items():
         flat[f"raz_{k}"] = _to_str(v)
@@ -160,7 +159,7 @@ def _flatten_norm(norm_entry: Dict[str, Any]) -> Dict[str, Any]:
     return flat
 
 
-def _null_raz_columns() -> Dict[str, Any]:
+def _null_raz_columns() -> dict[str, Any]:
     """Return a dict with all raz_* columns set to None."""
     return {col: None for col in _RAZ_COLUMNS}
 
@@ -216,7 +215,7 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
           flush=True)
     prompt_name = announce_prompt("norm_extraction", prompt_cfg, system_prompt)
 
-    def _format_prompt(row: Dict[str, Any]) -> str:
+    def _format_prompt(row: dict[str, Any]) -> str:
         text = str(row.get("norm_snippet") or row.get("article_text") or "")
         reasoning = str(row.get("reasoning_trace", ""))
         book_context = ""
@@ -251,7 +250,7 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     json_schema = PrescriptiveNormExtractionResult.model_json_schema()
     sampling_params["guided_decoding"] = {"json": json_schema}
 
-    def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _preprocess(row: dict[str, Any]) -> dict[str, Any]:
         result_row = dict(row)
         user_prompt = _format_prompt(result_row)
         result_row["messages"] = [
@@ -261,7 +260,7 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
         result_row["sampling_params"] = sampling_params
         return result_row
 
-    def _postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _postprocess(row: dict[str, Any]) -> dict[str, Any]:
         result_row = dict(row)
         result_row.pop("messages", None)
         result_row.pop("sampling_params", None)
@@ -309,7 +308,7 @@ def run_norm_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     )
 
     if "raz_norms_raw" in result_df.columns:
-        rows: List[Dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
         for _, row in result_df.iterrows():
             norms_raw = row.get("raz_norms_raw")
             if isinstance(norms_raw, list) and len(norms_raw) > 0:

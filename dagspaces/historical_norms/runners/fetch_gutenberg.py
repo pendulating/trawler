@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
 import os
-import pandas as pd
+from typing import Any
 
 from ..orchestrator import (
     StageExecutionContext,
@@ -14,6 +13,7 @@ from ..orchestrator import (
 )
 from ..stages.fetch_gutenberg import run_fetch_gutenberg
 from .base import StageRunner
+
 
 class FetchGutenbergRunner(StageRunner):
     """Runner for the fetch_gutenberg stage."""
@@ -39,7 +39,7 @@ class FetchGutenbergRunner(StageRunner):
         
         _save_stage_outputs(df, context.output_paths)
         
-        metadata: Dict[str, Any] = {
+        metadata: dict[str, Any] = {
             "rows": len(df),
             "gutenberg_ids": cfg.data.get("gutenberg_ids", []),
         }

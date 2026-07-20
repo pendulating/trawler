@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
-from dagspaces.common.runners.base import StageRunner
-from dagspaces.common.orchestrator import StageResult
 from dagspaces.common.eval_sanity import compute_format_health, compute_parse_health
+from dagspaces.common.orchestrator import StageResult
+from dagspaces.common.runners.base import StageRunner
 from dagspaces.common.runners.sanity import (
     log_sanity_to_context,
     sanity_overrides,
@@ -110,7 +110,7 @@ class ParseResponsesRunner(StageRunner):
             refusal_patterns=patterns,
             thresholds=thresholds,
         )
-        metadata: Dict[str, Any] = {"rows": len(result_df)}
+        metadata: dict[str, Any] = {"rows": len(result_df)}
         log_sanity_to_context(context, report, metadata=metadata)
         return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
@@ -296,7 +296,7 @@ class ComputeTrajectoryMetricsRunner(StageRunner):
         # adherence is too low to trust the rate metrics. Same threshold
         # ladder (FAIL <0.9, WARN <0.95) as PrivacyLens.
         thresholds, _ = sanity_overrides(context.cfg)
-        run_metadata: Dict[str, Any] = {"rows": len(metrics_df), "metrics": metrics}
+        run_metadata: dict[str, Any] = {"rows": len(metrics_df), "metrics": metrics}
         if "agent_action_format_status" in df.columns:
             format_report = compute_format_health(
                 df,
@@ -346,7 +346,7 @@ class CirlTrajectoryFinalizeAsyncRunner(StageRunner):
         combined = result["combined_df"]
 
         thresholds, _ = sanity_overrides(context.cfg)
-        run_metadata: Dict[str, Any] = {
+        run_metadata: dict[str, Any] = {
             "rows": len(combined),
             "metrics": result["metrics"],
         }

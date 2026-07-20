@@ -11,15 +11,13 @@ from __future__ import annotations
 import base64
 import logging
 import os
-import re
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 
 from dagspaces.common.vllm_inference import (
     _build_engine_kwargs,
     _build_sampling_params,
-    detect_num_gpus,
     filter_vllm_engine_kwargs,
     get_pcie_nccl_env_vars,
     get_vllm_runtime_env_vars,
@@ -263,8 +261,8 @@ def run_vlm_inference(
 
     # Build batch inputs with images
     print(f"[{stage_name}] Loading {len(df)} images and building batch inputs...")
-    batch_inputs: List[Dict[str, Any]] = []
-    valid_indices: List[int] = []
+    batch_inputs: list[dict[str, Any]] = []
+    valid_indices: list[int] = []
 
     for idx, row in df.iterrows():
         img_path = str(row[image_col])

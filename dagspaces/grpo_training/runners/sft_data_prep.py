@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 from omegaconf import OmegaConf
@@ -12,8 +12,8 @@ from dagspaces.common.orchestrator import (
     StageResult,
     _collect_outputs,
     _save_stage_outputs,
-    prepare_stage_input,
 )
+
 from .base import StageRunner
 
 
@@ -45,7 +45,7 @@ class SFTDataPrepRunner(StageRunner):
         output_rows = len(out) if isinstance(out, pd.DataFrame) else 0
         _save_stage_outputs(out, context.output_paths)
 
-        metadata: Dict[str, Any] = {
+        metadata: dict[str, Any] = {
             "rows": output_rows,
             "ci_reasoning_rows": len(ci_reasoning_df),
             "ci_extraction_rows": len(ci_extraction_df),

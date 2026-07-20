@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable, Optional
 
 import pandas as pd
 
@@ -239,7 +239,7 @@ def top_k_by_popularity(
     k: int,
     languages: Iterable[str] = ("en",),
     min_downloads: int = 0,
-    catalog: Optional[pd.DataFrame] = None,
+    catalog: pd.DataFrame | None = None,
     *,
     only_fiction: bool = False,
 ) -> Selection:
@@ -264,7 +264,7 @@ def top_k_authors_n_books(
     n_per_author: int,
     languages: Iterable[str] = ("en",),
     min_downloads: int = 0,
-    catalog: Optional[pd.DataFrame] = None,
+    catalog: pd.DataFrame | None = None,
     *,
     only_fiction: bool = False,
 ) -> Selection:
@@ -325,7 +325,7 @@ def top_k_authors_n_books(
 
 def select_by_ids(
     ids: Iterable[str | int],
-    catalog: Optional[pd.DataFrame] = None,
+    catalog: pd.DataFrame | None = None,
 ) -> Selection:
     df = catalog if catalog is not None else load_catalog()
     wanted = {str(x) for x in ids}

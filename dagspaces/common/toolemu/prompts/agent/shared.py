@@ -1,9 +1,9 @@
 # Vendored from CI-RL (github.com/EricGLan/CI-RL) - Apache 2.0 License
+from procoder.functional import indent4 as indent
 from procoder.functional import (
     removed_submodules,
     replace_prompt,
 )
-from procoder.functional import indent4 as indent
 
 from ..globals import *
 

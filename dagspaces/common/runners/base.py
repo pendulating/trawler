@@ -99,6 +99,8 @@ class DataFrameStageRunner(StageRunner):
     def run(self, context: StageExecutionContext) -> StageResult:
         from dagspaces.common.orchestrator import (
             StageResult as _StageResult,
+        )
+        from dagspaces.common.orchestrator import (
             _collect_outputs,
             _save_stage_outputs,
             prepare_stage_input,

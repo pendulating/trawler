@@ -9,12 +9,14 @@ loop parameterized by ``ORCHESTRATOR_HOOKS``.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from dagspaces.common.orchestrator import (
     OrchestratorHooks,
+)
+from dagspaces.common.orchestrator import (
     run_experiment as _run_experiment,
 )
 
@@ -26,7 +28,7 @@ _CONF_DIR = os.path.join(os.path.dirname(__file__), "conf")
 
 
 
-def _log_eval_metrics(logger, metrics: Dict[str, Any], stage: str) -> None:
+def _log_eval_metrics(logger, metrics: dict[str, Any], stage: str) -> None:
     """Flatten SimpleQA metrics to W&B-friendly scalars + print summary.
 
     Metric shape produced by stages/compute_metrics.py:
@@ -36,7 +38,7 @@ def _log_eval_metrics(logger, metrics: Dict[str, Any], stage: str) -> None:
         attempted_rate, accuracy_given_attempted, f1
     """
     prefix = f"{stage}/eval"
-    wb_metrics: Dict[str, Any] = {}
+    wb_metrics: dict[str, Any] = {}
 
     scalar_keys = (
         "total", "judged", "unparseable", "unparseable_rate",

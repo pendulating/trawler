@@ -11,7 +11,7 @@ common chat pathways apply, not the VLM prompt builders).
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Tuple
+from typing import Any
 
 from .heuristic_text import FIREWALL_GUARD, FULL_HEURISTIC_TEXT, HEURISTIC_STEPS
 from .schemas import DESCRIPTIVE_STEPS, STEP_ORDER
@@ -27,7 +27,7 @@ SYS_ANALYST = (
 SYS_PLAIN = "You are a helpful assistant."
 
 
-def build_l0_prompt(practice_input: str) -> Tuple[str, str]:
+def build_l0_prompt(practice_input: str) -> tuple[str, str]:
     """Zero-shot verdict, no heuristic in context."""
     usr = (
         f"Consider the following practice:\n\n{practice_input}\n\n"
@@ -38,7 +38,7 @@ def build_l0_prompt(practice_input: str) -> Tuple[str, str]:
     return SYS_PLAIN, usr
 
 
-def build_l1_prompt(practice_input: str) -> Tuple[str, str]:
+def build_l1_prompt(practice_input: str) -> tuple[str, str]:
     """Single completion with the full heuristic in context."""
     usr = (
         "Apply the Contextual Integrity decision heuristic to the practice "
@@ -56,10 +56,10 @@ def build_l1_prompt(practice_input: str) -> Tuple[str, str]:
 def build_step_prompt(
     practice_input: str,
     step: str,
-    state: Dict[str, Any],
+    state: dict[str, Any],
     include_guiding_questions: bool = False,
     exemplar: str | None = None,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Step-wise chain prompt (L2 without guiding questions, L3 with, L4 with exemplar).
 
     Args:
@@ -108,7 +108,7 @@ def build_step_prompt(
     return SYS_ANALYST, "\n\n".join(parts)
 
 
-def build_tp_elicitation_prompt(flow_description: str, persona: str | None = None) -> Tuple[str, str]:
+def build_tp_elicitation_prompt(flow_description: str, persona: str | None = None) -> tuple[str, str]:
     """The 'this flow is fine IF ___' probe (Kumar et al.'s TP identification method)."""
     voice = persona or "a reasonable member of the context in which this flow occurs"
     usr = (
@@ -122,7 +122,7 @@ def build_tp_elicitation_prompt(flow_description: str, persona: str | None = Non
     return SYS_PLAIN, usr
 
 
-def render_exemplar(gold: Dict[str, Any]) -> str:
+def render_exemplar(gold: dict[str, Any]) -> str:
     """Render a Tier A gold file as an L4 few-shot exemplar (contaminated cases only)."""
     if not gold.get("meta", {}).get("contaminated", False):
         raise ValueError(

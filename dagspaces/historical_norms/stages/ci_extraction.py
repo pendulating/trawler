@@ -3,17 +3,19 @@
 # Converts CI reasoning traces into structured 5-component information flow
 # tuples following Nissenbaum's Contextual Integrity framework.
 
-import pandas as pd
 import json
+from typing import Any
+
+import pandas as pd
 from omegaconf import OmegaConf
-from typing import Any, Dict, List
 
 from dagspaces.common.vllm_inference import run_vllm_inference
+
 from ..ci_schema import CIExtractionResult
-from ._utils import announce_prompt, extract_json, clean_for_parquet
+from ._utils import announce_prompt, clean_for_parquet, extract_json
 
 
-def _parse_reasoning_json(raw: str) -> Dict[str, Any]:
+def _parse_reasoning_json(raw: str) -> dict[str, Any]:
     """Parse the ci_reasoning_json column, handling string or dict input."""
     if isinstance(raw, dict):
         return raw
@@ -104,7 +106,7 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
           flush=True)
     prompt_name = announce_prompt("ci_extraction", prompt_cfg, system_prompt)
 
-    def _format_prompt(row: Dict[str, Any]) -> str:
+    def _format_prompt(row: dict[str, Any]) -> str:
         text = str(row.get("ci_flow_snippet") or row.get("article_text") or "")
         reasoning = str(row.get("ci_reasoning_trace", ""))
         book_summary = str(row.get("book_summary") or "")
@@ -126,7 +128,7 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
     # generation to valid JSON matching the schema.
     sampling_params["guided_decoding"] = {"json": json_schema}
 
-    def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _preprocess(row: dict[str, Any]) -> dict[str, Any]:
         result_row = dict(row)
         user_prompt = _format_prompt(result_row)
         result_row["messages"] = [
@@ -136,7 +138,7 @@ def run_ci_extraction_stage(df, cfg: Any) -> pd.DataFrame:
         result_row["sampling_params"] = sampling_params
         return result_row
 
-    def _postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _postprocess(row: dict[str, Any]) -> dict[str, Any]:
         result_row = dict(row)
         result_row.pop("messages", None)
         result_row.pop("sampling_params", None)

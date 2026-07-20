@@ -6,9 +6,9 @@ and are used by the reward functions to validate GRPO completions.
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # CI information flow schemas (matches historical_norms/ci_schema.py)
@@ -24,12 +24,12 @@ class CIReasoningEntry(BaseModel):
 
 
 class CIReasoningList(BaseModel):
-    flows: List[CIReasoningEntry] = Field(default_factory=list, max_length=10)
+    flows: list[CIReasoningEntry] = Field(default_factory=list, max_length=10)
     has_information_exchange: bool
 
 
 class InformationFlowTuple(BaseModel):
-    subject: Optional[str] = None
+    subject: str | None = None
     sender: str
     recipient: str
     information_type: str
@@ -40,7 +40,7 @@ class ContextualIntegrityFlow(BaseModel):
     flow: InformationFlowTuple
     context: str
     appropriateness: Literal["appropriate", "inappropriate", "ambiguous"]
-    norms_invoked: List[str] = Field(default_factory=list)
+    norms_invoked: list[str] = Field(default_factory=list)
     norm_source: Literal["explicit", "implicit", "both"]
     is_new_flow: bool = False
     confidence_qual: Literal[
@@ -56,7 +56,7 @@ class ContextualIntegrityFlow(BaseModel):
 class CICompletionResult(BaseModel):
     """Schema for a combined reasoning-then-extraction completion."""
     reasoning: CIReasoningList
-    extraction: List[ContextualIntegrityFlow] = Field(default_factory=list)
+    extraction: list[ContextualIntegrityFlow] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +76,7 @@ class FlowGovernanceJudgment(BaseModel):
         ge=0.0, le=1.0,
         description="How well the invoked norms match retrieved norms (0=no match, 1=strong match)",
     )
-    matched_norm: Optional[str] = Field(
+    matched_norm: str | None = Field(
         None,
         description="The retrieved norm that best matches the invoked norms, or null",
     )
@@ -87,7 +87,7 @@ class FlowGovernanceJudgment(BaseModel):
         ge=0.0, le=1.0,
         description="How well the flow is governed by the retrieved norms (0=unrelated, 1=directly governed)",
     )
-    governing_norm: Optional[str] = Field(
+    governing_norm: str | None = Field(
         None,
         description="The norm that most directly governs this flow, or null",
     )
@@ -154,7 +154,7 @@ class CompletionRankingJudgment(BaseModel):
     # ~100s/call and mid-array cutoffs at 1024 tokens). The ranking criteria
     # live in the prompt; emission order (rankings-first) means a trailing
     # explanation could not have served as reasoning anyway.
-    rankings: List[RankedCompletion] = Field(
+    rankings: list[RankedCompletion] = Field(
         description="Exactly one entry per candidate, each with a distinct rank",
     )
 
@@ -171,7 +171,7 @@ class NormJudgmentResult(BaseModel):
     reasoning: str = Field(
         description="Explanation of why the action is or is not appropriate",
     )
-    norms_considered: List[str] = Field(
+    norms_considered: list[str] = Field(
         default_factory=list,
         description="Norms of information sharing considered in the judgment",
     )

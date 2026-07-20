@@ -12,8 +12,8 @@ import pickle
 import subprocess
 import sys
 import tempfile
-import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +33,10 @@ def _remap_lora_keys_for_vlm(lora_path: str, model_source: str, stage_name: str)
     creates a remapped copy of the adapter in a ``_vlm_remapped/`` subdirectory.
     Returns the (possibly new) lora_path.
     """
+    import glob
+
     from safetensors import safe_open
     from safetensors.torch import save_file
-    import glob
 
     # Quick check: does the base model use language_model prefix?
     sf_files = sorted(glob.glob(os.path.join(model_source, "*.safetensors")))
@@ -74,7 +75,6 @@ def _remap_lora_keys_for_vlm(lora_path: str, model_source: str, stage_name: str)
     os.makedirs(remapped_dir, exist_ok=True)
 
     # Remap and save weights
-    import torch
 
     tensors = {}
     with safe_open(adapter_sf, framework="pt") as f:
@@ -112,22 +112,21 @@ def _remap_lora_keys_for_vlm(lora_path: str, model_source: str, stage_name: str)
 # (Finding 7).  Re-exported here for backward compatibility.
 # ---------------------------------------------------------------------------
 from dagspaces.common.reasoning import (  # noqa: E402, F401
+    _detect_reasoning_parser,
     _fallback_strip_reasoning,
     _is_harmony_model,
     _split_harmony,
     _split_reasoning,
-    _detect_reasoning_parser,
     _strip_think_blocks,
     model_needs_reasoning_budget,
 )
-
 
 # ---------------------------------------------------------------------------
 # GPU / environment helpers
 # ---------------------------------------------------------------------------
 
 
-def get_pcie_nccl_env_vars() -> Dict[str, str]:
+def get_pcie_nccl_env_vars() -> dict[str, str]:
     """Return NCCL environment variables required for PCIe-only GPUs (no NVLink).
 
     P2P must stay disabled: with it on, a 4-rank all-reduce hangs silently on
@@ -149,7 +148,7 @@ def get_pcie_nccl_env_vars() -> Dict[str, str]:
     }
 
 
-def get_vllm_runtime_env_vars() -> Dict[str, str]:
+def get_vllm_runtime_env_vars() -> dict[str, str]:
     """Return the shared runtime environment for in-process vLLM launches.
 
     Note: VLLM_USE_V1 and VLLM_ENABLE_V1_MULTIPROCESSING were removed in
@@ -162,7 +161,7 @@ def get_vllm_runtime_env_vars() -> Dict[str, str]:
     }
 
 
-def _run_nvidia_smi(args: List[str]) -> List[str]:
+def _run_nvidia_smi(args: list[str]) -> list[str]:
     """Run nvidia-smi without importing torch in the parent process."""
     try:
         result = subprocess.run(
@@ -250,7 +249,7 @@ def detect_gpu_type() -> str:
     return "unknown"
 
 
-def apply_gpu_aware_settings(engine_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+def apply_gpu_aware_settings(engine_kwargs: dict[str, Any]) -> dict[str, Any]:
     """Set max_num_seqs based on GPU type if not already specified.
 
     Returns the GPU-type defaults dict (may be empty).
@@ -273,7 +272,7 @@ def apply_gpu_aware_settings(engine_kwargs: Dict[str, Any]) -> Dict[str, Any]:
     return defaults
 
 
-def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
+def filter_vllm_engine_kwargs(ek: dict[str, Any]) -> dict[str, Any]:
     """Drop engine kwargs not accepted by the installed vLLM LLM class.
 
     vLLM's LLM.__init__ accepts **kwargs and forwards them to EngineArgs,
@@ -281,6 +280,7 @@ def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
     """
     try:
         import inspect
+
         from vllm import LLM as _LLM
 
         sig = inspect.signature(_LLM.__init__)
@@ -317,7 +317,9 @@ def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
             print(f"[vllm_inference] Dropped unsupported vLLM kwargs: {dropped}")
         return filtered
     except Exception as exc:
-        print(f"[vllm_inference] WARNING: engine kwarg filtering failed, using conservative fallback: {exc}")
+        print(
+            f"[vllm_inference] WARNING: engine kwarg filtering failed, using conservative fallback: {exc}"
+        )
     ek = dict(ek)
     for k in ("use_v2_block_manager", "concurrency", "batch_size"):
         ek.pop(k, None)
@@ -329,7 +331,7 @@ def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _build_engine_kwargs(cfg) -> Dict[str, Any]:
+def _build_engine_kwargs(cfg) -> dict[str, Any]:
     """Build vLLM LLM constructor kwargs from Hydra config."""
     model_source = str(getattr(cfg.model, "model_source"))
     from omegaconf import OmegaConf as _OC
@@ -409,7 +411,7 @@ def _build_engine_kwargs(cfg) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_server_url(cfg) -> Optional[str]:
+def _resolve_server_url(cfg) -> str | None:
     """Return the vLLM OpenAI-compatible server URL to use, or ``None``.
 
     Priority (highest wins):
@@ -425,7 +427,7 @@ def _resolve_server_url(cfg) -> Optional[str]:
     A returned URL should be the base URL (e.g. ``http://host:8000/v1``);
     the trailing ``/v1`` is normalised by the OpenAI client.
     """
-    url: Optional[str] = None
+    url: str | None = None
     try:
         url = str(getattr(cfg.model, "vllm_server_url", "") or "")
     except Exception:
@@ -452,8 +454,8 @@ def _resolve_server_url(cfg) -> Optional[str]:
 
 
 def _sp_to_openai_kwargs(
-    sp_dict: Dict[str, Any],
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    sp_dict: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Translate our sampling_params dict to OpenAI API kwargs + extra_body.
 
     Returns ``(kwargs, extra_body)`` where ``kwargs`` are fields accepted
@@ -461,8 +463,8 @@ def _sp_to_openai_kwargs(
     vLLM-specific extensions (``structured_outputs``, ``top_k``, etc.).
     """
     sp = dict(sp_dict or {})
-    kwargs: Dict[str, Any] = {}
-    extra_body: Dict[str, Any] = {}
+    kwargs: dict[str, Any] = {}
+    extra_body: dict[str, Any] = {}
 
     # Direct-mapping OpenAI params
     for k in (
@@ -505,13 +507,13 @@ def _sp_to_openai_kwargs(
 
 
 def _run_server_inference(
-    df: "pd.DataFrame",
+    df: pd.DataFrame,
     cfg,
-    preprocess: Callable[[Dict[str, Any]], Dict[str, Any]],
-    postprocess: Callable[[Dict[str, Any]], Dict[str, Any]],
+    preprocess: Callable[[dict[str, Any]], dict[str, Any]],
+    postprocess: Callable[[dict[str, Any]], dict[str, Any]],
     stage_name: str,
     server_url: str,
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """Route inference through an OpenAI-compatible vLLM server.
 
     Mirrors the contract of the in-process path (see ``run_vllm_inference``):
@@ -523,6 +525,7 @@ def _run_server_inference(
     handles continuous batching on its end.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from openai import OpenAI
 
     # Resolve model name — either the full local path (if the server was
@@ -552,7 +555,7 @@ def _run_server_inference(
     print(f"[{stage_name}] Server-mode inference → {server_url} (model={served_name})")
 
     # Chat template kwargs (e.g. enable_thinking)
-    ctk_extra: Dict[str, Any] = {}
+    ctk_extra: dict[str, Any] = {}
     try:
         from dagspaces.common.stage_utils import resolve_thinking_mode
 
@@ -578,7 +581,7 @@ def _run_server_inference(
 
     # Preprocess all rows
     print(f"[{stage_name}] Preprocessing {len(df)} rows...")
-    preprocessed_rows: List[Dict[str, Any]] = []
+    preprocessed_rows: list[dict[str, Any]] = []
     for row in df.to_dict("records"):
         try:
             preprocessed_rows.append(preprocess(row))
@@ -648,8 +651,8 @@ def _run_server_inference(
         return idx, content.strip(), reasoning.strip(), usage, finish_reason, None
 
     max_workers = int(os.environ.get("VLLM_SERVER_CLIENT_CONCURRENCY", "32"))
-    results_raw: List[
-        Optional[Tuple[int, str, str, Any, Optional[str], Optional[str]]]
+    results_raw: list[
+        tuple[int, str, str, Any, str | None, str | None] | None
     ] = [None] * len(preprocessed_rows)
     print(
         f"[{stage_name}] Dispatching {len(preprocessed_rows)} requests "
@@ -672,7 +675,7 @@ def _run_server_inference(
             f"[{stage_name}] WARNING: {n_errors} request errors — rows marked with __postprocess_error__"
         )
 
-    out_rows: List[Dict[str, Any]] = []
+    out_rows: list[dict[str, Any]] = []
     for entry in results_raw:
         idx, content, reasoning, usage, finish_reason, err = entry  # type: ignore
         row = preprocessed_rows[idx]
@@ -694,7 +697,7 @@ def _run_server_inference(
     return pd.DataFrame(out_rows)
 
 
-def _resolve_streaming_dir(cfg, stage_name: str) -> Optional[str]:
+def _resolve_streaming_dir(cfg, stage_name: str) -> str | None:
     """Return a per-stage directory for incremental shard writes, or ``None``.
 
     Why this exists: a single ``llm.generate(all_prompts, sp)`` call can run
@@ -796,7 +799,7 @@ def _shutdown_llm(llm: Any, stage_name: str = "vllm") -> None:
         pass
 
 
-def _build_sampling_params(sp_dict: Dict[str, Any]):
+def _build_sampling_params(sp_dict: dict[str, Any]):
     """Convert a plain dict to vLLM SamplingParams, handling structured output.
 
     Supports both vLLM <=0.11 (GuidedDecodingParams) and >=0.12
@@ -1084,15 +1087,15 @@ if __name__ == "__main__":
 
 
 def _run_data_parallel(
-    engine_kwargs: Dict[str, Any],
+    engine_kwargs: dict[str, Any],
     dp_size: int,
-    prompts: List[str],
-    sp_dict: Dict[str, Any],
+    prompts: list[str],
+    sp_dict: dict[str, Any],
     stage_name: str,
     timeout: int = 864000,  # 10 days; matches slurm_gpu_4x walltime
-    streaming_dir: Optional[str] = None,
+    streaming_dir: str | None = None,
     streaming_chunk_size: int = 32,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Spawn dp_size fully-isolated subprocess workers for vLLM inference.
 
     Each worker is a fresh Python interpreter (subprocess.Popen) with its own
@@ -1142,7 +1145,7 @@ def _run_data_parallel(
     tmpdir = os.environ.get("TMPDIR", "/tmp")
     task_files = []
     result_files = []
-    procs: List[subprocess.Popen] = []
+    procs: list[subprocess.Popen] = []
 
     # Write worker script to a temp file
     worker_script = tempfile.NamedTemporaryFile(
@@ -1236,7 +1239,7 @@ def _run_data_parallel(
             )
 
     # Collect results
-    rank_results: Dict[int, List[Dict[str, Any]]] = {}
+    rank_results: dict[int, list[dict[str, Any]]] = {}
     for rank in range(dp_size):
         result_path = result_files[rank]
         if not os.path.exists(result_path):
@@ -1286,8 +1289,8 @@ _TRANSFORMERS_FALLBACK_FAMILIES = {"llama-vision"}
 def _run_transformers_text_inference(
     df: pd.DataFrame,
     cfg,
-    preprocess: Callable[[Dict[str, Any]], Dict[str, Any]],
-    postprocess: Callable[[Dict[str, Any]], Dict[str, Any]],
+    preprocess: Callable[[dict[str, Any]], dict[str, Any]],
+    postprocess: Callable[[dict[str, Any]], dict[str, Any]],
     stage_name: str = "transformers_inference",
 ) -> pd.DataFrame:
     """Text-only inference via native transformers for unsupported vLLM models.
@@ -1347,7 +1350,7 @@ def _run_transformers_text_inference(
 
     # Preprocess rows
     print(f"[{stage_name}] Preprocessing {len(df)} rows...")
-    preprocessed_rows: List[Dict[str, Any]] = []
+    preprocessed_rows: list[dict[str, Any]] = []
     for idx, row in enumerate(df.to_dict("records")):
         try:
             preprocessed_rows.append(preprocess(row))
@@ -1383,8 +1386,8 @@ def _run_transformers_text_inference(
     # Batch inference — Mllama 11B in bf16 ≈ 22GB, leaving ~26GB on A6000 for
     # KV cache.  batch_size=16 with max_tokens=1024 fits comfortably.
     batch_size = 16
-    generated_texts: List[str] = []
-    generated_reasonings: List[str] = []
+    generated_texts: list[str] = []
+    generated_reasonings: list[str] = []
     print(
         f"[{stage_name}] Generating {len(prompts)} prompts in batches of {batch_size}..."
     )
@@ -1448,8 +1451,8 @@ def _run_transformers_text_inference(
 def run_vllm_inference(
     df: pd.DataFrame,
     cfg,
-    preprocess: Callable[[Dict[str, Any]], Dict[str, Any]],
-    postprocess: Callable[[Dict[str, Any]], Dict[str, Any]],
+    preprocess: Callable[[dict[str, Any]], dict[str, Any]],
+    postprocess: Callable[[dict[str, Any]], dict[str, Any]],
     stage_name: str = "vllm_inference",
 ) -> pd.DataFrame:
     """Run vLLM batch inference on a DataFrame.
@@ -1521,7 +1524,7 @@ def run_vllm_inference(
     print(f"[{stage_name}] Runtime env: {env_snapshot}")
 
     # Import vLLM after env vars are set
-    from vllm import LLM, SamplingParams
+    from vllm import LLM
 
     # Build engine kwargs
     engine_kwargs = _build_engine_kwargs(cfg)
@@ -1610,8 +1613,8 @@ def run_vllm_inference(
     try:
         # Preprocess all rows
         print(f"[{stage_name}] Preprocessing {len(df)} rows...")
-        preprocessed_rows: List[Dict[str, Any]] = []
-        failed_indices: List[int] = []  # indices of preprocess-failed rows
+        preprocessed_rows: list[dict[str, Any]] = []
+        failed_indices: list[int] = []  # indices of preprocess-failed rows
         for idx, row in enumerate(df.to_dict("records")):
             try:
                 preprocessed_rows.append(preprocess(row))
@@ -1639,17 +1642,21 @@ def run_vllm_inference(
             try:
                 _max_model_len = llm.llm_engine.model_config.max_model_len
             except Exception as exc:
-                print(f"[{stage_name}] WARNING: could not read max_model_len from engine: {exc}")
+                print(
+                    f"[{stage_name}] WARNING: could not read max_model_len from engine: {exc}"
+                )
         if _max_model_len is None:
             try:
                 _max_model_len = int(getattr(tokenizer, "model_max_length", 0) or 0)
                 if _max_model_len <= 0 or _max_model_len > 1_000_000:
                     _max_model_len = None
             except Exception as exc:
-                print(f"[{stage_name}] WARNING: could not read max_model_len from tokenizer: {exc}")
-        prompts: List[str] = []
-        sp_dicts: List[Dict[str, Any]] = []
-        valid_indices: List[int] = []
+                print(
+                    f"[{stage_name}] WARNING: could not read max_model_len from tokenizer: {exc}"
+                )
+        prompts: list[str] = []
+        sp_dicts: list[dict[str, Any]] = []
+        valid_indices: list[int] = []
         _oversized_count = 0
         _clamped_count = 0
         # Need at least this many generation tokens for a usable answer; if the
@@ -1792,7 +1799,7 @@ def run_vllm_inference(
 
             # Postprocess — merge DP outputs back with failed rows
             print(f"[{stage_name}] Postprocessing {len(dp_outputs)} outputs...")
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
             output_iter = iter(dp_outputs)
             for idx, row in enumerate(preprocessed_rows):
                 if idx in failed_set:
@@ -1837,8 +1844,8 @@ def run_vllm_inference(
             import glob as _glob_mod
 
             # Build SamplingParams objects with dedup optimization
-            sp_objects: List[Any] = []
-            _sp_cache: Dict[int, Any] = {}  # id(dict) -> SamplingParams
+            sp_objects: list[Any] = []
+            _sp_cache: dict[int, Any] = {}  # id(dict) -> SamplingParams
             for sp_dict in sp_dicts:
                 sp_id = id(sp_dict)
                 if sp_id not in _sp_cache:
@@ -1868,7 +1875,7 @@ def run_vllm_inference(
 
             # Streaming-shard setup — recover completed rows from prior runs.
             sp_streaming_dir = None
-            completed_outputs: Dict[int, Dict[str, Any]] = {}
+            completed_outputs: dict[int, dict[str, Any]] = {}
             next_shard_id = 0
             if streaming_dir:
                 sp_streaming_dir = os.path.join(streaming_dir, "sp")
@@ -1939,7 +1946,7 @@ def run_vllm_inference(
                         "This indicates silent data loss."
                     )
 
-                shard_records: List[Dict[str, Any]] = []
+                shard_records: list[dict[str, Any]] = []
                 for idx, output in zip(batch_indices, chunk_outputs):
                     text = output.outputs[0].text if output.outputs else ""
                     prompt_tokens = (
@@ -1991,7 +1998,7 @@ def run_vllm_inference(
             # so we walk a fresh prompt counter k=0,1,2,... for each row
             # that wasn't filtered out by preprocess/oversize checks.
             print(f"[{stage_name}] Postprocessing {len(completed_outputs)} outputs...")
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
             prompt_idx_iter = iter(range(len(prompts)))
             for idx, row in enumerate(preprocessed_rows):
                 if idx in failed_set:

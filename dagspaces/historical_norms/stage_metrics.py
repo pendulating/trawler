@@ -12,7 +12,7 @@ chunk-overflow finding (F3) the day the corpus was built.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
@@ -34,13 +34,13 @@ def _error_rate(df: pd.DataFrame, col: str) -> float:
                   & (s.astype(str) != "None") & (s.astype(str) != "False")).mean())
 
 
-def _value_fracs(df: pd.DataFrame, col: str, values: tuple) -> Dict[str, float]:
+def _value_fracs(df: pd.DataFrame, col: str, values: tuple) -> dict[str, float]:
     s = df[col].dropna().astype(str).str.strip().str.lower()
     n = max(len(s), 1)
     return {f"{_PREFIX}/{col}_{v}_frac": float((s == v).sum()) / n for v in values}
 
 
-def _len_stats(series: pd.Series, key: str) -> Dict[str, float]:
+def _len_stats(series: pd.Series, key: str) -> dict[str, float]:
     lens = series.dropna().astype(str).map(len)
     if lens.empty:
         return {}
@@ -52,13 +52,13 @@ def _len_stats(series: pd.Series, key: str) -> Dict[str, float]:
     }
 
 
-def compute_stage_quality_metrics(stage: str, df: pd.DataFrame) -> Dict[str, Any]:
+def compute_stage_quality_metrics(stage: str, df: pd.DataFrame) -> dict[str, Any]:
     """Quality scalars for one stage's output dataframe.
 
     Unknown stages return the base counts only; missing columns are
     skipped, never raised — logging must not fail a pipeline.
     """
-    m: Dict[str, Any] = {f"{_PREFIX}/rows": len(df)}
+    m: dict[str, Any] = {f"{_PREFIX}/rows": len(df)}
     if df.empty:
         return m
     if "gutenberg_id" in df.columns:

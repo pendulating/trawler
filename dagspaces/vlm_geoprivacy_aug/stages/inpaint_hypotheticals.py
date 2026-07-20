@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import List
 
 import pandas as pd
 
@@ -24,7 +23,7 @@ HYP_COLUMNS = ["hyp_id", "hyp_dimension", "hyp_frame", "hyp_position", "hyp_ci_p
 
 def expand_with_hypotheticals(
     df: pd.DataFrame,
-    variants: List[HypotheticalVariant],
+    variants: list[HypotheticalVariant],
 ) -> pd.DataFrame:
     """Cross-product dataset rows with hypothetical variants.
 
@@ -41,7 +40,7 @@ def expand_with_hypotheticals(
     if clashes:
         raise ValueError(f"Dataset already has hypothetical columns: {clashes}")
 
-    blocks: List[pd.DataFrame] = []
+    blocks: list[pd.DataFrame] = []
     for variant in variants:
         block = df.copy()
         block["hyp_id"] = variant.id

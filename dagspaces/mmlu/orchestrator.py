@@ -9,12 +9,14 @@ by ``ORCHESTRATOR_HOOKS``.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any
 
 from omegaconf import DictConfig
 
 from dagspaces.common.orchestrator import (
     OrchestratorHooks,
+)
+from dagspaces.common.orchestrator import (
     run_experiment as _run_experiment,
 )
 
@@ -25,7 +27,7 @@ from .runners import get_stage_registry  # noqa: F401
 _CONF_DIR = os.path.join(os.path.dirname(__file__), "conf")
 
 
-def _log_eval_metrics(logger, metrics: Dict[str, Any], stage: str) -> None:
+def _log_eval_metrics(logger, metrics: dict[str, Any], stage: str) -> None:
     """Flatten MMLU metrics to W&B-friendly scalars + print summary.
 
     Metric shape produced by stages/compute_metrics.py:
@@ -34,7 +36,7 @@ def _log_eval_metrics(logger, metrics: Dict[str, Any], stage: str) -> None:
         per_subject: {<subject>: {accuracy, total, correct}}
     """
     prefix = f"{stage}/eval"
-    wb_metrics: Dict[str, Any] = {}
+    wb_metrics: dict[str, Any] = {}
 
     for key in ("total", "parseable", "unparseable_count",
                 "unparseable_rate", "overall_accuracy"):

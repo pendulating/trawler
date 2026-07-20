@@ -26,7 +26,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 __all__ = [
     "ensure_dotenv",
@@ -129,7 +130,9 @@ def maybe_silence_vllm_logs() -> None:
                 getattr(f, "__class__", object).__name__ == "PatternModuloFilter"
                 for f in existing
             ):
-                root_vllm.addFilter(PatternModuloFilter(mod=n, pattern="Elapsed time for batch"))
+                root_vllm.addFilter(
+                    PatternModuloFilter(mod=n, pattern="Elapsed time for batch")
+                )
         except Exception:
             pass
 
@@ -138,7 +141,7 @@ def maybe_silence_vllm_logs() -> None:
         pass
 
 
-def to_json_str(value: Any) -> Optional[str]:
+def to_json_str(value: Any) -> str | None:
     """Serialize *value* to a JSON string.
 
     Returns ``None`` when *value* is ``None``.  Falls back to ``str(value)``
@@ -166,7 +169,7 @@ def to_json_str(value: Any) -> Optional[str]:
 
 
 def serialize_arrow_unfriendly_in_row(
-    row: Dict[str, Any],
+    row: dict[str, Any],
     columns: Iterable[str],
 ) -> None:
     """In-place convert non-Arrow-serializable column values to JSON strings.
@@ -186,7 +189,10 @@ def serialize_arrow_unfriendly_in_row(
     _GuidedDecodingParams = None
     _SamplingParams = None
     try:
-        from vllm.sampling_params import GuidedDecodingParams, SamplingParams  # type: ignore
+        from vllm.sampling_params import (  # type: ignore
+            GuidedDecodingParams,
+            SamplingParams,
+        )
 
         _GuidedDecodingParams = GuidedDecodingParams
         _SamplingParams = SamplingParams
@@ -199,13 +205,15 @@ def serialize_arrow_unfriendly_in_row(
         val = row[col]
         if isinstance(val, (dict, list, tuple)):
             row[col] = to_json_str(val)
-        elif _GuidedDecodingParams is not None and isinstance(val, _GuidedDecodingParams):
+        elif _GuidedDecodingParams is not None and isinstance(
+            val, _GuidedDecodingParams
+        ):
             row[col] = str(val)
         elif _SamplingParams is not None and isinstance(val, _SamplingParams):
             row[col] = str(val)
 
 
-def extract_last_json(text: str) -> Optional[Dict[str, Any]]:
+def extract_last_json(text: str) -> dict[str, Any] | None:
     """Extract a JSON object from *text*.
 
     Delegates to :func:`dagspaces.common.json_extraction.extract_last_json`
@@ -246,7 +254,10 @@ def sanitize_for_json(value: Any) -> Any:
     _GuidedDecodingParams = None
     _SamplingParams = None
     try:
-        from vllm.sampling_params import GuidedDecodingParams, SamplingParams  # type: ignore
+        from vllm.sampling_params import (  # type: ignore
+            GuidedDecodingParams,
+            SamplingParams,
+        )
 
         _GuidedDecodingParams = GuidedDecodingParams
         _SamplingParams = SamplingParams
@@ -258,7 +269,9 @@ def sanitize_for_json(value: Any) -> Any:
             return None
         if isinstance(value, (str, int, float, bool)):
             return value
-        if _GuidedDecodingParams is not None and isinstance(value, _GuidedDecodingParams):
+        if _GuidedDecodingParams is not None and isinstance(
+            value, _GuidedDecodingParams
+        ):
             try:
                 return {
                     "json": getattr(value, "json", None),
@@ -272,7 +285,7 @@ def sanitize_for_json(value: Any) -> Any:
         if _SamplingParams is not None and isinstance(value, _SamplingParams):
             return str(value)
         if isinstance(value, dict):
-            out: Dict[str, Any] = {}
+            out: dict[str, Any] = {}
             for k, v in value.items():
                 try:
                     key = str(k)
@@ -318,7 +331,8 @@ def resolve_thinking_mode(cfg_model: Any, *, default: bool = True) -> bool:
     Returns:
         ``True`` if thinking is on, ``False`` if off.
     """
-    def _coerce(val: Any) -> Optional[bool]:
+
+    def _coerce(val: Any) -> bool | None:
         if val is None:
             return None
         if isinstance(val, bool):

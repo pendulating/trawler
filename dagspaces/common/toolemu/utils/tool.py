@@ -2,6 +2,7 @@
 import json
 import random
 import re
+from typing import Dict, List, TypedDict  # runtime values in PRIMITIVE_TYPES + class bases
 
 from langchain.tools import BaseTool
 

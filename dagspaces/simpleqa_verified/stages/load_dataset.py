@@ -13,10 +13,7 @@ Output columns:
 
 from __future__ import annotations
 
-from typing import Optional
-
 import pandas as pd
-
 
 # Canonical column aliases on google/simpleqa-verified (and OpenAI's
 # upstream SimpleQA). We accept any of these and normalize to the unified
@@ -26,7 +23,7 @@ _QUESTION_ALIASES = ("problem", "question", "Question")
 _ANSWER_ALIASES = ("answer", "Answer", "gold_target", "target")
 
 
-def _pick_first_column(df: pd.DataFrame, aliases: tuple) -> Optional[str]:
+def _pick_first_column(df: pd.DataFrame, aliases: tuple) -> str | None:
     for name in aliases:
         if name in df.columns:
             return name
@@ -48,10 +45,10 @@ def _extract_topic(row: pd.Series) -> str:
 
 def load_dataset(
     hf_dataset: str = "google/simpleqa-verified",
-    hf_config: Optional[str] = None,
+    hf_config: str | None = None,
     split: str = "eval",
-    hf_token: Optional[str] = None,
-    sample_n: Optional[int] = None,
+    hf_token: str | None = None,
+    sample_n: int | None = None,
 ) -> pd.DataFrame:
     """Pull simpleqa-verified, normalize columns, optionally sample.
 

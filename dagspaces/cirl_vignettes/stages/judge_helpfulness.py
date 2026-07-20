@@ -10,14 +10,15 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import pandas as pd
 from omegaconf import DictConfig
 
 from dagspaces.common.judge_client import JudgeClient
-from .judge_leakage import _get_batch_export_client, _get_batch_export_endpoint
+
 from ..prompts import build_helpfulness_judge_prompt, parse_helpfulness_score
+from .judge_leakage import _get_batch_export_client, _get_batch_export_endpoint
 
 
 def _action_has_format(action: str) -> bool:
@@ -34,7 +35,7 @@ def _action_has_format(action: str) -> bool:
 
 def _build_helpfulness_items(
     df: pd.DataFrame,
-) -> "tuple[List[Dict[str, Any]], set]":
+) -> tuple[list[dict[str, Any]], set]:
     """Flatten rows into helpfulness-judge inputs, skipping no-action rows.
 
     Returns ``(items, skipped_indices)``. ``skipped_indices`` is the set
@@ -42,7 +43,7 @@ def _build_helpfulness_items(
     — propagated to the result df as ``helpfulness_judged=False`` so
     metrics can compute conditional vs. defaulted variants.
     """
-    items: List[Dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
     skipped: set = set()
     for idx, row in df.iterrows():
         action = str(row.get("final_action_generated", ""))
@@ -62,8 +63,8 @@ def _build_helpfulness_items(
 def _stamp_format_columns(
     df: pd.DataFrame,
     *,
-    helpfulness_skipped: "set | None" = None,
-    leakage_skipped: "set | None" = None,
+    helpfulness_skipped: set | None = None,
+    leakage_skipped: set | None = None,
 ) -> pd.DataFrame:
     """Return ``df`` with ``agent_action_format_status`` and the relevant
     ``*_judged`` boolean columns populated.
@@ -127,7 +128,7 @@ def judge_helpfulness(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
           flush=True)
 
     if items:
-        def build_messages(item: Dict[str, Any]) -> List[Dict[str, str]]:
+        def build_messages(item: dict[str, Any]) -> list[dict[str, str]]:
             prompt = build_helpfulness_judge_prompt(
                 user_name=item["user_name"],
                 user_instruction=item["user_instruction"],
@@ -141,8 +142,8 @@ def judge_helpfulness(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         responses = []
 
     # Map scores back to dataframe
-    scores: Dict[Any, int] = {}
-    raw_texts: Dict[Any, str] = {}
+    scores: dict[Any, int] = {}
+    raw_texts: dict[Any, str] = {}
     for item, response in zip(items, responses):
         scores[item["row_idx"]] = parse_helpfulness_score(response)
         raw_texts[item["row_idx"]] = response
@@ -189,10 +190,10 @@ def export_helpfulness_judge_batch(
             flush=True,
         )
 
-    def custom_id_fn(item: Dict[str, Any], idx: int) -> str:
+    def custom_id_fn(item: dict[str, Any], idx: int) -> str:
         return f"cirl_vignettes:judge_helpfulness:{item['row_idx']}"
 
-    def build_messages(item: Dict[str, Any]) -> List[Dict[str, str]]:
+    def build_messages(item: dict[str, Any]) -> list[dict[str, str]]:
         prompt = build_helpfulness_judge_prompt(
             user_name=item["user_name"],
             user_instruction=item["user_instruction"],

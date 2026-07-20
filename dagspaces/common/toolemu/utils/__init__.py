@@ -1,5 +1,6 @@
 # Vendored from CI-RL (github.com/EricGLan/CI-RL) - Apache 2.0 License
 # Minimal subset: only what tools/ and prompts/ actually need at runtime.
+from .my_typing import *
 from .tool import (
     ArgException,
     ArgParameter,
@@ -9,7 +10,6 @@ from .tool import (
     load_dict,
     validate_inputs,
 )
-from .my_typing import *
 
 
 def get_num_tokens(prompt: str, encoding: str = "cl100k_base") -> int:

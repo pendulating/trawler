@@ -6,15 +6,15 @@
 # use generalizable social roles instead of named characters.  Metadata
 # fields (normative_force, context, confidence, etc.) are preserved exactly.
 
-import json
+from typing import Any
+
 import pandas as pd
 from omegaconf import OmegaConf
-from typing import Any, Dict, List
 
 from dagspaces.common.vllm_inference import run_vllm_inference
+
 from ..ci_schema import RoleAbstractionResult
 from ._utils import extract_json
-
 
 # Columns that carry over from extraction unchanged (not rewritten by LLM)
 _PASSTHROUGH_COLUMNS = [
@@ -99,7 +99,7 @@ def run_norm_role_abstraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
     json_schema = RoleAbstractionResult.model_json_schema()
     sampling_params["guided_decoding"] = {"json": json_schema}
 
-    def _format_prompt(row: Dict[str, Any]) -> str:
+    def _format_prompt(row: dict[str, Any]) -> str:
         return (
             prompt_template
             .replace("{{book_summary}}", str(row.get("book_summary") or ""))
@@ -114,7 +114,7 @@ def run_norm_role_abstraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
             .replace("{{quality_flags}}", str(row.get("norm_quality_flags") or "null"))
         )
 
-    def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _preprocess(row: dict[str, Any]) -> dict[str, Any]:
         result_row = dict(row)
         user_prompt = _format_prompt(result_row)
         result_row["messages"] = [
@@ -124,7 +124,7 @@ def run_norm_role_abstraction_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
         result_row["sampling_params"] = sampling_params
         return result_row
 
-    def _postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _postprocess(row: dict[str, Any]) -> dict[str, Any]:
         result_row = dict(row)
         result_row.pop("messages", None)
         result_row.pop("sampling_params", None)

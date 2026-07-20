@@ -9,7 +9,6 @@ All scorers report through these functions so the leniency is centralized.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Tuple
 
 _STOPWORDS = {
     "the", "a", "an", "their", "its", "his", "her", "of", "for", "to", "and",
@@ -36,7 +35,7 @@ _SYNONYMS = {
 _CANON = {w: k for k, ws in _SYNONYMS.items() for w in ws}
 
 
-def normalize(text: str) -> List[str]:
+def normalize(text: str) -> list[str]:
     """Lowercase, strip punctuation, drop stopwords, collapse synonyms."""
     tokens = re.findall(r"[a-z0-9]+", str(text).lower())
     out = []
@@ -47,7 +46,7 @@ def normalize(text: str) -> List[str]:
     return out
 
 
-def jaccard(a: List[str], b: List[str]) -> float:
+def jaccard(a: list[str], b: list[str]) -> float:
     sa, sb = set(a), set(b)
     if not sa and not sb:
         return 1.0
@@ -67,7 +66,7 @@ def alias_match(gold: str, pred: str, threshold: float = 0.5) -> bool:
     return jaccard(g, p) >= threshold
 
 
-def set_prf(gold_items: List[str], pred_items: List[str], threshold: float = 0.5) -> Dict[str, float]:
+def set_prf(gold_items: list[str], pred_items: list[str], threshold: float = 0.5) -> dict[str, float]:
     """Greedy one-to-one P/R/F1 between two string lists under alias_match."""
     gold_items = [g for g in gold_items if str(g).strip()]
     pred_items = [p for p in pred_items if str(p).strip()]

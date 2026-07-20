@@ -4,14 +4,16 @@
 # Produces reasoning traces about who exchanges what information with whom,
 # in what societal context, and whether the flow is appropriate.
 
-import pandas as pd
 import json
+from typing import Any
+
+import pandas as pd
 from omegaconf import OmegaConf
-from typing import Any, Dict
 
 from dagspaces.common.vllm_inference import run_vllm_inference
+
 from ..ci_schema import CIReasoningList
-from ._utils import announce_prompt, extract_json, clean_for_parquet
+from ._utils import announce_prompt, clean_for_parquet, extract_json
 
 
 def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
@@ -76,7 +78,7 @@ def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
     # than appending the schema as text and hoping for valid JSON.
     sampling_params["guided_decoding"] = {"json": json_schema}
 
-    def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _preprocess(row: dict[str, Any]) -> dict[str, Any]:
         result_row = dict(row)
         user_prompt = _format_prompt(result_row)
         result_row["messages"] = [
@@ -86,7 +88,7 @@ def run_ci_reasoning_stage(df, cfg: Any) -> pd.DataFrame:
         result_row["sampling_params"] = sampling_params
         return result_row
 
-    def _postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _postprocess(row: dict[str, Any]) -> dict[str, Any]:
         result_row = dict(row)
         result_row.pop("messages", None)
         result_row.pop("sampling_params", None)

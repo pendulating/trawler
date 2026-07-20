@@ -23,13 +23,18 @@ path (/scratch or /tmp) rather than a /share network mount, using the
 
 from __future__ import annotations
 
+from typing import Any
+
 from dagspaces.common.wandb_logger import (
     WandbConfig as _WandbConfigBase,
+)
+from dagspaces.common.wandb_logger import (
     WandbLogger as _WandbLoggerBase,
+)
+from dagspaces.common.wandb_logger import (
     collect_compute_metadata,
     ensure_local_tmpdir,
 )
-from typing import Any, Dict, Optional
 
 # Set a suitable local TMPDIR at import time (same side-effect as before)
 ensure_local_tmpdir("historical_norms")
@@ -75,7 +80,7 @@ class WandbConfig(_WandbConfigBase):
     """
 
     @classmethod
-    def from_hydra_config(cls, cfg, **kwargs) -> "WandbConfig":  # type: ignore[override]
+    def from_hydra_config(cls, cfg, **kwargs) -> WandbConfig:  # type: ignore[override]
         """Build a WandbConfig from a Hydra config with historical_norms defaults."""
         kwargs.setdefault("default_project", "historical-norms-extraction")
         kwargs.setdefault("default_experiment_name", "historical_norms")
@@ -106,11 +111,11 @@ class WandbLogger(_WandbLoggerBase):
         self,
         cfg,
         stage: str,
-        run_id: Optional[str] = None,
-        run_config: Optional[Dict[str, Any]] = None,
+        run_id: str | None = None,
+        run_config: dict[str, Any] | None = None,
         *,
-        wandb_id: Optional[str] = None,
-        resume: Optional[str] = None,
+        wandb_id: str | None = None,
+        resume: str | None = None,
     ) -> None:
         super().__init__(
             cfg, stage=stage, run_id=run_id, run_config=run_config,

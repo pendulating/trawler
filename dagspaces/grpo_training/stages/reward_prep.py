@@ -9,14 +9,15 @@ import hashlib
 import json
 import os
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
 
-from dagspaces.common.vllm_inference import run_vllm_inference
 from dagspaces.common.stage_utils import extract_last_json
+from dagspaces.common.vllm_inference import run_vllm_inference
+
 from .norm_universe import EMBED_INSTRUCTION
 
 
@@ -27,13 +28,13 @@ def _make_prompt_id(text: str) -> str:
 
 def _load_precomputed_embeddings(
     embeddings_dir: str,
-    norm_universes: Dict[str, list],
-) -> Dict[str, np.ndarray]:
+    norm_universes: dict[str, list],
+) -> dict[str, np.ndarray]:
     """Load per-book pre-computed Qwen3-Embedding-8B embeddings.
 
     Falls back to None if embeddings aren't available.
     """
-    emb_by_source: Dict[str, np.ndarray] = {}
+    emb_by_source: dict[str, np.ndarray] = {}
     for source_id in norm_universes:
         npy_path = os.path.join(embeddings_dir, f"{source_id}.npy")
         if os.path.exists(npy_path):
@@ -43,9 +44,9 @@ def _load_precomputed_embeddings(
 
 def run_reward_prep_stage(
     sft_df: pd.DataFrame,
-    norm_universes: Dict[str, list],
+    norm_universes: dict[str, list],
     cfg: Any,
-    embeddings_dir: Optional[str] = None,
+    embeddings_dir: str | None = None,
 ) -> pd.DataFrame:
     """Pre-compute R_ground judge evaluations.
 
@@ -82,7 +83,7 @@ def run_reward_prep_stage(
     # ---------------------------------------------------------------
     TOP_K_NORMS = 3
 
-    norm_embeddings_by_source: Dict[str, np.ndarray] = {}
+    norm_embeddings_by_source: dict[str, np.ndarray] = {}
     retrieval_model = None
 
     if embeddings_dir and os.path.isdir(embeddings_dir):
@@ -133,7 +134,7 @@ def run_reward_prep_stage(
     _use_retrieval = bool(norm_embeddings_by_source) and retrieval_model is not None
 
     def _retrieve_relevant_norms(
-        query: str, source_id: str, contrastive_source: Optional[str] = None,
+        query: str, source_id: str, contrastive_source: str | None = None,
     ) -> str:
         """Retrieve top-k norms from the universe most relevant to a query.
 
@@ -163,7 +164,7 @@ def run_reward_prep_stage(
 
         return json.dumps(selected, ensure_ascii=False, indent=1)
 
-    def _flow_to_query(flow: Dict[str, Any]) -> str:
+    def _flow_to_query(flow: dict[str, Any]) -> str:
         """Build a retrieval query from a single flow's CI tuple fields."""
         parts = []
         for key in ("sender", "recipient", "information_type",
@@ -180,8 +181,8 @@ def run_reward_prep_stage(
     # ---------------------------------------------------------------
     # Build per-flow evaluation rows
     # ---------------------------------------------------------------
-    eval_rows: List[Dict[str, Any]] = []
-    no_flow_rows: List[Dict[str, Any]] = []
+    eval_rows: list[dict[str, Any]] = []
+    no_flow_rows: list[dict[str, Any]] = []
     all_source_ids = list(norm_universes.keys())
 
     for _, row in sft_df.iterrows():
@@ -277,7 +278,9 @@ def run_reward_prep_stage(
 
     # Free retrieval model before loading judge
     del retrieval_model
-    import gc, torch
+    import gc
+
+    import torch
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -297,7 +300,7 @@ def run_reward_prep_stage(
     json_schema = FlowGovernanceJudgment.model_json_schema()
     sampling_params["guided_decoding"] = {"json": json_schema}
 
-    def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _preprocess(row: dict[str, Any]) -> dict[str, Any]:
         result_row = dict(row)
         user_prompt = prompt_template.replace(
             "{{chunk_text}}", str(row.get("chunk_text", ""))
@@ -313,7 +316,7 @@ def run_reward_prep_stage(
         result_row["sampling_params"] = sampling_params
         return result_row
 
-    def _postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _postprocess(row: dict[str, Any]) -> dict[str, Any]:
         result_row = dict(row)
         result_row.pop("messages", None)
         result_row.pop("sampling_params", None)

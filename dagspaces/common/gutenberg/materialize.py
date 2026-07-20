@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
@@ -21,7 +20,7 @@ def materialize_dataset(
     chunk_size: int,
     overlap: int,
     out_path: Path,
-    book_summaries: Optional[dict[str, str]] = None,
+    book_summaries: dict[str, str] | None = None,
 ) -> dict:
     """Build the chunks parquet downstream stages consume.
 

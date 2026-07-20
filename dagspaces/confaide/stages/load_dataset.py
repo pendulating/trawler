@@ -11,10 +11,8 @@ Reference: https://github.com/skywalker023/confaide
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 import pandas as pd
-
 
 _GITHUB_RAW = "https://raw.githubusercontent.com/skywalker023/confaide/main/benchmark"
 
@@ -24,7 +22,7 @@ _DEFAULT_CACHE_DIR = os.path.join(
 )
 
 
-def _ensure_file(filename: str, cache_dir: Optional[str] = None) -> str:
+def _ensure_file(filename: str, cache_dir: str | None = None) -> str:
     """Return path to a benchmark file, downloading from GitHub if needed."""
     cache = os.path.normpath(cache_dir or _DEFAULT_CACHE_DIR)
     cached = os.path.join(cache, filename)
@@ -40,7 +38,7 @@ def _ensure_file(filename: str, cache_dir: Optional[str] = None) -> str:
     return cached
 
 
-def _load_tier2(sub_tier: str, cache_dir: Optional[str] = None) -> pd.DataFrame:
+def _load_tier2(sub_tier: str, cache_dir: str | None = None) -> pd.DataFrame:
     """Load Tier 2a or 2b vignettes with ground truth labels.
 
     Each line in the text file is a complete prompt (instruction + vignette).
@@ -74,7 +72,7 @@ def _load_tier2(sub_tier: str, cache_dir: Optional[str] = None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _parse_tier3_scenarios(cache_dir: Optional[str] = None) -> list[dict]:
+def _parse_tier3_scenarios(cache_dir: str | None = None) -> list[dict]:
     """Parse the <BEGIN>...<END> block format from tier_3.txt."""
     scenario_path = _ensure_file("tier_3.txt", cache_dir)
 
@@ -137,7 +135,7 @@ def _parse_tier3_scenarios(cache_dir: Optional[str] = None) -> list[dict]:
     return scenarios
 
 
-def _load_tier3_control(cache_dir: Optional[str] = None) -> pd.DataFrame:
+def _load_tier3_control(cache_dir: str | None = None) -> pd.DataFrame:
     """Load Tier 3 control questions (binary yes/no, correct answer always No).
 
     Each control question is paired with its scenario story for context.
@@ -185,7 +183,7 @@ def _scenario_to_row(scenario: dict, tier: str) -> dict:
     }
 
 
-def _load_tier3_free(cache_dir: Optional[str] = None) -> pd.DataFrame:
+def _load_tier3_free(cache_dir: str | None = None) -> pd.DataFrame:
     """Load Tier 3 free-response scenarios.
 
     The model answers the embedded scenario question in free form.
@@ -201,7 +199,7 @@ def _load_tier3_free(cache_dir: Optional[str] = None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _load_tier3_info(cache_dir: Optional[str] = None) -> pd.DataFrame:
+def _load_tier3_info(cache_dir: str | None = None) -> pd.DataFrame:
     """Load Tier 3 info-accessibility scenarios.
 
     The model is asked: "List all the characters who know that
@@ -217,7 +215,7 @@ def _load_tier3_info(cache_dir: Optional[str] = None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _load_tier3_sharing(cache_dir: Optional[str] = None) -> pd.DataFrame:
+def _load_tier3_sharing(cache_dir: str | None = None) -> pd.DataFrame:
     """Load Tier 3 privacy-sharing scenarios.
 
     The model is asked: "List all the characters who know the private
@@ -235,8 +233,8 @@ def _load_tier3_sharing(cache_dir: Optional[str] = None) -> pd.DataFrame:
 
 def load_dataset(
     tier: str = "2a",
-    cache_dir: Optional[str] = None,
-    sample_n: Optional[int] = None,
+    cache_dir: str | None = None,
+    sample_n: int | None = None,
 ) -> pd.DataFrame:
     """Load a CONFAIDE tier dataset.
 

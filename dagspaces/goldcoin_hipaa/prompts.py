@@ -6,7 +6,7 @@ build_instruction_applicability.py, and eval_llm.py.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Alpaca prompt template (from eval_llm.py)
@@ -142,7 +142,7 @@ APPLICABILITY_FEW_SHOT = (
 # ---------------------------------------------------------------------------
 
 def build_prompt_for_row(
-    row: Dict[str, Any],
+    row: dict[str, Any],
     task: str,
     mode: str,
     few_shot: bool = False,

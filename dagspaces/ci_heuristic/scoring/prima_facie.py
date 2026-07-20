@@ -6,18 +6,18 @@ incompleteness recognition, and the presumption-direction asymmetry
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from dagspaces.common.metric_provenance import MetricEmitter
 
 PARAMETERS = ["sender", "recipient", "subject", "information_type", "transmission_principle"]
 
 
-def _s6(state: Dict[str, Any]) -> Dict[str, Any]:
+def _s6(state: dict[str, Any]) -> dict[str, Any]:
     return state.get("s6") or {}
 
 
-def score_prima_facie(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
+def score_prima_facie(cases: list[dict[str, Any]]) -> dict[str, Any]:
     """Score step-6 artifacts against Tier B labels.
 
     Args:

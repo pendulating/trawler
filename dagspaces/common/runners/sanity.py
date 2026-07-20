@@ -22,14 +22,14 @@ flow into ``metrics.json``. Override for a single run with
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from omegaconf import OmegaConf
 
 from dagspaces.common.eval_sanity import SanityFailure
 
 
-def sanity_overrides(cfg: Any) -> "tuple[Optional[Dict[str, float]], Optional[List[str]]]":
+def sanity_overrides(cfg: Any) -> tuple[dict[str, float] | None, list[str] | None]:
     """Pull per-benchmark sanity overrides from cfg, if any.
 
     Looks at ``cfg.sanity.thresholds`` (dict like ``{parseable_rate:lt: 0.9}``)
@@ -37,8 +37,8 @@ def sanity_overrides(cfg: Any) -> "tuple[Optional[Dict[str, float]], Optional[Li
     omitted keys fall back to ``DEFAULT_THRESHOLDS`` /
     ``DEFAULT_REFUSAL_PATTERNS`` in eval_sanity.
     """
-    thresholds: Optional[Dict[str, float]] = None
-    patterns: Optional[List[str]] = None
+    thresholds: dict[str, float] | None = None
+    patterns: list[str] | None = None
     try:
         sanity_cfg = OmegaConf.select(cfg, "sanity")
         if sanity_cfg is not None:
@@ -77,7 +77,7 @@ def log_sanity_to_context(
     context: Any,
     report: Any,
     *,
-    metadata: Dict[str, Any],
+    metadata: dict[str, Any],
 ) -> None:
     """Log a SanityReport via context.logger and fold a compact summary
     into the stage's StageResult.metadata.

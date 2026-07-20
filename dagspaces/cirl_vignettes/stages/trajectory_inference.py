@@ -9,12 +9,13 @@ Reference: CI-RL get_final_action.py
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 
 from dagspaces.common.vllm_inference import run_vllm_inference
+
 from ..prompts import build_agent_prompt, post_process_action
 
 
@@ -32,13 +33,13 @@ def run_trajectory_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     sp_dict.pop("trajectory_temperature", None)
     sp_dict.pop("trajectory_max_tokens", None)
 
-    def preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess(row: dict[str, Any]) -> dict[str, Any]:
         prompt_text = build_agent_prompt(row, prompt_type=prompt_type, think=think)
         row["messages"] = [{"role": "user", "content": prompt_text}]
         row["sampling_params"] = dict(sp_dict)
         return row
 
-    def postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def postprocess(row: dict[str, Any]) -> dict[str, Any]:
         raw = str(row.get("generated_text", ""))
         row["final_action_generated"] = post_process_action(raw, think=think)
         return row

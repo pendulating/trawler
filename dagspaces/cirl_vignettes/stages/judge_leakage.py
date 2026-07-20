@@ -10,14 +10,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import pandas as pd
 from omegaconf import DictConfig
 
-from omegaconf import OmegaConf
-
 from dagspaces.common.judge_client import JudgeClient
+
 from ..prompts import build_leakage_judge_prompt, parse_leakage_judgment
 
 
@@ -48,14 +47,14 @@ def _get_batch_export_endpoint(cfg: DictConfig) -> str:
     return resolve_export_endpoint(cfg)
 
 
-def _build_leakage_items(df: pd.DataFrame) -> Tuple[List[Dict[str, Any]], set]:
+def _build_leakage_items(df: pd.DataFrame) -> tuple[list[dict[str, Any]], set]:
     """Flatten (row × sensitive_info_items) into a list of judge inputs.
 
     Returns ``(items, skipped_indices)``. Rows whose ``final_action_generated``
     is empty or lacks an ``Action:`` marker contribute no items and are
     recorded in ``skipped_indices`` (CI-RL behavior: treat as no leakage).
     """
-    items: List[Dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
     skipped: set = set()
     for idx, row in df.iterrows():
         action = str(row.get("final_action_generated", ""))
@@ -129,7 +128,7 @@ def judge_leakage(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
 
     # Batch judge
     if items:
-        def build_messages(item: Dict[str, Any]) -> List[Dict[str, str]]:
+        def build_messages(item: dict[str, Any]) -> list[dict[str, str]]:
             prompt = build_leakage_judge_prompt(
                 user_name=item["user_name"],
                 secret=item["secret"],
@@ -142,7 +141,7 @@ def judge_leakage(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         responses = []
 
     # Aggregate per row
-    row_judgments: Dict[Any, List[tuple]] = {idx: [] for idx in df.index}
+    row_judgments: dict[Any, list[tuple]] = {idx: [] for idx in df.index}
     for item, response in zip(items, responses):
         leaked = parse_leakage_judgment(response)
         row_judgments[item["row_idx"]].append((item["secret"], leaked))
@@ -213,10 +212,10 @@ def export_leakage_judge_batch(
               f"surface this; metrics distinguish judged vs. defaulted.",
               flush=True)
 
-    def custom_id_fn(item: Dict[str, Any], idx: int) -> str:
+    def custom_id_fn(item: dict[str, Any], idx: int) -> str:
         return f"cirl_vignettes:judge_leakage:{item['row_idx']}:{item['sub_idx']}"
 
-    def build_messages(item: Dict[str, Any]) -> List[Dict[str, str]]:
+    def build_messages(item: dict[str, Any]) -> list[dict[str, str]]:
         prompt = build_leakage_judge_prompt(
             user_name=item["user_name"],
             secret=item["secret"],
@@ -235,7 +234,7 @@ def export_leakage_judge_batch(
     )
 
     # Persist the items table so finalize can re-aggregate per-row.
-    items_rows: List[Dict[str, Any]] = []
+    items_rows: list[dict[str, Any]] = []
     for i, item in enumerate(items):
         items_rows.append({
             "judge_custom_id": custom_id_fn(item, i),

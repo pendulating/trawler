@@ -23,11 +23,10 @@ Output schema per completion (flat, no nesting):
 import json
 import re
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 from omegaconf import OmegaConf
-
 
 # Story-level information transfer between characters. Used to curate SFT
 # negatives (see `negative_selection` below). The gold reasoning ALWAYS contains
@@ -117,7 +116,7 @@ def _build_ci_instruction(
     if flow_context and flow_appropriateness and flow_norms_meta and flow_confidence:
         return head + " and contextual metadata."
 
-    fragments: List[str] = []
+    fragments: list[str] = []
     if flow_context:
         fragments.append("the surrounding context")
     if flow_appropriateness:
@@ -177,7 +176,7 @@ def _build_reasoning_trace(group_df: pd.DataFrame) -> str:
 def _reconstruct_flows(
     group_df: pd.DataFrame,
     toggles: FieldToggles,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Reconstruct flat CI flow dicts from exploded extraction rows.
 
     Per-flow fields beyond the base 5-tuple are gated by `toggles`. Toggling
@@ -189,7 +188,7 @@ def _reconstruct_flows(
 
     flows = []
     for _, row in group_df.iterrows():
-        flow: Dict[str, Any] = {
+        flow: dict[str, Any] = {
             "sender": row.get("ci_sender"),
             "recipient": row.get("ci_recipient"),
             "subject": row.get("ci_subject"),
@@ -280,7 +279,7 @@ def run_sft_data_prep_stage(
         )
 
     # Build a lookup from chunk identifiers to reasoning metadata
-    reasoning_lookup: Dict[tuple, Dict[str, Any]] = {}
+    reasoning_lookup: dict[tuple, dict[str, Any]] = {}
     text_col = "article_text" if "article_text" in ci_reasoning_df.columns else None
     if text_col is None:
         for candidate in ("chunk_text", "text"):
@@ -301,7 +300,7 @@ def run_sft_data_prep_stage(
         }
 
     # Group extraction rows back to chunk level
-    pairs: List[Dict[str, Any]] = []
+    pairs: list[dict[str, Any]] = []
     for group_key, group_df in ci_extraction_df.groupby(group_cols):
         if not isinstance(group_key, tuple):
             group_key = (group_key,)

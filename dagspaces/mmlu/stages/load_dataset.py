@@ -15,7 +15,7 @@ Output schema (parquet):
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -23,8 +23,8 @@ from ..prompts import LETTERS
 
 
 def _build_fewshot_pools(
-    hf_load, hf_dataset: str, hf_token: Optional[str], k_shot: int,
-) -> Dict[str, List[Dict[str, Any]]]:
+    hf_load, hf_dataset: str, hf_token: str | None, k_shot: int,
+) -> dict[str, list[dict[str, Any]]]:
     """Pull up to ``k_shot`` exemplars per subject from the ``dev`` split.
 
     Returns ``{}`` when k_shot is 0 (caller short-circuits).
@@ -36,10 +36,10 @@ def _build_fewshot_pools(
         load_kwargs["token"] = hf_token
     dev = hf_load(hf_dataset, "all", split="dev", **load_kwargs).to_pandas()
 
-    pools: Dict[str, List[Dict[str, Any]]] = {}
+    pools: dict[str, list[dict[str, Any]]] = {}
     for subj, group in dev.groupby("subject"):
         group = group.head(k_shot)
-        examples: List[Dict[str, Any]] = []
+        examples: list[dict[str, Any]] = []
         for _, r in group.iterrows():
             examples.append({
                 "question": str(r["question"]),
@@ -52,10 +52,10 @@ def _build_fewshot_pools(
 
 def load_dataset(
     hf_dataset: str = "cais/mmlu",
-    hf_config: Optional[str] = "all",
+    hf_config: str | None = "all",
     split: str = "test",
-    hf_token: Optional[str] = None,
-    sample_n: Optional[int] = None,
+    hf_token: str | None = None,
+    sample_n: int | None = None,
     k_shot: int = 0,
 ) -> pd.DataFrame:
     """Pull MMLU, normalize columns, optionally attach few-shot exemplars.

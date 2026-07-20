@@ -27,13 +27,12 @@ raises :class:`SanityFailure` and halts.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from dagspaces.common.metric_provenance import MetricEmitter
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -258,7 +257,7 @@ def emit_tier3_list_metrics(em: MetricEmitter, df: pd.DataFrame, tier: str) -> N
 # Top-level dispatch
 # ---------------------------------------------------------------------------
 
-def compute_metrics(df: pd.DataFrame, tier: str) -> Dict[str, Any]:
+def compute_metrics(df: pd.DataFrame, tier: str) -> dict[str, Any]:
     """Dispatch to tier-specific metric computation.
 
     Output is a flat dict keyed by metric name (no nesting under tier
@@ -279,14 +278,14 @@ def compute_metrics(df: pd.DataFrame, tier: str) -> Dict[str, Any]:
     return em.to_dict()
 
 
-def metrics_to_dataframe(metrics: Dict[str, Any]) -> pd.DataFrame:
+def metrics_to_dataframe(metrics: dict[str, Any]) -> pd.DataFrame:
     """Flatten metrics dict into a single-row DataFrame for parquet storage.
 
     Nested dicts (e.g., ``format.parse_status_distribution``,
     ``metric_provenance``) are JSON-stringified so the parquet stays
     flat and W&B-tableable.
     """
-    flat: Dict[str, Any] = {}
+    flat: dict[str, Any] = {}
     for k, v in metrics.items():
         if isinstance(v, dict):
             flat[k] = json.dumps(v, default=str)

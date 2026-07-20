@@ -16,12 +16,11 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 
 from dagspaces.common.batch_api import classify_response_line, load_jsonl
-
 
 # ---------------------------------------------------------------------------
 # Path conventions
@@ -36,7 +35,7 @@ QA_RESULTS_PATH = "outputs/qa_probe_inference/results.parquet"
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _load_classified_responses(output_jsonl: str) -> Dict[str, Dict[str, Any]]:
+def _load_classified_responses(output_jsonl: str) -> dict[str, dict[str, Any]]:
     """Return ``{custom_id: classification}`` for every JSONL line.
 
     Each classification is the dict returned by
@@ -46,7 +45,7 @@ def _load_classified_responses(output_jsonl: str) -> Dict[str, Dict[str, Any]]:
     parser (which would silently default leakage→False / score→0 with
     ``_judged=True`` and corrupt the resulting metric).
     """
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for line in load_jsonl(output_jsonl):
         cid = line.get("custom_id")
         if not cid:
@@ -69,7 +68,7 @@ def _row_yes(text: str) -> bool:
 
 def _finalize_leakage(
     base_dir: str,
-) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+) -> tuple[pd.DataFrame, dict[str, Any]]:
     """OR-aggregate per-secret judge responses into a row-level parquet.
 
     Mirrors ``scripts/privacylens_batch_finalize.py::_finalize_leakage``.
@@ -176,7 +175,7 @@ def _finalize_leakage(
 
 def _finalize_helpfulness(
     base_dir: str,
-) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+) -> tuple[pd.DataFrame, dict[str, Any]]:
     """One judge response per row; substring-parsed by parse_helpfulness.
 
     Error-handling: rows whose response line carries an error (sidecar
@@ -202,13 +201,13 @@ def _finalize_helpfulness(
     df = pd.read_parquet(pending_path)
     classified = _load_classified_responses(output_jsonl)
 
-    cid_to_row: Dict[str, int] = {}
+    cid_to_row: dict[str, int] = {}
     if os.path.exists(items_path):
         items_df = pd.read_parquet(items_path)
         cid_to_row = dict(zip(items_df["judge_custom_id"], items_df["row_idx"]))
 
-    per_row_content: Dict[int, str] = {}
-    per_row_ok: Dict[int, bool] = {}
+    per_row_content: dict[int, str] = {}
+    per_row_ok: dict[int, bool] = {}
     n_response_errors = 0
     for cid, info in classified.items():
         row_idx = cid_to_row.get(cid)
@@ -264,9 +263,9 @@ def _finalize_helpfulness(
 def finalize_async(
     output_root: str,
     *,
-    metrics_dir: Optional[str] = None,
-    qa_parquet: Optional[str] = None,
-) -> Dict[str, Any]:
+    metrics_dir: str | None = None,
+    qa_parquet: str | None = None,
+) -> dict[str, Any]:
     """Drain + parse + compute_metrics for one privacylens async run.
 
     Args:

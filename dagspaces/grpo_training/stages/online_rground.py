@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .clients import EmbeddingClient, JudgeClient, NormRetriever
 from .deontic import (
@@ -27,7 +27,7 @@ from .deontic import (
 from .rewards import _parse_completion
 
 
-def _flow_to_query(flow: Dict[str, Any]) -> str:
+def _flow_to_query(flow: dict[str, Any]) -> str:
     """Build a retrieval query from a single flow's CI tuple fields.
 
     Mirrors the logic in reward_prep.py so retrieval queries produce
@@ -47,7 +47,7 @@ def _flow_to_query(flow: Dict[str, Any]) -> str:
     return " ".join(parts) if parts else "information flow"
 
 
-def _flatten_flow(extraction: Dict[str, Any]) -> Dict[str, Any]:
+def _flatten_flow(extraction: dict[str, Any]) -> dict[str, Any]:
     """Flatten nested flow tuple into a single dict for query building."""
     flow_tuple = extraction.get("flow", {})
     if isinstance(flow_tuple, dict):
@@ -55,7 +55,7 @@ def _flatten_flow(extraction: Dict[str, Any]) -> Dict[str, Any]:
     return extraction
 
 
-def _norm_snippet(norm_json_str: str, max_norms: int = 3) -> List[str]:
+def _norm_snippet(norm_json_str: str, max_norms: int = 3) -> list[str]:
     """Extract short summaries from retrieved norm JSON for tracing."""
     try:
         norms = json.loads(norm_json_str)
@@ -76,17 +76,17 @@ def _norm_snippet(norm_json_str: str, max_norms: int = 3) -> List[str]:
         return []
 
 
-def _pick_wrong_source(source_id: str, all_source_ids: List[str]) -> Optional[str]:
+def _pick_wrong_source(source_id: str, all_source_ids: list[str]) -> str | None:
     """Pick a random source ID different from the correct one."""
     candidates = [s for s in all_source_ids if s != source_id]
     return random.choice(candidates) if candidates else None
 
 
 def _rankings_to_scores(
-    rankings: List[Dict[str, Any]],
+    rankings: list[dict[str, Any]],
     n_candidates: int,
     rank_weight: float = 0.5,
-) -> List[float]:
+) -> list[float]:
     """Convert a listwise judge ranking into per-candidate scores in [0, 1].
 
     score_i = rank_weight * (n - rank_i) / (n - 1) + (1 - rank_weight) * grounding_i
@@ -150,22 +150,22 @@ class OnlineRGround:
         embedding_client: EmbeddingClient,
         judge_client: JudgeClient,
         norm_retriever: NormRetriever,
-        all_source_ids: Optional[List[str]] = None,
+        all_source_ids: list[str] | None = None,
         contrastive_lambda: float = 0.5,
         no_flow_judge_system_prompt: str = "",
         no_flow_judge_prompt_template: str = "",
-        no_flow_judge_json_schema: Optional[Dict] = None,
+        no_flow_judge_json_schema: dict | None = None,
         scoring_mode: str = "absolute",
         ranking_system_prompt: str = "",
         ranking_prompt_template: str = "",
-        ranking_json_schema: Optional[Dict] = None,
+        ranking_json_schema: dict | None = None,
         rank_top_k: int = 5,
         rank_weight: float = 0.5,
         app_weight: float = 0.0,
         app_mode: str = "additive",
         app_floor: float = 0.4,
-        app_floor_prohibit: Optional[float] = None,
-        app_hedge_prohibit: Optional[float] = None,
+        app_floor_prohibit: float | None = None,
+        app_hedge_prohibit: float | None = None,
     ):
         if scoring_mode not in ("absolute", "ranked"):
             raise ValueError(f"Unknown rground scoring mode: {scoring_mode!r}")
@@ -237,10 +237,10 @@ class OnlineRGround:
             float(app_hedge_prohibit) if app_hedge_prohibit is not None else None)
         self._consecutive_zero_batches = 0
         self._total_calls = 0
-        self.last_diagnostics: List[List[Dict[str, Any]]] = []
-        self.last_health: Dict[str, float] = {}
+        self.last_diagnostics: list[list[dict[str, Any]]] = []
+        self.last_health: dict[str, float] = {}
 
-    def _push_health(self, metrics: Dict[str, Any]) -> None:
+    def _push_health(self, metrics: dict[str, Any]) -> None:
         """Surface per-call reward health under ``rground/*`` on the W&B run.
 
         One bounded scalar set per reward call. Uses ``commit=False`` so the
@@ -249,7 +249,7 @@ class OnlineRGround:
         for tests and offline inspection. A judge that dies mid-run shows up
         here immediately instead of only in stdout.
         """
-        out: Dict[str, float] = {}
+        out: dict[str, float] = {}
         for k, v in metrics.items():
             try:
                 out[f"rground/{k}"] = round(float(v), 4)
@@ -273,10 +273,10 @@ class OnlineRGround:
 
     def __call__(
         self,
-        completions: List[str],
-        prompts: List[str],
-        metadata_list: List[Dict[str, Any]],
-    ) -> List[float]:
+        completions: list[str],
+        prompts: list[str],
+        metadata_list: list[dict[str, Any]],
+    ) -> list[float]:
         """Evaluate R_ground for a batch of completions.
 
         Each completion is scored against the correct source AND a random
@@ -291,15 +291,15 @@ class OnlineRGround:
         # ---------------------------------------------------------------
         # Phase 1: Parse completions and collect per-flow queries
         # ---------------------------------------------------------------
-        completion_flow_ranges: List[tuple] = []  # (start_idx, count)
-        completion_valid_no_flow: List[bool] = []
-        completion_source_ids: List[str] = []
-        completion_wrong_sources: List[Optional[str]] = []
+        completion_flow_ranges: list[tuple] = []  # (start_idx, count)
+        completion_valid_no_flow: list[bool] = []
+        completion_source_ids: list[str] = []
+        completion_wrong_sources: list[str | None] = []
 
-        all_queries: List[str] = []
-        all_chunk_texts: List[str] = []
-        all_flow_jsons: List[str] = []
-        all_source_ids: List[str] = []
+        all_queries: list[str] = []
+        all_chunk_texts: list[str] = []
+        all_flow_jsons: list[str] = []
+        all_source_ids: list[str] = []
 
         for i, completion in enumerate(completions):
             meta = metadata_list[i] if i < len(metadata_list) else {}
@@ -394,9 +394,9 @@ class OnlineRGround:
             and len(self.all_source_ids) > 1
         )
 
-        wrong_judge_results: List[Dict[str, Any]] = []
-        wrong_norms: List[str] = []
-        wrong_sims: List[list] = []
+        wrong_judge_results: list[dict[str, Any]] = []
+        wrong_norms: list[str] = []
+        wrong_sims: list[list] = []
         if do_contrastive:
             wrong_retrieval = self.norm_retriever.retrieve_batch(
                 query_embeddings, all_source_ids, flow_wrong_sources,
@@ -418,11 +418,11 @@ class OnlineRGround:
         # ---------------------------------------------------------------
         # Phase 5: Aggregate per-flow scores with contrastive margin
         # ---------------------------------------------------------------
-        scores: List[float] = [0.0] * len(completions)
+        scores: list[float] = [0.0] * len(completions)
         self.last_diagnostics = [[] for _ in completions]
-        no_flow_indices: List[int] = []
-        _hl_corrects: List[float] = []
-        _hl_wrongs: List[float] = []
+        no_flow_indices: list[int] = []
+        _hl_corrects: list[float] = []
+        _hl_wrongs: list[float] = []
 
         for comp_idx, (start_idx, flow_count) in enumerate(completion_flow_ranges):
             if flow_count == 0:
@@ -456,7 +456,7 @@ class OnlineRGround:
                     w_score = 0.4 * w_nm + 0.4 * w_gov + 0.2 * w_ac
                 wrong_total += w_score
 
-                diag: Dict[str, Any] = {
+                diag: dict[str, Any] = {
                     "query": all_queries[j],
                     "source_id": all_source_ids[j],
                     "correct_norm_match": round(c_nm, 4),
@@ -534,10 +534,10 @@ class OnlineRGround:
 
     def _call_ranked(
         self,
-        completions: List[str],
-        prompts: List[str],
-        metadata_list: List[Dict[str, Any]],
-    ) -> List[float]:
+        completions: list[str],
+        prompts: list[str],
+        metadata_list: list[dict[str, Any]],
+    ) -> list[float]:
         """Listwise R_ground: rank same-prompt completions against each other.
 
         Groups completions by prompt, retrieves ONE shared norm set per group
@@ -562,7 +562,7 @@ class OnlineRGround:
         self.last_diagnostics = [[] for _ in range(n)]
 
         # ---- Group completions by prompt ----
-        group_members: Dict[str, List[int]] = {}
+        group_members: dict[str, list[int]] = {}
         for i in range(n):
             meta = metadata_list[i] if i < len(metadata_list) else {}
             key = (prompts[i] if i < len(prompts) and prompts[i] else "") \
@@ -570,8 +570,8 @@ class OnlineRGround:
             group_members.setdefault(key, []).append(i)
 
         # ---- Parse all completions; collect texts to embed ----
-        candidate_texts: Dict[int, str] = {}   # idx → block text for the judge
-        flow_queries: Dict[int, List[str]] = {}  # idx → retrieval queries
+        candidate_texts: dict[int, str] = {}   # idx → block text for the judge
+        flow_queries: dict[int, list[str]] = {}  # idx → retrieval queries
         for i, completion in enumerate(completions):
             parsed = _parse_completion(completion)
             if parsed is None:
@@ -599,10 +599,10 @@ class OnlineRGround:
                 flow_queries[i] = []
 
         # ---- Batch-embed all flow queries + one chunk text per group ----
-        embed_texts: List[str] = []
-        query_slices: Dict[int, tuple] = {}  # idx → (start, count) in embed_texts
-        group_chunk_pos: Dict[str, int] = {}  # group key → chunk-text position
-        group_meta: Dict[str, Dict[str, Any]] = {}
+        embed_texts: list[str] = []
+        query_slices: dict[int, tuple] = {}  # idx → (start, count) in embed_texts
+        group_chunk_pos: dict[str, int] = {}  # group key → chunk-text position
+        group_meta: dict[str, dict[str, Any]] = {}
         for key, members in group_members.items():
             lead_meta = metadata_list[members[0]] if members[0] < len(metadata_list) else {}
             chunk_text = lead_meta.get("chunk_text", "") or \
@@ -629,10 +629,10 @@ class OnlineRGround:
         do_contrastive = (
             self.contrastive_lambda > 0.0 and len(self.all_source_ids) > 1
         )
-        correct_items: List[Dict[str, Any]] = []
-        wrong_items: List[Dict[str, Any]] = []
-        group_candidates: Dict[str, List[int]] = {}  # key → judged member idxs
-        group_order: List[str] = []
+        correct_items: list[dict[str, Any]] = []
+        wrong_items: list[dict[str, Any]] = []
+        group_candidates: dict[str, list[int]] = {}  # key → judged member idxs
+        group_order: list[str] = []
         for key, members in group_members.items():
             judged = [i for i in members if i in candidate_texts]
             group_candidates[key] = judged
@@ -715,7 +715,7 @@ class OnlineRGround:
         ) if live_correct else []
         # Re-align correct results with group order (None where the group
         # embedding was degenerate — handled as judge-failed downstream)
-        correct_results: List[Optional[List[Dict[str, Any]]]] = []
+        correct_results: list[list[dict[str, Any]] | None] = []
         cpos = 0
         for it in correct_items:
             if it is None:
@@ -731,7 +731,7 @@ class OnlineRGround:
             json_schema=self._ranking_json_schema,
         ) if live_wrong else []
         # Re-align wrong results with group order (None where skipped)
-        wrong_results: List[Optional[List[Dict[str, Any]]]] = []
+        wrong_results: list[list[dict[str, Any]] | None] = []
         wpos = 0
         for it in wrong_items:
             if it is None:
@@ -975,10 +975,10 @@ class OnlineRGround:
 
     def _score_no_flow_coverage(
         self,
-        indices: List[int],
-        metadata_list: List[Dict[str, Any]],
-        completion_source_ids: List[str],
-        completion_wrong_sources: List[Optional[str]],
+        indices: list[int],
+        metadata_list: list[dict[str, Any]],
+        completion_source_ids: list[str],
+        completion_wrong_sources: list[str | None],
     ) -> tuple:
         """Score no-flow completions via coverage judge against both sources.
 
@@ -1022,9 +1022,9 @@ class OnlineRGround:
             self.contrastive_lambda > 0.0
             and len(self.all_source_ids) > 1
         )
-        wrong_results: List[Dict[str, Any]] = []
-        wrong_norms_list: List[str] = []
-        wrong_sims: List[list] = []
+        wrong_results: list[dict[str, Any]] = []
+        wrong_norms_list: list[str] = []
+        wrong_sims: list[list] = []
         if do_contrastive:
             wrong_ret = self.norm_retriever.retrieve_batch(
                 embeddings, source_ids, wrong_sources,
@@ -1052,7 +1052,7 @@ class OnlineRGround:
             rg = self._coverage_score_to_rground(cc, wc, golds[j])
             scores.append(rg)
 
-            diag: Dict[str, Any] = {
+            diag: dict[str, Any] = {
                 "type": "no_flow_coverage",
                 "source_id": source_ids[j],
                 "gold_has_exchange": golds[j],
@@ -1074,12 +1074,12 @@ class OnlineRGround:
 
     def _score_no_flow_only(
         self,
-        completions: List[str],
-        metadata_list: List[Dict[str, Any]],
-        completion_valid_no_flow: List[bool],
-        completion_source_ids: List[str],
-        completion_wrong_sources: List[Optional[str]],
-    ) -> List[float]:
+        completions: list[str],
+        metadata_list: list[dict[str, Any]],
+        completion_valid_no_flow: list[bool],
+        completion_source_ids: list[str],
+        completion_wrong_sources: list[str | None],
+    ) -> list[float]:
         """Handle the case where ALL completions are no-flow or parse failures."""
         no_flow_indices = [
             i for i in range(len(completions))

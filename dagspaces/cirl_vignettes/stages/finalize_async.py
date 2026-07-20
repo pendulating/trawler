@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
 
 from dagspaces.common.batch_api import classify_response_line, load_jsonl
+
 from ..prompts import parse_helpfulness_score, parse_leakage_judgment
 
 LEAKAGE_DIR = "outputs/judge_leakage_batch"
@@ -35,10 +36,10 @@ HELPFULNESS_DIR = "outputs/judge_helpfulness_batch"
 TRAJECTORY_PATH = "outputs/trajectory_inference/dataset.parquet"
 
 
-def _classified_by_cid(output_jsonl: str) -> Dict[str, Dict]:
+def _classified_by_cid(output_jsonl: str) -> dict[str, dict]:
     """Return ``{custom_id: classification}`` distinguishing api errors
     from real responses (see batch_api.classify_response_line)."""
-    out: Dict[str, Dict] = {}
+    out: dict[str, dict] = {}
     for line in load_jsonl(output_jsonl):
         cid = line.get("custom_id")
         if not cid:
@@ -47,7 +48,7 @@ def _classified_by_cid(output_jsonl: str) -> Dict[str, Dict]:
     return out
 
 
-def _require(base: str, pipeline_hint: str) -> Dict[str, str]:
+def _require(base: str, pipeline_hint: str) -> dict[str, str]:
     paths = {
         "pending": os.path.join(base, "pending.parquet"),
         "items": os.path.join(base, "items.parquet"),
@@ -81,7 +82,7 @@ def finalize_leakage(run_dir: str, trajectory_df: pd.DataFrame) -> pd.DataFrame:
         axis=1,
     )
 
-    row_judgments: Dict[object, list] = {idx: [] for idx in trajectory_df.index}
+    row_judgments: dict[object, list] = {idx: [] for idx in trajectory_df.index}
     for _, r in items_df.iterrows():
         row_judgments.setdefault(r["row_idx"], []).append(
             (r["secret"], bool(r["leaked"]))
@@ -187,8 +188,8 @@ def finalize_helpfulness(run_dir: str, df: pd.DataFrame) -> pd.DataFrame:
 
 def finalize_trajectory_async(
     run_dir: str,
-    metrics_dir: Optional[str] = None,
-) -> Dict[str, Any]:
+    metrics_dir: str | None = None,
+) -> dict[str, Any]:
     """Merge both judges' sidecar outputs and compute trajectory metrics.
 
     Args:

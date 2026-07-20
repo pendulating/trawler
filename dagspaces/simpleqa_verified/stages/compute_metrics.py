@@ -24,17 +24,16 @@ every scalar.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
 from dagspaces.common.metric_provenance import MetricEmitter
 
-
 _VERDICTS = ("correct", "incorrect", "not_attempted")
 
 
-def compute_metrics(df: pd.DataFrame) -> Dict[str, Any]:
+def compute_metrics(df: pd.DataFrame) -> dict[str, Any]:
     """Return the SimpleQA metric dict for a verdict-stamped DataFrame.
 
     Args:
@@ -111,7 +110,7 @@ def compute_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     # Topic-level breakdown when present — useful for the paper appendix
     # but never a headline metric.
     if "topic" in df.columns and df["topic"].astype(bool).any():
-        topic_breakdown: Dict[str, Dict[str, Any]] = {}
+        topic_breakdown: dict[str, dict[str, Any]] = {}
         for topic, sub in df.groupby("topic"):
             if not topic:
                 continue
@@ -132,9 +131,9 @@ def compute_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     return em.to_dict()
 
 
-def metrics_to_dataframe(metrics: Dict[str, Any]) -> pd.DataFrame:
+def metrics_to_dataframe(metrics: dict[str, Any]) -> pd.DataFrame:
     """Flatten metrics dict into a single-row DataFrame for parquet storage."""
-    flat: Dict[str, Any] = {}
+    flat: dict[str, Any] = {}
     for k, v in metrics.items():
         if isinstance(v, dict):
             flat[k] = json.dumps(v, default=str)

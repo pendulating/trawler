@@ -1,11 +1,13 @@
 import json
-import requests
-import re
-import pandas as pd
-from typing import List, Dict, Any, Optional
 import os
+import re
+from typing import Any
 
-def fetch_gutenberg_text(gutenberg_id: str) -> Optional[str]:
+import pandas as pd
+import requests
+
+
+def fetch_gutenberg_text(gutenberg_id: str) -> str | None:
     """Fetch text from Project Gutenberg mirror."""
     # Common URL patterns for Project Gutenberg
     urls = [
@@ -63,7 +65,7 @@ def clean_gutenberg_boilerplate(text: str) -> str:
 
     return text.strip()
 
-def chunk_text(text: str, chunk_size: int = 6000, overlap: int = 1000) -> List[str]:
+def chunk_text(text: str, chunk_size: int = 6000, overlap: int = 1000) -> list[str]:
     """Semantic chunking by paragraph with character-level overlap.
 
     Builds chunks up to *chunk_size* characters by appending whole
@@ -78,7 +80,7 @@ def chunk_text(text: str, chunk_size: int = 6000, overlap: int = 1000) -> List[s
     holds content beyond its overlap seed (no duplicate-only chunks).
     """
     paragraphs = re.split(r'\n\s*\n', text)
-    chunks: List[str] = []
+    chunks: list[str] = []
     current_chunk = ""
     seed_len = 0  # length of the overlap seed at the head of current_chunk
 
@@ -129,7 +131,7 @@ def chunk_text(text: str, chunk_size: int = 6000, overlap: int = 1000) -> List[s
 
     return chunks
 
-def fetch_text_from_url(url: str) -> Optional[str]:
+def fetch_text_from_url(url: str) -> str | None:
     """Fetch plain text from an arbitrary URL."""
     try:
         response = requests.get(url, timeout=60)

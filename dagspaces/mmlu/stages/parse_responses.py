@@ -19,17 +19,15 @@ accuracy.
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 import pandas as pd
 
 from dagspaces.common.vllm_inference import _strip_think_blocks
 
-
 _BOUNDED_LETTER = re.compile(r"\b([ABCD])\b")
 
 
-def _try_json_answer(response: str) -> Optional[str]:
+def _try_json_answer(response: str) -> str | None:
     from dagspaces.common.json_extraction import extract_json_from_text
 
     text = _strip_think_blocks(response).strip()
@@ -74,28 +72,28 @@ def parse_responses(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["prediction_letter"] = df["generated_text"].apply(lambda x: parse_letter(str(x)))
     df["prediction"] = df["prediction_letter"].apply(
-        lambda l: ("ABCD".index(l) if l in ("A", "B", "C", "D") else -1)
+        lambda l: "ABCD".index(l) if l in ("A", "B", "C", "D") else -1
     )
     df["parse_status"] = df.apply(
         lambda r: (
-            "empty" if not str(r["generated_text"]).strip()
+            "empty"
+            if not str(r["generated_text"]).strip()
             else (
-                "unparseable" if r["prediction_letter"] == "unparseable"
-                else "parsed"
+                "unparseable" if r["prediction_letter"] == "unparseable" else "parsed"
             )
         ),
         axis=1,
     )
     df["is_correct"] = df.apply(
-        lambda r: (r["prediction"] == int(r["answer"])) if r["prediction"] != -1 else False,
+        lambda r: (
+            (r["prediction"] == int(r["answer"])) if r["prediction"] != -1 else False
+        ),
         axis=1,
     )
 
     total = len(df)
     n_unp = int((df["prediction_letter"] == "unparseable").sum())
-    n_empty = int(
-        df["generated_text"].apply(lambda x: len(str(x).strip()) == 0).sum()
-    )
+    n_empty = int(df["generated_text"].apply(lambda x: len(str(x).strip()) == 0).sum())
     print(
         f"[parse_responses] {total} rows | unparseable={n_unp} "
         f"({(n_unp / max(total, 1)) * 100:.1f}%) | empty={n_empty} | "

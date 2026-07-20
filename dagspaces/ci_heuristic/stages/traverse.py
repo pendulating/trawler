@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 LADDER_LEVELS = ("l0", "l1", "l2", "l3", "l4", "l5")
 
 
-def _parse_json_artifact(text: str) -> Tuple[Dict[str, Any], str]:
+def _parse_json_artifact(text: str) -> tuple[dict[str, Any], str]:
     """Extract and parse the JSON object from generated text.
 
     Returns (artifact, parse_status) where parse_status is
@@ -67,20 +68,24 @@ def _parse_json_artifact(text: str) -> Tuple[Dict[str, Any], str]:
     return {"parse_error": raw[:500]}, "unparseable"
 
 
-def _default_run_inference(df: pd.DataFrame, cfg: Any, preprocess, postprocess, stage_name: str) -> pd.DataFrame:
+def _default_run_inference(
+    df: pd.DataFrame, cfg: Any, preprocess, postprocess, stage_name: str
+) -> pd.DataFrame:
     from dagspaces.common.vllm_inference import run_vllm_inference
 
-    return run_vllm_inference(df, cfg, preprocess=preprocess, postprocess=postprocess, stage_name=stage_name)
+    return run_vllm_inference(
+        df, cfg, preprocess=preprocess, postprocess=postprocess, stage_name=stage_name
+    )
 
 
 def _generate_round(
     cases: pd.DataFrame,
     cfg: Any,
-    sys_usr: List[Tuple[str, str]],
+    sys_usr: list[tuple[str, str]],
     schema_model,
     stage_name: str,
     run_inference: Callable,
-) -> List[Tuple[str, str]]:
+) -> list[tuple[str, str]]:
     """One batched generation round. Returns [(generated_text, case_id), ...] aligned to cases order."""
     round_df = cases[["case_id"]].copy()
     round_df["_sys"] = [p[0] for p in sys_usr]
@@ -93,7 +98,7 @@ def _generate_round(
         sp_base = dict(sp_node or {})
     guided = {"guided_decoding": {"json": schema_model.model_json_schema()}}
 
-    def preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess(row: dict[str, Any]) -> dict[str, Any]:
         row["messages"] = [
             {"role": "system", "content": row["_sys"]},
             {"role": "user", "content": row["_usr"]},
@@ -101,18 +106,26 @@ def _generate_round(
         row["sampling_params"] = {**sp_base, **guided}
         return row
 
-    def postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def postprocess(row: dict[str, Any]) -> dict[str, Any]:
         return row
 
-    out = run_inference(round_df, cfg, preprocess=preprocess, postprocess=postprocess, stage_name=stage_name)
+    out = run_inference(
+        round_df,
+        cfg,
+        preprocess=preprocess,
+        postprocess=postprocess,
+        stage_name=stage_name,
+    )
     by_id = dict(zip(out["case_id"], out["generated_text"]))
     return [(str(by_id.get(cid, "")), cid) for cid in cases["case_id"]]
 
 
-def _load_exemplar(cfg: Any) -> Optional[str]:
+def _load_exemplar(cfg: Any) -> str | None:
     path = str(OmegaConf.select(cfg, "ladder.exemplar_path") or "")
     if not path:
-        raise ValueError("ladder level l4 requires ladder.exemplar_path (a contaminated Tier A gold file)")
+        raise ValueError(
+            "ladder level l4 requires ladder.exemplar_path (a contaminated Tier A gold file)"
+        )
     gold = json.load(open(path))
     return render_exemplar(gold)
 
@@ -134,21 +147,30 @@ def run_traversal(
         raise ValueError(f"ladder.level must be one of {LADDER_LEVELS}, got {level!r}")
 
     tier_by_id = dict(zip(df["case_id"], df["tier"]))
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
 
     if level in ("l0", "l1"):
         builder = build_l0_prompt if level == "l0" else build_l1_prompt
         schema = L0Verdict if level == "l0" else L1Traversal
         prompts = [builder(p) for p in df["practice_input"]]
-        results = _generate_round(df, cfg, prompts, schema, f"traverse_{level}", run_inference)
+        results = _generate_round(
+            df, cfg, prompts, schema, f"traverse_{level}", run_inference
+        )
         for (text, cid), (sys_p, usr_p) in zip(results, prompts):
             artifact, status = _parse_json_artifact(text)
-            records.append({
-                "case_id": cid, "tier": tier_by_id[cid], "ladder_level": level,
-                "step": "monolithic", "prompt_sys": sys_p, "prompt_usr": usr_p,
-                "generated_text": text, "artifact_json": json.dumps(artifact),
-                "parse_status": status,
-            })
+            records.append(
+                {
+                    "case_id": cid,
+                    "tier": tier_by_id[cid],
+                    "ladder_level": level,
+                    "step": "monolithic",
+                    "prompt_sys": sys_p,
+                    "prompt_usr": usr_p,
+                    "generated_text": text,
+                    "artifact_json": json.dumps(artifact),
+                    "parse_status": status,
+                }
+            )
         return pd.DataFrame(records)
 
     # Chain levels: l2 (bare), l3 (+guiding questions), l4 (+exemplar),
@@ -157,16 +179,30 @@ def run_traversal(
     exemplar = _load_exemplar(cfg) if level == "l4" else None
     deliberative = level == "l5"
 
-    state: Dict[str, Dict[str, Any]] = {cid: {} for cid in df["case_id"]}
+    state: dict[str, dict[str, Any]] = {cid: {} for cid in df["case_id"]}
 
-    def _record(step: str, cid: str, sys_p: str, usr_p: str, text: str,
-                 artifact: Dict[str, Any], status: str) -> None:
-        records.append({
-            "case_id": cid, "tier": tier_by_id[cid], "ladder_level": level,
-            "step": step, "prompt_sys": sys_p, "prompt_usr": usr_p,
-            "generated_text": text, "artifact_json": json.dumps(artifact),
-            "parse_status": status,
-        })
+    def _record(
+        step: str,
+        cid: str,
+        sys_p: str,
+        usr_p: str,
+        text: str,
+        artifact: dict[str, Any],
+        status: str,
+    ) -> None:
+        records.append(
+            {
+                "case_id": cid,
+                "tier": tier_by_id[cid],
+                "ladder_level": level,
+                "step": step,
+                "prompt_sys": sys_p,
+                "prompt_usr": usr_p,
+                "generated_text": text,
+                "artifact_json": json.dumps(artifact),
+                "parse_status": status,
+            }
+        )
 
     for step in STEP_ORDER:
         if deliberative and step in ("s5", "s7", "s8", "s9"):
@@ -183,7 +219,12 @@ def run_traversal(
             for row in df.itertuples()
         ]
         results = _generate_round(
-            df, cfg, prompts, STEP_SCHEMAS[step], f"traverse_{level}_{step}", run_inference
+            df,
+            cfg,
+            prompts,
+            STEP_SCHEMAS[step],
+            f"traverse_{level}_{step}",
+            run_inference,
         )
         n_ok = 0
         for (text, cid), (sys_p, usr_p) in zip(results, prompts):
@@ -199,18 +240,24 @@ def run_traversal(
 def _member_round(
     df: pd.DataFrame,
     cfg: Any,
-    prompts: List[Tuple[str, str]],
-    member_ids: List[str],
+    prompts: list[tuple[str, str]],
+    member_ids: list[str],
     schema_model,
     stage_name: str,
     run_inference: Callable,
-) -> List[Tuple[str, str, str]]:
+) -> list[tuple[str, str, str]]:
     """One batched round over cases x members. Returns (text, case_id, member_id)
     triples. Rows are given composite ids so _generate_round can align them."""
-    round_df = pd.DataFrame({
-        "case_id": [f"{cid}::{mid}" for cid, mid in zip(df["case_id_expanded"], member_ids)],
-    })
-    results = _generate_round(round_df, cfg, prompts, schema_model, stage_name, run_inference)
+    round_df = pd.DataFrame(
+        {
+            "case_id": [
+                f"{cid}::{mid}" for cid, mid in zip(df["case_id_expanded"], member_ids)
+            ],
+        }
+    )
+    results = _generate_round(
+        round_df, cfg, prompts, schema_model, stage_name, run_inference
+    )
     out = []
     for text, composite in results:
         cid, mid = composite.rsplit("::", 1)
@@ -222,7 +269,7 @@ def _run_deliberative_step(
     df: pd.DataFrame,
     cfg: Any,
     step: str,
-    state: Dict[str, Dict[str, Any]],
+    state: dict[str, dict[str, Any]],
     _record,
     run_inference: Callable,
     level: str,
@@ -247,7 +294,8 @@ def _run_deliberative_step(
     s7_structure = str(_OC.select(cfg, "ladder.s7_structure") or "ensemble")
     include_marginalized = bool(
         _OC.select(cfg, "ladder.include_marginalized")
-        if _OC.select(cfg, "ladder.include_marginalized") is not None else True
+        if _OC.select(cfg, "ladder.include_marginalized") is not None
+        else True
     )
 
     if step == "s5":
@@ -255,15 +303,26 @@ def _run_deliberative_step(
         # Round A: elicit expectations, cases x personas in one batch
         flat_prompts, flat_cids, flat_mids = [], [], []
         for row in df.itertuples():
-            for p, prompt in zip(personas, build_norm_elicitation_prompts(
-                    row.practice_input, state[row.case_id], personas)):
+            for p, prompt in zip(
+                personas,
+                build_norm_elicitation_prompts(
+                    row.practice_input, state[row.case_id], personas
+                ),
+            ):
                 flat_prompts.append(prompt)
                 flat_cids.append(row.case_id)
                 flat_mids.append(p.id)
         exp_df = pd.DataFrame({"case_id_expanded": flat_cids})
-        results = _member_round(exp_df, cfg, flat_prompts, flat_mids,
-                                 NormExpectation, f"traverse_{level}_s5_elicit", run_inference)
-        by_case: Dict[str, List[Dict[str, Any]]] = {cid: [] for cid in df["case_id"]}
+        results = _member_round(
+            exp_df,
+            cfg,
+            flat_prompts,
+            flat_mids,
+            NormExpectation,
+            f"traverse_{level}_s5_elicit",
+            run_inference,
+        )
+        by_case: dict[str, list[dict[str, Any]]] = {cid: [] for cid in df["case_id"]}
         for (text, cid, mid), (sys_p, usr_p) in zip(results, flat_prompts):
             artifact, status = _parse_json_artifact(text)
             by_case[cid].append(artifact)
@@ -274,20 +333,34 @@ def _run_deliberative_step(
         for row in df.itertuples():
             stats = aggregate_expectations(by_case[row.case_id])
             stats_by_case[row.case_id] = stats
-            synth_prompts.append(build_norm_synthesis_prompt(row.practice_input, state[row.case_id], stats))
-        results = _generate_round(df, cfg, synth_prompts, STEP_SCHEMAS["s5"],
-                                   f"traverse_{level}_s5_synth", run_inference)
+            synth_prompts.append(
+                build_norm_synthesis_prompt(
+                    row.practice_input, state[row.case_id], stats
+                )
+            )
+        results = _generate_round(
+            df,
+            cfg,
+            synth_prompts,
+            STEP_SCHEMAS["s5"],
+            f"traverse_{level}_s5_synth",
+            run_inference,
+        )
         for (text, cid), (sys_p, usr_p) in zip(results, synth_prompts):
             artifact, status = _parse_json_artifact(text)
-            artifact["_population_stats"] = {k: v for k, v in stats_by_case[cid].items() if k != "expectations"}
+            artifact["_population_stats"] = {
+                k: v for k, v in stats_by_case[cid].items() if k != "expectations"
+            }
             state[cid]["s5"] = artifact
             _record("s5", cid, sys_p, usr_p, text, artifact, status)
         return
 
     if step == "s7":
         panel = stakeholder_set(include_marginalized)
-        member_artifacts: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {cid: [] for cid in df["case_id"]}
-        prior_texts: Dict[str, List[str]] = {cid: [] for cid in df["case_id"]}
+        member_artifacts: dict[str, list[tuple[str, dict[str, Any]]]] = {
+            cid: [] for cid in df["case_id"]
+        }
+        prior_texts: dict[str, list[str]] = {cid: [] for cid in df["case_id"]}
 
         if s7_structure in ("ensemble", "chain"):
             # ensemble: one batch, no shared info; chain: sequential members,
@@ -297,35 +370,74 @@ def _run_deliberative_step(
                 flat_prompts, flat_cids, flat_mids = [], [], []
                 for row in df.itertuples():
                     for p in panel:
-                        flat_prompts.append(build_stakeholder_prompt(row.practice_input, state[row.case_id], p))
+                        flat_prompts.append(
+                            build_stakeholder_prompt(
+                                row.practice_input, state[row.case_id], p
+                            )
+                        )
                         flat_cids.append(row.case_id)
                         flat_mids.append(p.id)
                 exp_df = pd.DataFrame({"case_id_expanded": flat_cids})
-                results = _member_round(exp_df, cfg, flat_prompts, flat_mids,
-                                         STEP_SCHEMAS["s7"], f"traverse_{level}_s7_ensemble", run_inference)
+                results = _member_round(
+                    exp_df,
+                    cfg,
+                    flat_prompts,
+                    flat_mids,
+                    STEP_SCHEMAS["s7"],
+                    f"traverse_{level}_s7_ensemble",
+                    run_inference,
+                )
                 for (text, cid, mid), (sys_p, usr_p) in zip(results, flat_prompts):
                     artifact, status = _parse_json_artifact(text)
                     member_artifacts[cid].append((mid, artifact))
-                    _record(f"s7:member:{mid}", cid, sys_p, usr_p, text, artifact, status)
+                    _record(
+                        f"s7:member:{mid}", cid, sys_p, usr_p, text, artifact, status
+                    )
             else:  # chain
                 for p in panel:
                     prompts = [
-                        build_stakeholder_prompt(row.practice_input, state[row.case_id], p,
-                                                  prior_responses=prior_texts[row.case_id] or None)
+                        build_stakeholder_prompt(
+                            row.practice_input,
+                            state[row.case_id],
+                            p,
+                            prior_responses=prior_texts[row.case_id] or None,
+                        )
                         for row in df.itertuples()
                     ]
-                    results = _generate_round(df, cfg, prompts, STEP_SCHEMAS["s7"],
-                                               f"traverse_{level}_s7_chain_{p.id}", run_inference)
+                    results = _generate_round(
+                        df,
+                        cfg,
+                        prompts,
+                        STEP_SCHEMAS["s7"],
+                        f"traverse_{level}_s7_chain_{p.id}",
+                        run_inference,
+                    )
                     for (text, cid), (sys_p, usr_p) in zip(results, prompts):
                         artifact, status = _parse_json_artifact(text)
                         member_artifacts[cid].append((p.id, artifact))
                         prior_texts[cid].append(text)
-                        _record(f"s7:member:{p.id}", cid, sys_p, usr_p, text, artifact, status)
+                        _record(
+                            f"s7:member:{p.id}",
+                            cid,
+                            sys_p,
+                            usr_p,
+                            text,
+                            artifact,
+                            status,
+                        )
         elif s7_structure == "debate":
-            from ..deliberation import DEBATE_INSTRUCTIONS, Persona as _Persona
+            from ..deliberation import DEBATE_INSTRUCTIONS
+            from ..deliberation import Persona as _Persona
+
             debaters = [
-                _Persona("defender", "an advocate who believes the practice is on balance defensible"),
-                _Persona("critic", "an advocate who believes the practice is on balance harmful"),
+                _Persona(
+                    "defender",
+                    "an advocate who believes the practice is on balance defensible",
+                ),
+                _Persona(
+                    "critic",
+                    "an advocate who believes the practice is on balance harmful",
+                ),
             ]
             cycles = 2
             for cycle in range(cycles):
@@ -334,17 +446,37 @@ def _run_deliberative_step(
                     for row in df.itertuples():
                         prior = prior_texts[row.case_id]
                         combo = DEBATE_INSTRUCTIONS[d.id] if prior else "{prior}"
-                        prompts.append(build_stakeholder_prompt(
-                            row.practice_input, state[row.case_id], d,
-                            prior_responses=prior[-1:] or None, combination_template=combo))
-                    results = _generate_round(df, cfg, prompts, STEP_SCHEMAS["s7"],
-                                               f"traverse_{level}_s7_debate{cycle}_{d.id}", run_inference)
+                        prompts.append(
+                            build_stakeholder_prompt(
+                                row.practice_input,
+                                state[row.case_id],
+                                d,
+                                prior_responses=prior[-1:] or None,
+                                combination_template=combo,
+                            )
+                        )
+                    results = _generate_round(
+                        df,
+                        cfg,
+                        prompts,
+                        STEP_SCHEMAS["s7"],
+                        f"traverse_{level}_s7_debate{cycle}_{d.id}",
+                        run_inference,
+                    )
                     for (text, cid), (sys_p, usr_p) in zip(results, prompts):
                         artifact, status = _parse_json_artifact(text)
                         prior_texts[cid].append(text)
                         if cycle == cycles - 1:  # only final positions merge
                             member_artifacts[cid].append((d.id, artifact))
-                        _record(f"s7:member:{d.id}:c{cycle}", cid, sys_p, usr_p, text, artifact, status)
+                        _record(
+                            f"s7:member:{d.id}:c{cycle}",
+                            cid,
+                            sys_p,
+                            usr_p,
+                            text,
+                            artifact,
+                            status,
+                        )
         else:
             raise ValueError(f"Unknown s7_structure {s7_structure!r}")
 
@@ -356,9 +488,17 @@ def _run_deliberative_step(
 
     # s8 analyst / s9 moderator: single dedicated-prompt rounds
     builder = build_s8_analyst_prompt if step == "s8" else build_moderator_prompt
-    prompts = [builder(row.practice_input, state[row.case_id]) for row in df.itertuples()]
-    results = _generate_round(df, cfg, prompts, STEP_SCHEMAS[step],
-                               f"traverse_{level}_{step}_deliberative", run_inference)
+    prompts = [
+        builder(row.practice_input, state[row.case_id]) for row in df.itertuples()
+    ]
+    results = _generate_round(
+        df,
+        cfg,
+        prompts,
+        STEP_SCHEMAS[step],
+        f"traverse_{level}_{step}_deliberative",
+        run_inference,
+    )
     for (text, cid), (sys_p, usr_p) in zip(results, prompts):
         artifact, status = _parse_json_artifact(text)
         state[cid][step] = artifact

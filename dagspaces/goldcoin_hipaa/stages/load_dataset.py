@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import pandas as pd
 
 
 def load_dataset(
     csv_path: str,
     task: str,
-    sample_n: Optional[int] = None,
+    sample_n: int | None = None,
 ) -> pd.DataFrame:
     """Load a GoldCoin HIPAA test CSV and add ground truth labels.
 

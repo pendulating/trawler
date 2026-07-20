@@ -9,7 +9,6 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 import requests
@@ -52,7 +51,7 @@ class BookFetchError(Exception):
     """All known URLs for this Gutenberg id failed."""
 
 
-def _http_get(url: str) -> Optional[str]:
+def _http_get(url: str) -> str | None:
     try:
         r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=REQUEST_TIMEOUT)
         if r.status_code == 200:
@@ -130,7 +129,7 @@ def fetch_text_from_url(url: str) -> str:
 
 def ensure_text(
     gutenberg_id: str | int,
-    source_url: Optional[str] = None,
+    source_url: str | None = None,
     force: bool = False,
     polite_delay: float = INTER_REQUEST_DELAY_S,
 ) -> Path:
@@ -187,7 +186,7 @@ def ensure_chunks(
     chunk_size: int = 6000,
     overlap: int = 1000,
     force: bool = False,
-    source_url: Optional[str] = None,
+    source_url: str | None = None,
 ) -> Path:
     """Materialize per-book chunks parquet, return its path.
 

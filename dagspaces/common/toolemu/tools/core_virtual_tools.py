@@ -1,5 +1,8 @@
 # Vendored from CI-RL (github.com/EricGLan/CI-RL) - Apache 2.0 License
+from typing import List
 """Virtual tools created from json files."""
+from ..utils.my_typing import *
+from .register import register_toolkit
 from .tool_interface import (
     ArgException,
     ArgParameter,
@@ -7,10 +10,6 @@ from .tool_interface import (
     FunctionToolkit,
     VirtualFunctionTool,
 )
-from ..utils.my_typing import *
-
-from .register import register_toolkit
-
 
 #################### GoogleCalendar ####################
 

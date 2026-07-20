@@ -1,7 +1,8 @@
 """Shared utilities for historical_norms stage implementations."""
 
 import json
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import pandas as pd
 
@@ -46,7 +47,9 @@ def extract_json(gen_text: str) -> tuple[dict | None, str | None]:
 
 # Columns that commonly cause Arrow serialization failures across all stages.
 _BASE_PROBLEMATIC_COLS = [
-    "metadata", "__inference_error__", "embeddings",
+    "metadata",
+    "__inference_error__",
+    "embeddings",
 ]
 
 
@@ -78,14 +81,20 @@ def clean_for_parquet(
             sample = df[col].dropna().head(1)
             if len(sample) > 0:
                 val = sample.iloc[0]
-                if val == {} or val == [] or (isinstance(val, list) and all(v == {} for v in val)):
+                if (
+                    val == {}
+                    or val == []
+                    or (isinstance(val, list) and all(v == {} for v in val))
+                ):
                     df = df.drop(columns=[col])
                     print(f"[{stage_name}] Dropped empty struct column: {col}")
                     continue
         except Exception:
             pass
         try:
-            df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
+            df[col] = df[col].apply(
+                lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x
+            )
         except Exception:
             df = df.drop(columns=[col])
             print(f"[{stage_name}] Dropped problematic column: {col}")

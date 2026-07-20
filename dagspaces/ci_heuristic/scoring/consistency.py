@@ -8,10 +8,10 @@ be wrong, but an inconsistent one is not doing the heuristic.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
-def check_entailment(state: Dict[str, Any]) -> Dict[str, Any]:
+def check_entailment(state: dict[str, Any]) -> dict[str, Any]:
     """Rule-based contradictions between s6-s8 findings and the s9 decision.
 
     Rules (each yields a named violation when triggered):
@@ -37,7 +37,7 @@ def check_entailment(state: Dict[str, Any]) -> Dict[str, Any]:
     any_undermines = any(m.get("advances_or_undermines") in ("undermines", "mixed")
                           for m in meanings if isinstance(m, dict))
 
-    violations: List[str] = []
+    violations: list[str] = []
     if decision == "reject" and not (any_harm or any_undermines):
         violations.append("reject_without_negatives")
     if decision == "continue" and not (s9.get("conditions") or []) and any_undermines:
@@ -52,11 +52,11 @@ def check_entailment(state: Dict[str, Any]) -> Dict[str, Any]:
     return {"assessable": True, "violations": violations, "consistent": not violations}
 
 
-def verdict_of(state: Dict[str, Any]) -> Optional[str]:
+def verdict_of(state: dict[str, Any]) -> str | None:
     return (state.get("s9") or {}).get("decision")
 
 
-def flip_rate(states_a: List[Dict[str, Any]], states_b: List[Dict[str, Any]]) -> Dict[str, Any]:
+def flip_rate(states_a: list[dict[str, Any]], states_b: list[dict[str, Any]]) -> dict[str, Any]:
     """Verdict flip rate between two aligned runs (invariance/sensitivity
     comparator: paraphrase runs should NOT flip; parameter-flip runs SHOULD)."""
     pairs = [

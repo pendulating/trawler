@@ -31,7 +31,9 @@ class PatternModuloFilter(logging.Filter):
     all other log lines intact.
     """
 
-    def __init__(self, name: str = "", mod: int = 10, pattern: str = "Elapsed time for batch"):
+    def __init__(
+        self, name: str = "", mod: int = 10, pattern: str = "Elapsed time for batch"
+    ):
         super().__init__(name)
         self.mod = max(1, int(mod))
         self.pattern = str(pattern)

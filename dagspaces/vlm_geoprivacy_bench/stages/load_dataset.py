@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
-from typing import List
 
 import pandas as pd
 
@@ -17,7 +15,7 @@ def load_dataset(
     annotations_path: str,
     metadata_path: str,
     image_dir: str,
-    exclude_sources: List[str] | None = None,
+    exclude_sources: list[str] | None = None,
     sample_n: int | None = None,
 ) -> pd.DataFrame:
     """Load VLM-GeoPrivacyBench dataset.

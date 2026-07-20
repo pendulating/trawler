@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
-from dagspaces.common.runners.base import StageRunner
-from dagspaces.common.orchestrator import StageResult
 from dagspaces.common.eval_sanity import compute_parse_health
+from dagspaces.common.orchestrator import StageResult
+from dagspaces.common.runners.base import StageRunner
 from dagspaces.common.runners.sanity import (
     log_sanity_to_context,
     sanity_overrides,
@@ -100,7 +100,7 @@ class ParseResponsesRunner(StageRunner):
             refusal_patterns=patterns,
             thresholds=thresholds,
         )
-        metadata: Dict[str, Any] = {"rows": len(result_df), "tier": tier}
+        metadata: dict[str, Any] = {"rows": len(result_df), "tier": tier}
         log_sanity_to_context(context, report, metadata=metadata)
         return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 

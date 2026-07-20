@@ -11,13 +11,18 @@ grpo_training-specific defaults:
 
 from __future__ import annotations
 
+from typing import Any
+
 from dagspaces.common.wandb_logger import (
     WandbConfig as _WandbConfigBase,
+)
+from dagspaces.common.wandb_logger import (
     WandbLogger as _WandbLoggerBase,
+)
+from dagspaces.common.wandb_logger import (
     collect_compute_metadata,
     ensure_local_tmpdir,
 )
-from typing import Any, Dict, Optional
 
 ensure_local_tmpdir("grpo_training")
 
@@ -47,7 +52,7 @@ class WandbConfig(_WandbConfigBase):
     """WandbConfig with grpo_training defaults baked in."""
 
     @classmethod
-    def from_hydra_config(cls, cfg, **kwargs) -> "WandbConfig":  # type: ignore[override]
+    def from_hydra_config(cls, cfg, **kwargs) -> WandbConfig:  # type: ignore[override]
         kwargs.setdefault("default_project", "grpo-ci-training")
         kwargs.setdefault("default_experiment_name", "grpo_training")
         kwargs.setdefault("env_var_prefix", "GRPO_TRAINING")
@@ -73,8 +78,8 @@ class WandbLogger(_WandbLoggerBase):
         self,
         cfg,
         stage: str,
-        run_id: Optional[str] = None,
-        run_config: Optional[Dict[str, Any]] = None,
+        run_id: str | None = None,
+        run_config: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(cfg, stage=stage, run_id=run_id, run_config=run_config)
         self.wb_config = WandbConfig.from_hydra_config(cfg)

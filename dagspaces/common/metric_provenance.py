@@ -43,7 +43,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 @dataclass
@@ -55,9 +55,9 @@ class MetricRecord:
     n_total: int
     n_real: int
     n_defaulted: int = 0
-    default_reason: Optional[str] = None
+    default_reason: str | None = None
 
-    def to_provenance_dict(self) -> Dict[str, Any]:
+    def to_provenance_dict(self) -> dict[str, Any]:
         defaulted_rate = (
             float(self.n_defaulted) / float(self.n_total)
             if self.n_total > 0
@@ -88,8 +88,8 @@ class MetricEmitter:
     """
 
     def __init__(self) -> None:
-        self._metrics: Dict[str, Any] = {}
-        self._provenance: Dict[str, MetricRecord] = {}
+        self._metrics: dict[str, Any] = {}
+        self._provenance: dict[str, MetricRecord] = {}
 
     # -- emit -------------------------------------------------------------
 
@@ -101,7 +101,7 @@ class MetricEmitter:
         n_total: int,
         n_real: int,
         n_defaulted: int = 0,
-        default_reason: Optional[str] = None,
+        default_reason: str | None = None,
     ) -> None:
         """Emit a numeric metric with full provenance.
 
@@ -169,7 +169,7 @@ class MetricEmitter:
 
     # -- output -----------------------------------------------------------
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Return the merged metrics + ``metric_provenance`` block."""
         out = dict(self._metrics)
         if self._provenance:
@@ -189,13 +189,13 @@ class MetricEmitter:
 
     # -- introspection ----------------------------------------------------
 
-    def provenance(self) -> Dict[str, Dict[str, Any]]:
+    def provenance(self) -> dict[str, dict[str, Any]]:
         """Return the provenance map only (no metrics)."""
         return {
             name: rec.to_provenance_dict() for name, rec in self._provenance.items()
         }
 
-    def metrics(self) -> Dict[str, Any]:
+    def metrics(self) -> dict[str, Any]:
         """Return the metrics tree only (no provenance)."""
         return dict(self._metrics)
 

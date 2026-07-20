@@ -37,7 +37,8 @@ import argparse
 import json
 import os
 import sys
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 
 __all__ = [
     "submit_batch",
@@ -50,7 +51,7 @@ __all__ = [
 ]
 
 
-def _client(api_key_env: Optional[str] = None):
+def _client(api_key_env: str | None = None):
     """Build an OpenAI SDK client using OPENAI_API_KEY (or a custom env var)."""
     from openai import OpenAI
 
@@ -70,9 +71,9 @@ def _client(api_key_env: Optional[str] = None):
 # JSONL helpers
 # ---------------------------------------------------------------------------
 
-def load_jsonl(path: str) -> List[Dict[str, Any]]:
+def load_jsonl(path: str) -> list[dict[str, Any]]:
     """Read a JSONL file into a list of dicts, skipping blank lines."""
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -82,7 +83,7 @@ def load_jsonl(path: str) -> List[Dict[str, Any]]:
     return rows
 
 
-def _update_manifest(jsonl_path: str, updates: Dict[str, Any]) -> Optional[str]:
+def _update_manifest(jsonl_path: str, updates: dict[str, Any]) -> str | None:
     """Merge ``updates`` into the sibling ``manifest.json`` if one exists."""
     manifest_path = os.path.join(os.path.dirname(jsonl_path), "manifest.json")
     if not os.path.exists(manifest_path):
@@ -106,9 +107,9 @@ def submit_batch(
     jsonl_path: str,
     endpoint: str = "/v1/chat/completions",
     completion_window: str = "24h",
-    metadata: Optional[Dict[str, str]] = None,
-    api_key_env: Optional[str] = None,
-) -> Dict[str, Any]:
+    metadata: dict[str, str] | None = None,
+    api_key_env: str | None = None,
+) -> dict[str, Any]:
     """Upload a JSONL file and create a batch job. Returns batch metadata."""
     client = _client(api_key_env)
     if not os.path.exists(jsonl_path):
@@ -144,7 +145,7 @@ def submit_batch(
     return info
 
 
-def get_batch_status(batch_id: str, api_key_env: Optional[str] = None) -> Dict[str, Any]:
+def get_batch_status(batch_id: str, api_key_env: str | None = None) -> dict[str, Any]:
     """Retrieve the current status of a batch."""
     client = _client(api_key_env)
     batch = client.batches.retrieve(batch_id)
@@ -171,9 +172,9 @@ def get_batch_status(batch_id: str, api_key_env: Optional[str] = None) -> Dict[s
 def fetch_batch_output(
     batch_id: str,
     output_path: str,
-    error_path: Optional[str] = None,
-    api_key_env: Optional[str] = None,
-) -> Dict[str, Any]:
+    error_path: str | None = None,
+    api_key_env: str | None = None,
+) -> dict[str, Any]:
     """Download output.jsonl (and error file if present) for a completed batch."""
     client = _client(api_key_env)
     batch = client.batches.retrieve(batch_id)
@@ -182,7 +183,7 @@ def fetch_batch_output(
               f"not 'completed'. Downloading whatever is available.",
               flush=True)
 
-    result: Dict[str, Any] = {"batch_id": batch_id, "status": batch.status}
+    result: dict[str, Any] = {"batch_id": batch_id, "status": batch.status}
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     out_id = getattr(batch, "output_file_id", None)
@@ -214,7 +215,7 @@ def fetch_batch_output(
 # Merge: join output.jsonl back into pending parquet
 # ---------------------------------------------------------------------------
 
-def extract_content(response_line: Dict[str, Any]) -> str:
+def extract_content(response_line: dict[str, Any]) -> str:
     """Pull the assistant message content out of a Batch API output line.
 
     Backwards-compatible: error and empty-choices lines still return a
@@ -234,7 +235,7 @@ def extract_content(response_line: Dict[str, Any]) -> str:
     return msg.get("content") or ""
 
 
-def classify_response_line(response_line: Dict[str, Any]) -> Dict[str, Any]:
+def classify_response_line(response_line: dict[str, Any]) -> dict[str, Any]:
     """Classify one ``output.jsonl`` line into ``{ok, content, error_kind, error_preview}``.
 
     Returns:
@@ -296,7 +297,7 @@ def merge_batch_output(
     text_column: str,
     out_parquet: str,
     custom_id_column: str = "judge_custom_id",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Join a Batch API output JSONL into a pending parquet dataframe.
 
     The pending parquet must carry a ``judge_custom_id`` column written by
@@ -315,8 +316,8 @@ def merge_batch_output(
         )
 
     lines = load_jsonl(output_jsonl)
-    by_cid: Dict[str, str] = {}
-    failed: List[str] = []
+    by_cid: dict[str, str] = {}
+    failed: list[str] = []
     for line in lines:
         cid = line.get("custom_id")
         if not cid:
@@ -393,7 +394,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Optional[Iterable[str]] = None) -> int:
+def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m dagspaces.common.batch_api",
         description="OpenAI Batch API helpers for Trawler judge exports.",

@@ -9,12 +9,14 @@ loop parameterized by ``ORCHESTRATOR_HOOKS``.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
 from dagspaces.common.orchestrator import (
     OrchestratorHooks,
+)
+from dagspaces.common.orchestrator import (
     run_experiment as _run_experiment,
 )
 
@@ -39,10 +41,10 @@ def _perturb_qualified_dagspace(cfg: DictConfig) -> str:
     return f"privacylens:{culture}" if culture else "privacylens"
 
 
-def _log_eval_metrics(logger, metrics: Dict[str, Any], stage: str) -> None:
+def _log_eval_metrics(logger, metrics: dict[str, Any], stage: str) -> None:
     """Log PrivacyLens evaluation metrics to W&B."""
     prefix = f"{stage}/eval"
-    wb_metrics: Dict[str, Any] = {}
+    wb_metrics: dict[str, Any] = {}
 
     # QA probing metrics
     qa = metrics.get("qa_probing", {})

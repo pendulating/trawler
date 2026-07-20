@@ -26,7 +26,8 @@ model_needs_reasoning_budget(model_cfg)
 from __future__ import annotations
 
 import re
-from typing import Any, Optional, Tuple
+from typing import Any
+
 
 def _fallback_strip_reasoning(text: str) -> str:
     """Fallback regex-based stripping of reasoning/thinking blocks.
@@ -85,7 +86,7 @@ _HARMONY_STRIPPED_FINAL = re.compile(r"assistantfinal", re.IGNORECASE)
 _HARMONY_WARNED = False
 
 
-def _split_harmony(text: str) -> Optional[Tuple[str, str]]:
+def _split_harmony(text: str) -> tuple[str, str] | None:
     """Split a gpt-oss harmony completion into ``(reasoning, final_content)``.
 
     Returns ``None`` if the text carries no harmony structure at all, so the
@@ -124,13 +125,13 @@ def _split_harmony(text: str) -> Optional[Tuple[str, str]]:
         head, _, tail = text.rpartition("assistantfinal")
         reasoning = head.strip()
         if reasoning.lower().startswith("analysis"):
-            reasoning = reasoning[len("analysis"):].strip()
+            reasoning = reasoning[len("analysis") :].strip()
         return reasoning, tail.strip()
 
     return None
 
 
-def _detect_reasoning_parser(model_source: str) -> Optional[str]:
+def _detect_reasoning_parser(model_source: str) -> str | None:
     """Map a model path to the vLLM reasoning-parser name for that family.
 
     Returns a parser name registered in ``vllm.reasoning.ReasoningParserManager``,
@@ -235,7 +236,7 @@ def _split_reasoning(
     model_source: str,
     thinking_enabled: bool,
     tokenizer,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Split model output into ``(reasoning, content)``.
 
     Primary path: vLLM's family-specific ``ReasoningParser``. These parsers
@@ -276,6 +277,7 @@ def _split_reasoning(
     if parser_name is not None:
         try:
             from vllm.reasoning import ReasoningParserManager
+
             parser_cls = ReasoningParserManager.get_reasoning_parser(parser_name)
             parser = parser_cls(
                 tokenizer,
@@ -300,7 +302,6 @@ def _split_reasoning(
         m2 = re.search(r"<\|begin_of_thought\|([\s\S]*?)<\|end_of_thought\|", text)
         reasoning = m2.group(1).strip() if m2 else ""
     return reasoning, content
-
 
 
 # ── Public aliases (underscore-free names for new code) ────────────────

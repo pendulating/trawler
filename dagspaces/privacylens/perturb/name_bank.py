@@ -13,7 +13,6 @@ import json
 import os
 import random
 from dataclasses import dataclass
-from typing import Optional
 
 _RES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources")
 _NAME_BANKS_PATH = os.path.join(_RES_DIR, "name_banks.json")
@@ -57,8 +56,8 @@ def infer_gender(first_name: str) -> str:
 class ReplacementIdentity:
     """A chosen replacement person identity (either component may be None)."""
 
-    first: Optional[str]
-    last: Optional[str]
+    first: str | None
+    last: str | None
 
 
 class CultureBank:
@@ -69,7 +68,7 @@ class CultureBank:
     no-op effect.
     """
 
-    def __init__(self, culture: str, data: Optional[dict]):
+    def __init__(self, culture: str, data: dict | None):
         self.culture = culture
         self._data = data
         if data is not None:
@@ -85,7 +84,7 @@ class CultureBank:
         return self._data is None
 
     @staticmethod
-    def _pick(pool: list[str], rng: random.Random, exclude: set[str]) -> Optional[str]:
+    def _pick(pool: list[str], rng: random.Random, exclude: set[str]) -> str | None:
         if not pool:
             return None
         candidates = [x for x in pool if x not in exclude]
@@ -95,7 +94,7 @@ class CultureBank:
         exclude.add(choice)
         return choice
 
-    def pick_first(self, gender: str, rng: random.Random, exclude: set[str]) -> Optional[str]:
+    def pick_first(self, gender: str, rng: random.Random, exclude: set[str]) -> str | None:
         if gender in ("m", "f") and self._first.get(gender):
             pool = list(self._first[gender])
         else:
@@ -103,10 +102,10 @@ class CultureBank:
             pool += list(self._first.get("u", []))
         return self._pick(pool, rng, exclude)
 
-    def pick_surname(self, rng: random.Random, exclude: set[str]) -> Optional[str]:
+    def pick_surname(self, rng: random.Random, exclude: set[str]) -> str | None:
         return self._pick(self._surnames, rng, exclude)
 
-    def pick_location(self, rng: random.Random, exclude: set[str]) -> Optional[str]:
+    def pick_location(self, rng: random.Random, exclude: set[str]) -> str | None:
         return self._pick(self._locations, rng, exclude)
 
 

@@ -13,7 +13,6 @@ from __future__ import annotations
 import random
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 from .name_bank import CultureBank, ReplacementIdentity, infer_gender
 
@@ -55,13 +54,13 @@ _STOP_TOKENS = frozenset(
 class PersonIdentity:
     """A clustered person: canonical first/last name + the case-folded tokens."""
 
-    canonical_first: Optional[str] = None
-    canonical_last: Optional[str] = None
-    honorific: Optional[str] = None
+    canonical_first: str | None = None
+    canonical_last: str | None = None
+    honorific: str | None = None
     token_set: set[str] = field(default_factory=set)
 
 
-def _normalize_candidate(raw: str) -> tuple[Optional[str], list[str]]:
+def _normalize_candidate(raw: str) -> tuple[str | None, list[str]]:
     """Split a raw person string into (honorific, name-tokens).
 
     Takes the maximal *leading* run of name-like tokens, stopping at the first
@@ -110,7 +109,7 @@ def build_person_identities(person_strings: list[str]) -> list[PersonIdentity]:
     honorific is present, else defaults to a given name (narrative single-name
     references are usually given names).
     """
-    parsed: list[tuple[Optional[str], list[str]]] = []
+    parsed: list[tuple[str | None, list[str]]] = []
     for raw in person_strings:
         hon, toks = _normalize_candidate(raw)
         if toks:
@@ -189,7 +188,7 @@ def _expand_person_aliases(
     hon = identity.honorific
     pairs: list[tuple[str, str]] = []
 
-    def add(s: Optional[str], t: Optional[str]) -> None:
+    def add(s: str | None, t: str | None) -> None:
         if s and t:
             pairs.append((s, t))
 

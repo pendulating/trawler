@@ -17,11 +17,11 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
     """Get the stage registry mapping stage names to runner instances."""
     global _STAGE_REGISTRY
     if _STAGE_REGISTRY is None:
+        from .grpo_training import GRPOTrainingRunner
         from .norm_universe import NormUniverseRunner
+        from .reward_prep import RewardPrepRunner
         from .sft_data_prep import SFTDataPrepRunner
         from .sft_training import SFTTrainingRunner
-        from .reward_prep import RewardPrepRunner
-        from .grpo_training import GRPOTrainingRunner
 
         _STAGE_REGISTRY = {
             "norm_universe": NormUniverseRunner(),

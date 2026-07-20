@@ -8,7 +8,6 @@ Ported from GoldCoin/eval/parse_eval_result.py with improvements:
 from __future__ import annotations
 
 import re
-from typing import List, Optional, Tuple
 
 import pandas as pd
 
@@ -57,8 +56,9 @@ def extract_step_result(response: str) -> str:
 # beat the bare positive keyword they contain. Earliest match position wins;
 # "not X" phrases start before the bare "X" they contain, so double-negations
 # ("not violate", "not forbid" → Permit) resolve correctly by position.
-_COMPLIANCE_PATTERNS: List[Tuple["re.Pattern[str]", str]] = [
-    (re.compile(p), label) for p, label in [
+_COMPLIANCE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(p), label)
+    for p, label in [
         # Forbid (including negated-permit phrases)
         (r"impermissib", "Forbid"),
         (r"\bnot\s+permit", "Forbid"),
@@ -78,8 +78,9 @@ _COMPLIANCE_PATTERNS: List[Tuple["re.Pattern[str]", str]] = [
     ]
 ]
 
-_APPLICABILITY_PATTERNS: List[Tuple["re.Pattern[str]", str]] = [
-    (re.compile(p), label) for p, label in [
+_APPLICABILITY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(p), label)
+    for p, label in [
         # Not Applicable (negations first — a leading "Not applicable" has no
         # space-padded " not " and must still be caught)
         (r"\bnot\s+applicable", "Not Applicable"),
@@ -98,11 +99,11 @@ _APPLICABILITY_PATTERNS: List[Tuple["re.Pattern[str]", str]] = [
 
 
 def _earliest_regex_label(
-    response: str, patterns: List[Tuple["re.Pattern[str]", str]]
-) -> Optional[str]:
+    response: str, patterns: list[tuple[re.Pattern[str], str]]
+) -> str | None:
     """Return the label whose pattern matches earliest; ties favour list order."""
     best_index = len(response)
-    best_label: Optional[str] = None
+    best_label: str | None = None
     for pat, label in patterns:
         m = pat.search(response)
         if m is not None and m.start() < best_index:
@@ -111,17 +112,17 @@ def _earliest_regex_label(
     return best_label
 
 
-def first_compliance_result(response: str) -> Optional[str]:
+def first_compliance_result(response: str) -> str | None:
     """Find the first compliance keyword in the response."""
     return _earliest_regex_label(response, _COMPLIANCE_PATTERNS)
 
 
-def first_applicability_result(response: str) -> Optional[str]:
+def first_applicability_result(response: str) -> str | None:
     """Find the first applicability keyword in the response."""
     return _earliest_regex_label(response, _APPLICABILITY_PATTERNS)
 
 
-def _try_json_classification(response: str) -> Optional[str]:
+def _try_json_classification(response: str) -> str | None:
     """Try to extract classification from a structured JSON response."""
     from dagspaces.common.json_extraction import extract_json_from_text
 
@@ -146,12 +147,15 @@ def parse_compliance_response(response: str) -> str:
     # Pre-clean check: "does not directly permit or forbid" / "does not
     # directly apply" → model is saying HIPAA is silent on this, which the
     # GoldCoin benchmark treats as Permit (no prohibition).
-    if any(p in response for p in [
-        "does not directly permit or forbid",
-        "does not directly apply",
-        "does not permit or forbid",
-        "neither permits nor forbids",
-    ]):
+    if any(
+        p in response
+        for p in [
+            "does not directly permit or forbid",
+            "does not directly apply",
+            "does not permit or forbid",
+            "neither permits nor forbids",
+        ]
+    ):
         return "Permit"
 
     response = clean_response(response)
@@ -200,7 +204,8 @@ def parse_responses(df: pd.DataFrame, task: str) -> pd.DataFrame:
 
     df["parse_status"] = df.apply(
         lambda r: (
-            "empty" if not str(r["generated_text"]).strip()
+            "empty"
+            if not str(r["generated_text"]).strip()
             else ("unparseable" if r["prediction"] == "unparseable" else "parsed")
         ),
         axis=1,
@@ -212,9 +217,12 @@ def parse_responses(df: pd.DataFrame, task: str) -> pd.DataFrame:
     empty = (df["generated_text"].apply(lambda x: len(str(x).strip()) == 0)).sum()
     unparseable_rate = unparseable / total if total else 0
 
-    print(f"[parse_responses] Task={task}: {total} responses, "
-          f"{unparseable} unparseable ({unparseable/total*100:.1f}%), "
-          f"{empty} empty", flush=True)
+    print(
+        f"[parse_responses] Task={task}: {total} responses, "
+        f"{unparseable} unparseable ({unparseable / total * 100:.1f}%), "
+        f"{empty} empty",
+        flush=True,
+    )
     print("[parse_responses] Prediction distribution:", flush=True)
     print(df["prediction"].value_counts().to_string(), flush=True)
 
@@ -226,10 +234,11 @@ def parse_responses(df: pd.DataFrame, task: str) -> pd.DataFrame:
             "blocks that were stripped (enable_thinking=false + low max_tokens). "
             "Consider increasing max_tokens or setting enable_thinking=true."
         )
-        print(f"\n{'!'*60}", flush=True)
+        print(f"\n{'!' * 60}", flush=True)
         print(f"  {msg}", flush=True)
-        print(f"{'!'*60}\n", flush=True)
+        print(f"{'!' * 60}\n", flush=True)
         import warnings
+
         warnings.warn(msg, stacklevel=2)
 
     return df

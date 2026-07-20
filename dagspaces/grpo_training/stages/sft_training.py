@@ -13,12 +13,10 @@ Multi-GPU support:
 import json
 import os
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 from omegaconf import OmegaConf
-
-
 
 # TRL-compatible chat templates with {% generation %} blocks for loss masking.
 # Each template marks assistant content so SFTTrainer only computes loss on
@@ -326,7 +324,7 @@ def _assert_template_tokens_atomic(tokenizer, family: str) -> None:
         )
 
 
-def _append_traces(path: str, entries: List[Dict[str, Any]]) -> None:
+def _append_traces(path: str, entries: list[dict[str, Any]]) -> None:
     """Append trace entries to a JSONL file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
@@ -582,11 +580,11 @@ def run_sft_training_stage(
         output_dir: Directory to save the LoRA checkpoint.
         cfg: Hydra config with training.sft section.
     """
-    from trl import SFTTrainer, SFTConfig
+    import torch
+    from datasets import Dataset
     from peft import LoraConfig, TaskType
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from datasets import Dataset
-    import torch
+    from trl import SFTConfig, SFTTrainer
 
     sft_cfg = OmegaConf.to_container(
         OmegaConf.select(cfg, "training.sft"), resolve=True
@@ -744,8 +742,8 @@ def run_sft_training_stage(
     # picks a per-call backend that handles 512).
     if _attn_impl == "flash_attention_2":
         try:
-            from packaging.version import Version as _V
             import flash_attn as _fa
+            from packaging.version import Version as _V
             from transformers import AutoConfig as _AttnCfg
             _hd_cfg = _AttnCfg.from_pretrained(base_model, trust_remote_code=True)
             _tc = getattr(_hd_cfg, "text_config", _hd_cfg)
@@ -896,7 +894,6 @@ def run_sft_training_stage(
     _is_phi4mm = "phi-4-multimodal" in base_model.lower()
     if _is_phi4mm:
         import gc as _gc
-        from peft import PeftModel as _PeftModel
 
         _ete = model.model.embed_tokens_extend
         # Remove both image and audio encoders (text-only)

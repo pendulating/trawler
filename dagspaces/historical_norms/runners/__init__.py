@@ -18,13 +18,15 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
     global _STAGE_REGISTRY
     if _STAGE_REGISTRY is None:
         from .base import StageRunner
-        from .fetch_gutenberg import FetchGutenbergRunner
-        from .norm_reasoning import NormReasoningRunner
-        from .norm_extraction import NormExtractionRunner
-        from .ci_reasoning import CIReasoningRunner
         from .ci_extraction import CIExtractionRunner
+        from .ci_reasoning import CIReasoningRunner
+        from .fetch_gutenberg import FetchGutenbergRunner
         from .norm_consolidation import NormConsolidationRunner
-        from .norm_consolidation_from_clusters import NormConsolidationFromClustersRunner
+        from .norm_consolidation_from_clusters import (
+            NormConsolidationFromClustersRunner,
+        )
+        from .norm_extraction import NormExtractionRunner
+        from .norm_reasoning import NormReasoningRunner
         from .norm_role_abstraction import NormRoleAbstractionRunner
 
         _STAGE_REGISTRY = {

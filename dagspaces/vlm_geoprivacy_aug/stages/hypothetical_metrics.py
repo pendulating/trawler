@@ -17,19 +17,24 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 
 from dagspaces.common.metric_provenance import MetricEmitter
 
 from ..hypotheticals import BASELINE_ID
-from .compute_metrics import LABEL_ORDER, LABEL_TO_INT, _extract_first_char, compute_metrics
+from .compute_metrics import (
+    LABEL_ORDER,
+    LABEL_TO_INT,
+    _extract_first_char,
+    compute_metrics,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _question_columns(df: pd.DataFrame) -> List[str]:
+def _question_columns(df: pd.DataFrame) -> list[str]:
     """Questions with predictions present (MCQ: Q1-Q7; freeform: Q7 only)."""
     return [f"Q{i}" for i in range(1, 8) if f"Q{i}_pred" in df.columns]
 
@@ -38,7 +43,7 @@ def compute_hypothetical_metrics(
     df: pd.DataFrame,
     baseline_id: str = BASELINE_ID,
     id_col: str = "numeric_id",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Compute per-variant judgment distributions and paired shifts vs. baseline.
 
     Args:
@@ -189,15 +194,15 @@ def compute_hypothetical_metrics(
     return em.to_dict()
 
 
-def hypothetical_metrics_to_dataframe(metrics: Dict[str, Any]) -> pd.DataFrame:
+def hypothetical_metrics_to_dataframe(metrics: dict[str, Any]) -> pd.DataFrame:
     """Flatten metrics into one row per variant for parquet/W&B tables."""
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     per_variant = metrics.get("per_variant", {})
     shifts = metrics.get("shifts", {})
     dims = metrics.get("dimensions", {})
 
     for hyp_id, q_block in per_variant.items():
-        row: Dict[str, Any] = {
+        row: dict[str, Any] = {
             "hyp_id": hyp_id,
             "hyp_dimension": dims.get(hyp_id, ""),
             "is_baseline": hyp_id == metrics.get("baseline_id"),

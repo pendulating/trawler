@@ -18,7 +18,8 @@ with the GRPO judgment-vignette gold labels
 from __future__ import annotations
 
 import json
-from typing import Any, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any
 
 # normative_force → expected appropriateness of a flow the norm governs.
 # obligatory/recommended ⇒ the flow ought to occur (appropriate);
@@ -46,7 +47,7 @@ FORCE_TO_GOLD = {
 NEUTRAL_CONSISTENCY = 0.5
 
 
-def expected_appropriateness(force: Optional[str]) -> Optional[str]:
+def expected_appropriateness(force: str | None) -> str | None:
     """Expected appropriateness label for a flow governed by ``force``.
 
     Returns None for "permitted"/unknown/missing — no directional expectation.
@@ -57,7 +58,7 @@ def expected_appropriateness(force: Optional[str]) -> Optional[str]:
 
 
 def appropriateness_consistency(
-    model_label: Optional[str], force: Optional[str]
+    model_label: str | None, force: str | None
 ) -> float:
     """Graded agreement between a model appropriateness label and a norm force.
 
@@ -79,12 +80,12 @@ def appropriateness_consistency(
     return NEUTRAL_CONSISTENCY
 
 
-def _norm_force(norm: dict) -> Optional[str]:
+def _norm_force(norm: dict) -> str | None:
     """Read normative_force from a norm dict (cleaned or raz_-prefixed)."""
     return norm.get("normative_force") or norm.get("raz_normative_force") or None
 
 
-def governing_norm_force(norm_universe_json: Any) -> Optional[str]:
+def governing_norm_force(norm_universe_json: Any) -> str | None:
     """The governing norm's force = that of the top (most-similar) retrieved norm.
 
     ``NormRetriever`` returns norms in descending cosine-similarity order, so
@@ -120,14 +121,14 @@ def _iter_flow_dicts(candidate_doc: Any) -> Iterator[dict]:
             yield item
 
 
-def flow_appropriateness_labels(candidate_doc: Any) -> List[str]:
+def flow_appropriateness_labels(candidate_doc: Any) -> list[str]:
     """Extract appropriateness labels from a candidate's flows.
 
     Handles the SFT-schema extraction shape (``appropriateness`` on the
     extraction, or nested under ``flow``) and the reasoning-schema
     ``potential_appropriateness`` fallback.
     """
-    labels: List[str] = []
+    labels: list[str] = []
     for item in _iter_flow_dicts(candidate_doc):
         lab = item.get("appropriateness")
         if lab is None and isinstance(item.get("flow"), dict):
@@ -140,7 +141,7 @@ def flow_appropriateness_labels(candidate_doc: Any) -> List[str]:
 
 
 def candidate_appropriateness_consistency(
-    candidate_doc: Any, force: Optional[str]
+    candidate_doc: Any, force: str | None
 ) -> float:
     """Mean appropriateness-consistency over a candidate's flows.
 
@@ -179,11 +180,11 @@ def direction_multiplier(consistency: float, floor: float = 0.4) -> float:
 
 
 def appropriateness_multiplier(
-    model_label: Optional[str],
-    force: Optional[str],
+    model_label: str | None,
+    force: str | None,
     floor: float = 0.4,
-    floor_prohibit: Optional[float] = None,
-    hedge_prohibit: Optional[float] = None,
+    floor_prohibit: float | None = None,
+    hedge_prohibit: float | None = None,
 ) -> float:
     """Cost-sensitive (asymmetric) direction multiplier for one flow (v10/v12a).
 
@@ -251,10 +252,10 @@ def appropriateness_multiplier(
 
 def candidate_appropriateness_multiplier(
     candidate_doc: Any,
-    force: Optional[str],
+    force: str | None,
     floor: float = 0.4,
-    floor_prohibit: Optional[float] = None,
-    hedge_prohibit: Optional[float] = None,
+    floor_prohibit: float | None = None,
+    hedge_prohibit: float | None = None,
 ) -> float:
     """Mean cost-sensitive multiplier over a candidate's flows (v10/v12a).
 

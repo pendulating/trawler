@@ -16,8 +16,9 @@ import pickle
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
+from typing import Any
 
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
@@ -26,6 +27,7 @@ from dagspaces.common.config_schema import PipelineNodeSpec
 
 try:
     import submitit  # type: ignore
+
     _SUBMITIT_AVAILABLE = True
 except Exception:
     submitit = None  # type: ignore
@@ -36,26 +38,28 @@ except Exception:
 # Dataclasses
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class StageExecutionContext:
     cfg: DictConfig
     node: PipelineNodeSpec
-    inputs: Dict[str, str]
-    output_paths: Dict[str, str]
+    inputs: dict[str, str]
+    output_paths: dict[str, str]
     output_dir: str
     output_root: str
-    logger: Optional[Any] = None
+    logger: Any | None = None
 
 
 @dataclass
 class StageResult:
-    outputs: Dict[str, str]
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    outputs: dict[str, str]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
 # No-op logger
 # ---------------------------------------------------------------------------
+
 
 class _NoOpLogger:
     """No-op logger that matches WandbLogger interface when wandb is disabled."""
@@ -64,8 +68,8 @@ class _NoOpLogger:
         self,
         cfg: Any,
         stage: str,
-        run_id: Optional[str] = None,
-        run_config: Optional[Dict[str, Any]] = None,
+        run_id: str | None = None,
+        run_config: dict[str, Any] | None = None,
     ) -> None:
         # Import lazily so that dagspaces without a local wandb_logger can still
         # use this class (e.g. if imported from common directly).
@@ -76,14 +80,15 @@ class _NoOpLogger:
         # Attempt to populate wb_config; tolerate missing attribute.
         try:
             from dagspaces.common.wandb_config import WandbConfig  # type: ignore
+
             self.wb_config = WandbConfig.from_hydra_config(cfg)
         except Exception:
             self.wb_config = None
 
     def log_metrics(
         self,
-        metrics: Dict[str, Any],
-        step: Optional[int] = None,
+        metrics: dict[str, Any],
+        step: int | None = None,
         commit: bool = True,
     ) -> None:
         pass
@@ -92,16 +97,16 @@ class _NoOpLogger:
         self,
         df: Any,
         key: str,
-        prefer_cols: Optional[List[str]] = None,
-        max_rows: Optional[int] = None,
-        panel_group: Optional[str] = None,
+        prefer_cols: list[str] | None = None,
+        max_rows: int | None = None,
+        panel_group: str | None = None,
     ) -> None:
         pass
 
     def set_summary(self, key: str, value: Any) -> None:
         pass
 
-    def set_config(self, data: Dict[str, Any], allow_val_change: bool = True) -> None:
+    def set_config(self, data: dict[str, Any], allow_val_change: bool = True) -> None:
         pass
 
     def log_artifact(self, *args: Any, **kwargs: Any) -> None:
@@ -115,7 +120,7 @@ class _NoOpLogger:
         except Exception:
             pass
 
-    def __enter__(self) -> "_NoOpLogger":
+    def __enter__(self) -> _NoOpLogger:
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
@@ -126,12 +131,13 @@ class _NoOpLogger:
 # Config utilities
 # ---------------------------------------------------------------------------
 
+
 def clone_config(cfg: DictConfig) -> DictConfig:
     return OmegaConf.create(OmegaConf.to_container(cfg, resolve=False))  # type: ignore[return-value]
 
 
 def merge_overrides(
-    base_cfg: DictConfig, overrides: Optional[Mapping[str, Any]]
+    base_cfg: DictConfig, overrides: Mapping[str, Any] | None
 ) -> DictConfig:
     if not overrides:
         return base_cfg
@@ -145,7 +151,7 @@ def ensure_section(cfg: DictConfig, section: str) -> None:
         OmegaConf.update(cfg, section, {}, merge=True)
 
 
-def common_parent(paths: Iterable[str]) -> Optional[str]:
+def common_parent(paths: Iterable[str]) -> str | None:
     try:
         parents = [os.path.dirname(p) for p in paths]
         if not parents:
@@ -175,18 +181,18 @@ def prepare_node_config(
 def build_run_config(
     cfg: DictConfig,
     node: PipelineNodeSpec,
-    inputs: Dict[str, str],
-    output_paths: Dict[str, str],
+    inputs: dict[str, str],
+    output_paths: dict[str, str],
     *,
     dagspace_name: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a standardized run_config dict for W&B logging.
 
     Centralises the run_config construction that was previously duplicated
     across all dagspace orchestrators.  Adds pipeline_name, eval_task,
     dagspace, and checkpoint_name metadata for cross-model comparison.
     """
-    run_config: Dict[str, Any] = {
+    run_config: dict[str, Any] = {
         "node": node.key,
         "stage": node.stage,
         "inputs": list(inputs.keys()),
@@ -262,10 +268,11 @@ def build_run_config(
     return run_config
 
 
-def _resolve_pipeline_name() -> Optional[str]:
+def _resolve_pipeline_name() -> str | None:
     """Extract pipeline name from Hydra overrides."""
     try:
         from hydra.core.hydra_config import HydraConfig
+
         hydra_cfg = HydraConfig.get()
         if hydra_cfg and getattr(hydra_cfg, "job", None):
             override_dir = getattr(hydra_cfg.job, "override_dirname", None)
@@ -279,7 +286,7 @@ def _resolve_pipeline_name() -> Optional[str]:
     return os.environ.get("WANDB_PIPELINE_NAME") or None
 
 
-def _resolve_eval_task(cfg: DictConfig, node: PipelineNodeSpec) -> Optional[str]:
+def _resolve_eval_task(cfg: DictConfig, node: PipelineNodeSpec) -> str | None:
     """Extract eval task identifier from node overrides or prompt config."""
     task = (node.overrides or {}).get("prompt", {}).get("task")
     if task:
@@ -290,7 +297,7 @@ def _resolve_eval_task(cfg: DictConfig, node: PipelineNodeSpec) -> Optional[str]
     return None
 
 
-def _resolve_checkpoint_name(cfg: DictConfig) -> Optional[str]:
+def _resolve_checkpoint_name(cfg: DictConfig) -> str | None:
     """Derive checkpoint name from model config."""
     model_cfg = getattr(cfg, "model", None)
     if not model_cfg:
@@ -302,6 +309,7 @@ def _resolve_checkpoint_name(cfg: DictConfig) -> Optional[str]:
     lora_path = getattr(model_cfg, "lora_path", None)
     if lora_path:
         from dagspaces.common.wandb_logger import _derive_checkpoint_name
+
         return _derive_checkpoint_name(
             str(lora_path), str(model_source) if model_source else ""
         )
@@ -313,6 +321,7 @@ def _resolve_checkpoint_name(cfg: DictConfig) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Prompt / launcher config injection (requires caller-supplied config_dir)
 # ---------------------------------------------------------------------------
+
 
 def _inject_prompt_from_file(
     cfg: DictConfig, prompt_filename: str, config_dir: str
@@ -344,7 +353,7 @@ def _inject_prompt_from_file(
 
 def _load_launcher_config(
     cfg: DictConfig, launcher_name: str, config_dir: str
-) -> Optional[DictConfig]:
+) -> DictConfig | None:
     """Load a launcher configuration from Hydra config.
 
     ``config_dir`` must be the absolute path to the dagspace's ``conf/``
@@ -395,11 +404,12 @@ def _load_launcher_config(
 # Data loading
 # ---------------------------------------------------------------------------
 
+
 def _load_parquet_dataset(
     parquet_path: str,
     columns: Mapping[str, str],
     debug: bool,
-    sample_n: Optional[int],
+    sample_n: int | None,
 ) -> pd.DataFrame:
     if not isinstance(parquet_path, str) or parquet_path.strip() == "":
         raise ValueError("data.parquet_path is required")
@@ -450,7 +460,7 @@ def _load_parquet_dataset(
 
 def prepare_stage_input(
     cfg: DictConfig, dataset_path: str, stage: str
-) -> "tuple[Optional[pd.DataFrame], Optional[Any], bool]":
+) -> tuple[pd.DataFrame | None, Any | None, bool]:
     """Load stage input as a pandas DataFrame.
 
     Returns ``(df, None, False)`` – streaming via Ray is no longer supported.
@@ -458,7 +468,9 @@ def prepare_stage_input(
     """
     debug = bool(getattr(cfg.runtime, "debug", False))
     sample_n = getattr(cfg.runtime, "sample_n", None)
-    columns = dict(getattr(cfg.data, "columns", {})) if getattr(cfg, "data", None) else {}
+    columns = (
+        dict(getattr(cfg.data, "columns", {})) if getattr(cfg, "data", None) else {}
+    )
 
     if dataset_path and not os.path.isabs(dataset_path):
         dataset_path = os.path.abspath(dataset_path)
@@ -470,6 +482,7 @@ def prepare_stage_input(
 # ---------------------------------------------------------------------------
 # Stage I/O
 # ---------------------------------------------------------------------------
+
 
 def _clean_df_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
     """Clean DataFrame to avoid PyArrow serialisation issues.
@@ -537,17 +550,21 @@ def _clean_df_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
                 has_complex = any(isinstance(v, (dict, list)) for v in sample)
                 if has_complex:
                     df[col] = df[col].apply(
-                        lambda x: _json.dumps(x, default=_json_fallback)
-                        if isinstance(x, (dict, list))
-                        else x
+                        lambda x: (
+                            _json.dumps(x, default=_json_fallback)
+                            if isinstance(x, (dict, list))
+                            else x
+                        )
                     )
         except Exception:
             try:
                 # Last-resort value-level coercion; keep the column.
                 df[col] = df[col].apply(
-                    lambda x: _json.dumps(x, default=_json_fallback)
-                    if isinstance(x, (dict, list))
-                    else x
+                    lambda x: (
+                        _json.dumps(x, default=_json_fallback)
+                        if isinstance(x, (dict, list))
+                        else x
+                    )
                 )
             except Exception:
                 # Only coerce to plain strings if serialisation still fails.
@@ -559,7 +576,7 @@ def _clean_df_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _save_stage_outputs(out: pd.DataFrame, output_paths: Dict[str, str]) -> None:
+def _save_stage_outputs(out: pd.DataFrame, output_paths: dict[str, str]) -> None:
     """Save DataFrame outputs to disk with parquet primary, CSV/pickle fallback."""
     if isinstance(out, pd.DataFrame):
         for _output_name, output_path in output_paths.items():
@@ -567,9 +584,7 @@ def _save_stage_outputs(out: pd.DataFrame, output_paths: Dict[str, str]) -> None
 
             try:
                 out_clean.to_parquet(output_path, index=False)
-                print(
-                    f"[orchestrator] Saved {len(out_clean)} rows to {output_path}"
-                )
+                print(f"[orchestrator] Saved {len(out_clean)} rows to {output_path}")
             except Exception as parquet_err:
                 print(f"[orchestrator] Parquet save failed: {parquet_err}")
 
@@ -583,37 +598,31 @@ def _save_stage_outputs(out: pd.DataFrame, output_paths: Dict[str, str]) -> None
                     pickle_path = output_path.replace(".parquet", ".pkl")
                     try:
                         out.to_pickle(pickle_path)
-                        print(
-                            f"[orchestrator] Pickle fallback saved to {pickle_path}"
-                        )
+                        print(f"[orchestrator] Pickle fallback saved to {pickle_path}")
                     except Exception as pkl_err:
-                        print(
-                            f"[orchestrator] All save methods failed: {pkl_err}"
-                        )
+                        print(f"[orchestrator] All save methods failed: {pkl_err}")
                         raise parquet_err  # Re-raise original error
 
 
 def _safe_log_table(
-    logger: Optional[Any],
+    logger: Any | None,
     df: pd.DataFrame,
     key: str,
-    prefer_cols: Optional[List[str]] = None,
+    prefer_cols: list[str] | None = None,
     panel_group: str = "inspect_results",
 ) -> None:
     """Safely log DataFrame to wandb."""
     if logger and isinstance(df, pd.DataFrame):
         try:
-            logger.log_table(
-                df, key, prefer_cols=prefer_cols, panel_group=panel_group
-            )
+            logger.log_table(df, key, prefer_cols=prefer_cols, panel_group=panel_group)
         except Exception as e:
             print(f"Warning: Failed to log {key} to wandb: {e}", flush=True)
 
 
 def _collect_outputs(
     context: StageExecutionContext, optional: Mapping[str, bool]
-) -> Dict[str, str]:
-    resolved: Dict[str, str] = {}
+) -> dict[str, str]:
+    resolved: dict[str, str] = {}
     for key, path in context.output_paths.items():
         if os.path.exists(path):
             resolved[key] = path
@@ -648,14 +657,14 @@ def _ensure_output_dirs(paths: Iterable[str]) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
 
-def _node_optional_outputs(node: PipelineNodeSpec) -> Dict[str, bool]:
+def _node_optional_outputs(node: PipelineNodeSpec) -> dict[str, bool]:
     return {name: spec.optional for name, spec in node.outputs.items()}
 
 
 def _node_output_paths(
-    node: PipelineNodeSpec, registry: "ArtifactRegistry", output_root: str
-) -> Dict[str, str]:
-    resolved: Dict[str, str] = {}
+    node: PipelineNodeSpec, registry: ArtifactRegistry, output_root: str
+) -> dict[str, str]:
+    resolved: dict[str, str] = {}
     for out_name, spec in node.outputs.items():
         resolved[out_name] = registry.resolve_output_path(
             spec.path, output_root, node.key
@@ -665,9 +674,9 @@ def _node_output_paths(
 
 
 def _node_inputs(
-    node: PipelineNodeSpec, registry: "ArtifactRegistry"
-) -> Dict[str, str]:
-    resolved: Dict[str, str] = {}
+    node: PipelineNodeSpec, registry: ArtifactRegistry
+) -> dict[str, str]:
+    resolved: dict[str, str] = {}
     for alias, ref in node.inputs.items():
         resolved[alias] = registry.resolve(ref)
     return resolved
@@ -677,9 +686,10 @@ def _node_inputs(
 # Artifact registry
 # ---------------------------------------------------------------------------
 
+
 class ArtifactRegistry:
     def __init__(self) -> None:
-        self._artifacts: Dict[str, str] = {}
+        self._artifacts: dict[str, str] = {}
 
     def register_source(self, name: str, path: str) -> None:
         self._artifacts[name] = path
@@ -696,9 +706,7 @@ class ArtifactRegistry:
             return candidate
         raise KeyError(f"Unknown artifact reference '{ref}'")
 
-    def resolve_output_path(
-        self, path: str, output_root: str, node_key: str
-    ) -> str:
+    def resolve_output_path(self, path: str, output_root: str, node_key: str) -> str:
         if not path:
             raise ValueError(f"Node '{node_key}' output path is empty")
         resolved = path
@@ -711,7 +719,8 @@ class ArtifactRegistry:
 # Display
 # ---------------------------------------------------------------------------
 
-def _print_status(payload: Dict[str, Any]) -> None:
+
+def _print_status(payload: dict[str, Any]) -> None:
     try:
         print(json.dumps(payload, indent=2))
     except Exception:
@@ -722,7 +731,8 @@ def _print_status(payload: Dict[str, Any]) -> None:
 # GPU utilities
 # ---------------------------------------------------------------------------
 
-def _probe_single_gpu(device: str) -> Dict[str, Any]:
+
+def _probe_single_gpu(device: str) -> dict[str, Any]:
     """Probe a single logical GPU in a subprocess.
 
     Using a subprocess keeps CUDA initialisation out of the orchestrator/stage
@@ -779,7 +789,7 @@ def _probe_single_gpu(device: str) -> Dict[str, Any]:
         }
 
 
-def _update_slurm_gpu_envs(valid_devices: List[str]) -> None:
+def _update_slurm_gpu_envs(valid_devices: list[str]) -> None:
     """Update SLURM GPU environment variables to reflect the sanitised device list."""
     count = len(valid_devices)
     if count <= 0:
@@ -815,9 +825,7 @@ def _update_slurm_gpu_envs(valid_devices: List[str]) -> None:
                 os.environ[var] = str(count)
 
 
-def _adjust_tensor_parallel_env(
-    valid_count: int, env_prefix: str = "UAIR"
-) -> None:
+def _adjust_tensor_parallel_env(valid_count: int, env_prefix: str = "UAIR") -> None:
     """Clamp the tensor-parallel env var to the sanitised GPU count."""
     tp_env_name = f"{env_prefix}_TENSOR_PARALLEL_SIZE"
     tp_env = os.environ.get(tp_env_name)
@@ -828,7 +836,9 @@ def _adjust_tensor_parallel_env(
         if valid_count > 0 and tp_val > valid_count:
             os.environ[tp_env_name] = str(valid_count)
     except Exception as exc:
-        print(f"[orchestrator] WARNING: could not adjust {tp_env_name}: {exc}", flush=True)
+        print(
+            f"[orchestrator] WARNING: could not adjust {tp_env_name}: {exc}", flush=True
+        )
 
 
 def _log_gpu_environment(reason: str, env_prefix: str = "UAIR") -> None:
@@ -841,19 +851,19 @@ def _log_gpu_environment(reason: str, env_prefix: str = "UAIR") -> None:
         ]
         dropped = [
             d.strip()
-            for d in os.environ.get(
-                f"{env_prefix}_SANITIZED_DROPPED_GPUS", ""
-            ).split(",")
+            for d in os.environ.get(f"{env_prefix}_SANITIZED_DROPPED_GPUS", "").split(
+                ","
+            )
             if d.strip()
         ]
         original = [
             d.strip()
-            for d in os.environ.get(
-                f"{env_prefix}_GPU_SANITIZE_ORIGINAL", ""
-            ).split(",")
+            for d in os.environ.get(f"{env_prefix}_GPU_SANITIZE_ORIGINAL", "").split(
+                ","
+            )
             if d.strip()
         ]
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "reason": reason,
             "cuda_visible_devices": cuda_visible,
         }
@@ -875,7 +885,7 @@ def _log_gpu_environment(reason: str, env_prefix: str = "UAIR") -> None:
 def _sanitize_cuda_visible_devices(
     reason: str = "",
     env_prefix: str = "UAIR",
-    cfg: Optional[DictConfig] = None,
+    cfg: DictConfig | None = None,
 ) -> None:
     """Remove bad logical GPUs from ``CUDA_VISIBLE_DEVICES`` before stage startup.
 
@@ -904,9 +914,9 @@ def _sanitize_cuda_visible_devices(
         return
 
     normalized = ",".join(devices)
-    valid: List[str] = []
-    invalid: List[str] = []
-    probe_failures: Dict[str, Dict[str, Any]] = {}
+    valid: list[str] = []
+    invalid: list[str] = []
+    probe_failures: dict[str, dict[str, Any]] = {}
     for dev in devices:
         probe_result = _probe_single_gpu(dev)
         if probe_result.get("ok"):
@@ -934,7 +944,7 @@ def _sanitize_cuda_visible_devices(
                 }
             }
         )
-        failure_summary: Dict[str, Dict[str, Any]] = {}
+        failure_summary: dict[str, dict[str, Any]] = {}
         for dev, details in probe_failures.items():
             failure_summary[dev] = {
                 "returncode": details.get("returncode"),
@@ -996,6 +1006,7 @@ def _sanitize_cuda_visible_devices(
 # ---------------------------------------------------------------------------
 # SLURM / launcher
 # ---------------------------------------------------------------------------
+
 
 @contextlib.contextmanager
 def _clean_slurm_env():  # type: ignore[return]
@@ -1070,7 +1081,7 @@ def _create_submitit_executor(
             "submitit cannot see SLURM: `srun` is not on PATH, so AutoExecutor "
             "would silently fall back to its LOCAL executor and run this GPU "
             "stage as a subprocess on the current node (no GPUs).\n"
-            "Fix: export PATH=\"$HOME/.local/bin:$PATH:/usr/local/slurm/current/bin\"\n"
+            'Fix: export PATH="$HOME/.local/bin:$PATH:/usr/local/slurm/current/bin"\n'
             "See wiki/slurm-and-env.md."
         )
 
@@ -1087,17 +1098,15 @@ def _create_submitit_executor(
         f'"${{TRAWLER_STAGE_PYTHON:-{sys.executable}}}"'
     )
     with _clean_slurm_env():
-        executor = submitit.AutoExecutor(
-            folder=log_folder, slurm_python=python_spec
-        )
+        executor = submitit.AutoExecutor(folder=log_folder, slurm_python=python_spec)
 
     # Tell the setup block which venv the driver runs from, so the scratch
     # mirror is only substituted when it mirrors *this* venv (guards against
     # silently swapping engine versions on mixed-venv clusters).
-    setup_lines: List[str] = [f"export TRAWLER_DRIVER_VENV={sys.prefix}"]
+    setup_lines: list[str] = [f"export TRAWLER_DRIVER_VENV={sys.prefix}"]
     setup_lines.extend(launcher_cfg.get("setup", []))
 
-    params: Dict[str, Any] = dict(
+    params: dict[str, Any] = dict(
         timeout_min=int(launcher_cfg.get("timeout_min", 120)),
         slurm_partition=str(launcher_cfg.get("partition", "pierson")),
         slurm_mem=f"{int(launcher_cfg.get('mem_gb', 8))}GB",
@@ -1120,7 +1129,7 @@ def _create_submitit_executor(
 def _submit_slurm_job(
     executor,
     execute_fn,
-    context_data: Dict[str, Any],
+    context_data: dict[str, Any],
     node_key: str,
     launcher_name: str,
 ):
@@ -1134,15 +1143,16 @@ def _submit_slurm_job(
         with _clean_slurm_env():
             job = executor.submit(execute_fn, context_data)
     except Exception as e:
-        _print_status({
-            "node": node_key,
-            "status": "submission_failed",
-            "launcher": launcher_name,
-            "error": str(e),
-        })
+        _print_status(
+            {
+                "node": node_key,
+                "status": "submission_failed",
+                "launcher": launcher_name,
+                "error": str(e),
+            }
+        )
         raise RuntimeError(
-            f"SLURM submission failed for '{node_key}' "
-            f"(launcher={launcher_name}): {e}"
+            f"SLURM submission failed for '{node_key}' (launcher={launcher_name}): {e}"
         ) from e
     _print_status({"node": node_key, "status": "submitted", "job_id": job.job_id})
     return job
@@ -1159,6 +1169,7 @@ def _submit_slurm_job(
 # SLURM job names, manifest contents).
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class OrchestratorHooks:
     """Per-dagspace parameters for the generic eval run loop.
@@ -1171,11 +1182,11 @@ class OrchestratorHooks:
     """
 
     dagspace_module: str
-    dagspace_name: str                       # build_run_config(dagspace_name=...)
-    output_subdir: str                       # subdir under the hydra output dir
-    job_prefix: str                          # SLURM job-name prefix
-    config_dir: str                          # absolute path to the dagspace conf/ dir
-    log_eval_metrics: Callable[[Any, Dict[str, Any], str], None]
+    dagspace_name: str  # build_run_config(dagspace_name=...)
+    output_subdir: str  # subdir under the hydra output dir
+    job_prefix: str  # SLURM job-name prefix
+    config_dir: str  # absolute path to the dagspace conf/ dir
+    log_eval_metrics: Callable[[Any, dict[str, Any], str], None]
     wandb_dagspace: Callable[[DictConfig], str] = lambda cfg: ""
     use_srun: bool = False
 
@@ -1188,14 +1199,15 @@ def _load_hooks(dagspace_module: str) -> OrchestratorHooks:
     return _import_module(dagspace_module).ORCHESTRATOR_HOOKS
 
 
-def _load_registry(dagspace_module: str) -> Dict[str, Any]:
+def _load_registry(dagspace_module: str) -> dict[str, Any]:
     return dict(_import_module(dagspace_module).get_stage_registry())
 
 
-def _resolve_hydra_output_dir() -> Optional[str]:
+def _resolve_hydra_output_dir() -> str | None:
     """Hydra runtime output dir (correct for both run and multirun)."""
     try:
         from hydra.core.hydra_config import HydraConfig
+
         hc = HydraConfig.get()
         if hc and hc.runtime and hc.runtime.output_dir:
             return str(hc.runtime.output_dir)
@@ -1209,8 +1221,8 @@ def make_wandb_logger(
     hooks: OrchestratorHooks,
     *,
     stage: str,
-    run_id: Optional[str] = None,
-    run_config: Optional[Dict[str, Any]] = None,
+    run_id: str | None = None,
+    run_config: dict[str, Any] | None = None,
 ) -> Any:
     """Build the dagspace's WandbLogger (or a no-op) using its own wandb shim.
 
@@ -1220,13 +1232,20 @@ def make_wandb_logger(
     passed to ``pipeline_run_id`` (privacylens qualifies it by perturb culture;
     the others return a literal).
     """
-    wl = importlib.import_module(f"{hooks.dagspace_module.rsplit('.orchestrator', 1)[0]}.wandb_logger")
+    wl = importlib.import_module(
+        f"{hooks.dagspace_module.rsplit('.orchestrator', 1)[0]}.wandb_logger"
+    )
     wb_config = wl.WandbConfig.from_hydra_config(cfg)
     dagspace_key = hooks.wandb_dagspace(cfg)
-    pipeline_id = wl.pipeline_run_id(cfg, dagspace=dagspace_key) if dagspace_key else None
+    pipeline_id = (
+        wl.pipeline_run_id(cfg, dagspace=dagspace_key) if dagspace_key else None
+    )
     if wb_config.enabled:
         return wl.WandbLogger(
-            cfg, stage=stage, run_id=run_id, run_config=run_config,
+            cfg,
+            stage=stage,
+            run_id=run_id,
+            run_config=run_config,
             wandb_id=pipeline_id,
             resume="allow" if pipeline_id else None,
         )
@@ -1236,12 +1255,12 @@ def make_wandb_logger(
 def serialize_context_data(
     node_cfg: DictConfig,
     node: PipelineNodeSpec,
-    inputs: Dict[str, str],
-    output_paths: Dict[str, str],
+    inputs: dict[str, str],
+    output_paths: dict[str, str],
     output_dir: str,
     output_root: str,
     dagspace_module: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Serialise a node's execution context for submission to a SLURM worker."""
     return {
         "dagspace_module": dagspace_module,
@@ -1251,7 +1270,10 @@ def serialize_context_data(
             "stage": node.stage,
             "depends_on": node.depends_on,
             "inputs": node.inputs,
-            "outputs": {k: {"path": v.path, "type": v.type, "optional": v.optional} for k, v in node.outputs.items()},
+            "outputs": {
+                k: {"path": v.path, "type": v.type, "optional": v.optional}
+                for k, v in node.outputs.items()
+            },
             "overrides": node.overrides,
             "launcher": node.launcher,
             "parallel_group": node.parallel_group,
@@ -1266,8 +1288,9 @@ def serialize_context_data(
     }
 
 
-def _rebuild_node(node_dict: Dict[str, Any]) -> PipelineNodeSpec:
+def _rebuild_node(node_dict: dict[str, Any]) -> PipelineNodeSpec:
     from dagspaces.common.config_schema import OutputSpec
+
     outputs = {
         out_key: OutputSpec.from_config(out_key, out_val)
         for out_key, out_val in node_dict.get("outputs", {}).items()
@@ -1296,7 +1319,7 @@ def await_slurm_result(job: Any, cfg: DictConfig, node_key: str) -> StageResult:
     for the real job state and waiting for NFS to propagate the pickle.
     Unpacks submitit's ``(outcome, payload)`` tuple and returns a StageResult.
     """
-    job_result: Optional[Any] = None
+    job_result: Any | None = None
     try:
         job_result = job.result()
     except Exception as exc:
@@ -1308,13 +1331,17 @@ def await_slurm_result(job: Any, cfg: DictConfig, node_key: str) -> StageResult:
             or ("result" in exc_text and "pickle" in exc_text)
         )
         if missing_result:
-            wait_s = int(OmegaConf.select(cfg, "runtime.submitit_result_wait_s", default=300))
-            _print_status({
-                "debug": "waiting_for_result_pickle",
-                "job_id": job.job_id,
-                "path": str(result_path),
-                "max_wait_s": wait_s,
-            })
+            wait_s = int(
+                OmegaConf.select(cfg, "runtime.submitit_result_wait_s", default=300)
+            )
+            _print_status(
+                {
+                    "debug": "waiting_for_result_pickle",
+                    "job_id": job.job_id,
+                    "path": str(result_path),
+                    "max_wait_s": wait_s,
+                }
+            )
             deadline = time.time() + wait_s
             while time.time() < deadline and not os.path.exists(result_path):
                 time.sleep(2)
@@ -1322,28 +1349,40 @@ def await_slurm_result(job: Any, cfg: DictConfig, node_key: str) -> StageResult:
                 with open(result_path, "rb") as f:
                     _outcome, _result = pickle.load(f)
                 job_result = _result
-                _print_status({"debug": "recovered_result_after_wait", "job_id": job.job_id})
+                _print_status(
+                    {"debug": "recovered_result_after_wait", "job_id": job.job_id}
+                )
 
         if job_result is None:
             try:
                 check = subprocess.run(
                     ["squeue", "-j", str(job.job_id), "-h", "-o", "%t"],
-                    capture_output=True, text=True, check=False,
+                    capture_output=True,
+                    text=True,
+                    check=False,
                 )
                 state = check.stdout.strip()
                 if state in ("R", "PD", "CG"):
-                    _print_status({
-                        "debug": "job_still_running_in_squeue",
-                        "job_id": job.job_id,
-                        "state": state,
-                    })
+                    _print_status(
+                        {
+                            "debug": "job_still_running_in_squeue",
+                            "job_id": job.job_id,
+                            "state": state,
+                        }
+                    )
                     while True:
                         time.sleep(30)
                         check = subprocess.run(
                             ["squeue", "-j", str(job.job_id), "-h", "-o", "%t"],
-                            capture_output=True, text=True, check=False,
+                            capture_output=True,
+                            text=True,
+                            check=False,
                         )
-                        if not check.stdout.strip() or check.stdout.strip() not in ("R", "PD", "CG"):
+                        if not check.stdout.strip() or check.stdout.strip() not in (
+                            "R",
+                            "PD",
+                            "CG",
+                        ):
                             break
                 for _ in range(30):
                     if os.path.exists(result_path):
@@ -1353,16 +1392,30 @@ def await_slurm_result(job: Any, cfg: DictConfig, node_key: str) -> StageResult:
                     with open(result_path, "rb") as f:
                         _outcome, _result = pickle.load(f)
                     job_result = _result
-                    _print_status({"debug": "recovered_result_after_squeue_wait", "job_id": job.job_id})
+                    _print_status(
+                        {
+                            "debug": "recovered_result_after_squeue_wait",
+                            "job_id": job.job_id,
+                        }
+                    )
             except Exception as inner_exc:
-                _print_status({
-                    "debug": "squeue_fallback_failed",
-                    "job_id": job.job_id,
-                    "error": str(inner_exc),
-                })
+                _print_status(
+                    {
+                        "debug": "squeue_fallback_failed",
+                        "job_id": job.job_id,
+                        "error": str(inner_exc),
+                    }
+                )
 
         if job_result is None:
-            _print_status({"node": node_key, "status": "failed", "job_id": job.job_id, "error": str(exc)})
+            _print_status(
+                {
+                    "node": node_key,
+                    "status": "failed",
+                    "job_id": job.job_id,
+                    "error": str(exc),
+                }
+            )
             raise
 
     if isinstance(job_result, tuple) and len(job_result) == 2:
@@ -1379,7 +1432,7 @@ def await_slurm_result(job: Any, cfg: DictConfig, node_key: str) -> StageResult:
     return StageResult(outputs=job_result["outputs"], metadata=job_result["metadata"])
 
 
-def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
+def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
     """Execute a single stage — submitted as a SLURM job.
 
     Generic across eval dagspaces: the dagspace is recovered from
@@ -1387,6 +1440,7 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
     single function serves every eval dagspace.
     """
     from dagspaces.common.stage_utils import ensure_dotenv
+
     ensure_dotenv()
 
     hooks = _load_hooks(context_data["dagspace_module"])
@@ -1406,14 +1460,31 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
 
     runner = stage_registry.get(node.stage)
     if runner is None:
-        raise ValueError(f"No runner registered for stage '{node.stage}' (node '{node.key}')")
+        raise ValueError(
+            f"No runner registered for stage '{node.stage}' (node '{node.key}')"
+        )
 
     wandb_run_id = node.wandb_suffix or node.key
-    run_config = build_run_config(cfg, node, context.inputs, context.output_paths, dagspace_name=hooks.dagspace_name)
+    run_config = build_run_config(
+        cfg,
+        node,
+        context.inputs,
+        context.output_paths,
+        dagspace_name=hooks.dagspace_name,
+    )
 
-    with make_wandb_logger(cfg, hooks, stage=node.stage, run_id=wandb_run_id, run_config=run_config) as logger:
+    with make_wandb_logger(
+        cfg, hooks, stage=node.stage, run_id=wandb_run_id, run_config=run_config
+    ) as logger:
         context.logger = logger
-        _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": context.inputs})
+        _print_status(
+            {
+                "node": node.key,
+                "stage": node.stage,
+                "status": "running",
+                "inputs": context.inputs,
+            }
+        )
         stage_start = time.time()
 
         result = runner.run(context)
@@ -1423,13 +1494,18 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
                 df_out = pd.read_parquet(result.outputs["dataset"])
                 _safe_log_table(logger, df_out, f"{node.stage}/results")
             except Exception as e:
-                print(f"Warning: Failed to log output table for {node.key}: {e}", flush=True)
+                print(
+                    f"Warning: Failed to log output table for {node.key}: {e}",
+                    flush=True,
+                )
 
         duration_s = time.time() - stage_start
-        logger.log_metrics({
-            f"{node.stage}/duration_s": duration_s,
-            f"{node.stage}/rows_processed": result.metadata.get("rows", 0),
-        })
+        logger.log_metrics(
+            {
+                f"{node.stage}/duration_s": duration_s,
+                f"{node.stage}/rows_processed": result.metadata.get("rows", 0),
+            }
+        )
 
         eval_metrics = result.metadata.get("metrics")
         if eval_metrics and isinstance(eval_metrics, dict):
@@ -1442,7 +1518,9 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
     """Generic eval pipeline execution shared by all eval dagspaces."""
     from dagspaces.common.config_schema import load_pipeline_graph, resolve_output_root
 
-    with make_wandb_logger(cfg, hooks, stage="orchestrator", run_id="monitor") as logger:
+    with make_wandb_logger(
+        cfg, hooks, stage="orchestrator", run_id="monitor"
+    ) as logger:
         try:
             graph_spec = load_pipeline_graph(cfg)
 
@@ -1465,7 +1543,7 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
             ordered_nodes = graph_spec.topological_order()
             pipeline_start = time.time()
 
-            manifest: Dict[str, Any] = {
+            manifest: dict[str, Any] = {
                 "output_root": output_root,
                 "nodes": {},
             }
@@ -1474,7 +1552,9 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                 node = graph_spec.nodes[node_key]
                 runner = stage_registry.get(node.stage)
                 if runner is None:
-                    raise ValueError(f"No runner registered for stage '{node.stage}' (node '{node.key}')")
+                    raise ValueError(
+                        f"No runner registered for stage '{node.stage}' (node '{node.key}')"
+                    )
 
                 inputs = _node_inputs(node, registry)
                 output_paths = _node_output_paths(node, registry, output_root)
@@ -1496,29 +1576,67 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                 node_start = time.time()
 
                 if node.launcher and _SUBMITIT_AVAILABLE:
-                    _print_status({"node": node.key, "stage": node.stage, "status": "submitting", "launcher": node.launcher})
+                    _print_status(
+                        {
+                            "node": node.key,
+                            "stage": node.stage,
+                            "status": "submitting",
+                            "launcher": node.launcher,
+                        }
+                    )
 
-                    launcher_cfg = _load_launcher_config(cfg, node.launcher, config_dir=hooks.config_dir)
+                    launcher_cfg = _load_launcher_config(
+                        cfg, node.launcher, config_dir=hooks.config_dir
+                    )
 
                     log_base = hydra_output_dir if hydra_output_dir else output_root
                     log_folder = os.path.join(log_base, ".slurm_jobs", node.key)
                     os.makedirs(log_folder, exist_ok=True)
 
                     executor = _create_submitit_executor(
-                        launcher_cfg, f"{hooks.job_prefix}-{node.key}", log_folder, use_srun=hooks.use_srun
+                        launcher_cfg,
+                        f"{hooks.job_prefix}-{node.key}",
+                        log_folder,
+                        use_srun=hooks.use_srun,
                     )
                     context_data = serialize_context_data(
-                        node_cfg, node, inputs, output_paths, output_dir, output_root, hooks.dagspace_module
+                        node_cfg,
+                        node,
+                        inputs,
+                        output_paths,
+                        output_dir,
+                        output_root,
+                        hooks.dagspace_module,
                     )
 
-                    job = _submit_slurm_job(executor, execute_stage_job, context_data, node.key, node.launcher)
+                    job = _submit_slurm_job(
+                        executor,
+                        execute_stage_job,
+                        context_data,
+                        node.key,
+                        node.launcher,
+                    )
                     result = await_slurm_result(job, cfg, node.key)
                 else:
-                    _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})
+                    _print_status(
+                        {
+                            "node": node.key,
+                            "stage": node.stage,
+                            "status": "running",
+                            "inputs": inputs,
+                        }
+                    )
                     try:
                         result = runner.run(context)
                     except Exception as exc:
-                        _print_status({"node": node.key, "stage": node.stage, "status": "failed", "error": str(exc)})
+                        _print_status(
+                            {
+                                "node": node.key,
+                                "stage": node.stage,
+                                "status": "failed",
+                                "error": str(exc),
+                            }
+                        )
                         raise
 
                 eval_metrics = result.metadata.get("metrics")
@@ -1534,13 +1652,15 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                     "metadata": result.metadata,
                     "duration_s": round(duration, 3),
                 }
-                _print_status({
-                    "node": node.key,
-                    "stage": node.stage,
-                    "status": "completed",
-                    "duration_s": round(duration, 3),
-                    "outputs": result.outputs,
-                })
+                _print_status(
+                    {
+                        "node": node.key,
+                        "stage": node.stage,
+                        "status": "completed",
+                        "duration_s": round(duration, 3),
+                        "outputs": result.outputs,
+                    }
+                )
 
             manifest_path = os.path.join(output_root, "pipeline_manifest.json")
             try:
@@ -1553,14 +1673,16 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                 )
 
             total_duration = time.time() - pipeline_start
-            _print_status({
-                "pipeline": {
-                    "output_root": output_root,
-                    "nodes": ordered_nodes,
-                    "duration_s": round(total_duration, 3),
-                    "manifest": manifest_path,
+            _print_status(
+                {
+                    "pipeline": {
+                        "output_root": output_root,
+                        "nodes": ordered_nodes,
+                        "duration_s": round(total_duration, 3),
+                        "manifest": manifest_path,
+                    }
                 }
-            })
+            )
         except Exception as e:
             print(f"[orchestrator] PIPELINE FAILED: {e}", file=sys.stderr, flush=True)
             try:

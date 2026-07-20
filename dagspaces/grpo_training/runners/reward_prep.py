@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
@@ -13,6 +13,7 @@ from dagspaces.common.orchestrator import (
     _collect_outputs,
     _save_stage_outputs,
 )
+
 from .base import StageRunner
 
 
@@ -54,7 +55,7 @@ class RewardPrepRunner(StageRunner):
         output_rows = len(out) if isinstance(out, pd.DataFrame) else 0
         _save_stage_outputs(out, context.output_paths)
 
-        metadata: Dict[str, Any] = {
+        metadata: dict[str, Any] = {
             "rows": output_rows,
             "input_pairs": len(sft_df),
             "num_universes": len(norm_universes),

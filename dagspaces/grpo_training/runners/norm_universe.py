@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
@@ -12,6 +12,7 @@ from dagspaces.common.orchestrator import (
     StageExecutionContext,
     StageResult,
 )
+
 from .base import StageRunner
 
 
@@ -58,7 +59,7 @@ class NormUniverseRunner(StageRunner):
                 json.dump(norm_universes, f, indent=2, ensure_ascii=False)
             print(f"[{self.stage_name}] Saved norm universes to {json_output_path}")
 
-        metadata: Dict[str, Any] = {
+        metadata: dict[str, Any] = {
             "rows": sum(len(v) for v in norm_universes.values()),
             "num_sources": len(norm_universes),
             "input_rows": input_rows,

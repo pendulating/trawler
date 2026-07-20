@@ -5,12 +5,13 @@ Uses dagspaces/common/vllm_inference.py (text-only, no multimodal).
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 
 from dagspaces.common.vllm_inference import run_vllm_inference
+
 from ..prompts import build_prompt_for_row
 
 
@@ -49,14 +50,14 @@ def run_llm_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         '\n\nRespond with a JSON object: {"classification": "<your answer>", "reasoning": "<brief explanation>"}.'
     )
 
-    def preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess(row: dict[str, Any]) -> dict[str, Any]:
         prompt_text = build_prompt_for_row(row, task=task, mode=mode, few_shot=few_shot)
         prompt_text += _json_instruction
         row["messages"] = [{"role": "user", "content": prompt_text}]
         row["sampling_params"] = dict(sp_dict, guided_decoding={"json": _json_schema})
         return row
 
-    def postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def postprocess(row: dict[str, Any]) -> dict[str, Any]:
         # Keep generated_text as-is; parsing happens in parse_responses stage
         return row
 

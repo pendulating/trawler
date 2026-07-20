@@ -25,7 +25,6 @@ degrades to layers 1–2 with one loud warning — QA must never crash a stage.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Set
 
 TITLE_PATTERN = re.compile(
     r"\b(?:Mr\.|Mrs\.|Miss|Ms\.|Lady|Lord|Sir|Reverend|Rev\.|Colonel|Col\.)"
@@ -106,7 +105,7 @@ class PersonNameDetector:
 
     def __init__(
         self,
-        blocklist: Optional[Set[str]] = None,
+        blocklist: set[str] | None = None,
         use_ner: bool = True,
     ):
         names = sorted({n.lower() for n in (blocklist or set())})
@@ -123,13 +122,13 @@ class PersonNameDetector:
         ]
         self.use_ner = use_ner
 
-    def detect(self, text: Optional[str]) -> Dict[str, List[str]]:
+    def detect(self, text: str | None) -> dict[str, list[str]]:
         """Return matches per layer: ``{"blocklist", "titled", "person_entity"}``.
 
         Empty lists everywhere means the text is person-free as far as the
         active layers can tell.
         """
-        out: Dict[str, List[str]] = {
+        out: dict[str, list[str]] = {
             "blocklist": [], "titled": [], "person_entity": [],
         }
         if not text:
@@ -151,7 +150,7 @@ class PersonNameDetector:
                         out["person_entity"].append(ent.text)
         return out
 
-    def field_flags(self, field_name: str, text: Optional[str]) -> List[str]:
+    def field_flags(self, field_name: str, text: str | None) -> list[str]:
         """Flags for one field, in the established ``norm_quality_flags`` format.
 
         ``named_char_in_<field>:<name>`` (blocklist),

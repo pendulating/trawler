@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
@@ -32,7 +32,6 @@ from ..prompts import (
     SIMPLEQA_GRADE_SCHEMA,
     build_grader_messages,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -83,7 +82,7 @@ def letter_to_verdict(letter: str) -> str:
     }.get(letter, "unparseable")
 
 
-def _build_grader_item(row: Dict[str, Any]) -> Dict[str, Any]:
+def _build_grader_item(row: dict[str, Any]) -> dict[str, Any]:
     """Shape used by both live judge_batch and async export_batch_jsonl."""
     return {
         "row_idx": int(row["question_id"]),
@@ -93,7 +92,7 @@ def _build_grader_item(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _build_messages(item: Dict[str, Any]):
+def _build_messages(item: dict[str, Any]):
     return build_grader_messages(
         question=item["question"],
         gold_target=item["gold_answer"],
@@ -180,7 +179,7 @@ def judge_grade_live(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
 # Async / batch-export
 # ---------------------------------------------------------------------------
 
-def _write_batch_manifest(output_dir: str, manifest: Dict[str, Any]) -> str:
+def _write_batch_manifest(output_dir: str, manifest: dict[str, Any]) -> str:
     path = os.path.join(output_dir, "manifest.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, default=str)
@@ -202,7 +201,10 @@ def judge_grade_batch_export(
     populated with empty placeholders so downstream consumers can ingest
     the parquet directly).
     """
-    from dagspaces.common.judge_export import resolve_export_client, resolve_export_endpoint
+    from dagspaces.common.judge_export import (
+        resolve_export_client,
+        resolve_export_endpoint,
+    )
 
     client, info = resolve_export_client(
         cfg, dagspace="simpleqa_verified", default_max_tokens=256,
@@ -210,7 +212,7 @@ def judge_grade_batch_export(
 
     items = [_build_grader_item(r) for _, r in df.iterrows()]
 
-    def custom_id_fn(item: Dict[str, Any], _idx: int) -> str:
+    def custom_id_fn(item: dict[str, Any], _idx: int) -> str:
         return f"simpleqa_verified:judge_grade:{item['row_idx']}"
 
     os.makedirs(output_dir, exist_ok=True)

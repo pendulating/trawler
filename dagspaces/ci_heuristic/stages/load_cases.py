@@ -12,7 +12,6 @@ import glob
 import json
 import logging
 import os
-from typing import List
 
 import pandas as pd
 import yaml
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 CORPUS_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "corpus")
 
 
-def _load_tier_a(corpus_root: str, include_contaminated: bool) -> List[dict]:
+def _load_tier_a(corpus_root: str, include_contaminated: bool) -> list[dict]:
     rows = []
     for path in sorted(glob.glob(os.path.join(corpus_root, "tier_a", "*.json"))):
         gold = json.load(open(path))
@@ -44,7 +43,7 @@ def _load_tier_a(corpus_root: str, include_contaminated: bool) -> List[dict]:
     return rows
 
 
-def _load_tier_c(corpus_root: str) -> List[dict]:
+def _load_tier_c(corpus_root: str) -> list[dict]:
     path = os.path.join(corpus_root, "tier_c", "practices.yaml")
     if not os.path.exists(path):
         return []
@@ -68,7 +67,7 @@ TIER_B_EXTRA_COLS = [
 ]
 
 
-def _load_tier_b(corpus_root: str) -> List[dict]:
+def _load_tier_b(corpus_root: str) -> list[dict]:
     rows = []
     for path in sorted(glob.glob(os.path.join(corpus_root, "tier_b", "*.parquet"))):
         df = pd.read_parquet(path)
@@ -88,14 +87,14 @@ def _load_tier_b(corpus_root: str) -> List[dict]:
 
 
 def load_cases(
-    tiers: List[str],
+    tiers: list[str],
     include_contaminated: bool = True,
     corpus_root: str | None = None,
     sample_n: int | None = None,
 ) -> pd.DataFrame:
     """Load cases for the requested tiers ("a", "b", "c")."""
     root = corpus_root or CORPUS_ROOT
-    rows: List[dict] = []
+    rows: list[dict] = []
     for tier in tiers:
         if tier == "a":
             rows.extend(_load_tier_a(root, include_contaminated))

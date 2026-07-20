@@ -30,7 +30,7 @@ The figure of merit for *this run's trustworthiness* is
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
@@ -65,7 +65,7 @@ def _format_status_series(df: pd.DataFrame) -> pd.Series:
     return pd.Series(["valid"] * len(df), index=df.index)
 
 
-def compute_trajectory_metrics(df: pd.DataFrame) -> Dict[str, Any]:
+def compute_trajectory_metrics(df: pd.DataFrame) -> dict[str, Any]:
     """Compute I/U/C and auxiliary trajectory metrics.
 
     Returns a dict with the conventional shape (top-level scalars +
@@ -243,9 +243,9 @@ def compute_trajectory_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     return em.to_dict()
 
 
-def metrics_to_dataframe(metrics: Dict[str, Any]) -> pd.DataFrame:
+def metrics_to_dataframe(metrics: dict[str, Any]) -> pd.DataFrame:
     """Flatten metrics dict into a single-row DataFrame for parquet storage."""
-    flat: Dict[str, Any] = {}
+    flat: dict[str, Any] = {}
     for k, v in metrics.items():
         if isinstance(v, dict):
             flat[k] = json.dumps(v, default=str)

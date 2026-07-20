@@ -9,10 +9,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Optional
 
 import pandas as pd
-
 
 _GITHUB_RAW_URL = (
     "https://raw.githubusercontent.com/EricGLan/CI-RL/main/"
@@ -25,7 +23,7 @@ _DEFAULT_CACHE_DIR = os.path.join(
 )
 
 
-def _ensure_data_file(json_path: Optional[str]) -> str:
+def _ensure_data_file(json_path: str | None) -> str:
     """Return path to main_data.json, downloading if needed."""
     if json_path and os.path.isfile(json_path):
         return json_path
@@ -66,9 +64,9 @@ def _to_gerund(transmission_principle: str) -> str:
 
 
 def load_dataset(
-    json_path: Optional[str] = None,
-    probing_levels: Optional[list[str]] = None,
-    sample_n: Optional[int] = None,
+    json_path: str | None = None,
+    probing_levels: list[str] | None = None,
+    sample_n: int | None = None,
 ) -> pd.DataFrame:
     """Load main_data.json and expand to per-probing-level rows.
 

@@ -11,7 +11,7 @@ dagspaces.common.eval_schemas.
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -40,16 +40,16 @@ class Flow(BaseModel):
 
 class S1Flows(BaseModel):
     """Step 1: describe the new practice in terms of information flows."""
-    flows: List[Flow] = Field(..., description="Each distinct (sender, recipient, subject, info-type) flow")
+    flows: list[Flow] = Field(..., description="Each distinct (sender, recipient, subject, info-type) flow")
 
 
 class S2Context(BaseModel):
     """Step 2: identify information types, activities, purposes; link to a prevailing context."""
     domain: str = Field(..., description="The prevailing social domain (NOT a place or platform)")
-    nested_contexts: List[str] = Field(default_factory=list, description="Overlapping or nested contexts with potential impact")
-    activities: List[str] = Field(default_factory=list, description="Descriptive actions occurring in the practice")
-    purposes: List[str] = Field(default_factory=list, description="Explanatory purposes the information is used for")
-    values_ends: List[str] = Field(default_factory=list, description="The context's constitutive values, ends, and goals")
+    nested_contexts: list[str] = Field(default_factory=list, description="Overlapping or nested contexts with potential impact")
+    activities: list[str] = Field(default_factory=list, description="Descriptive actions occurring in the practice")
+    purposes: list[str] = Field(default_factory=list, description="Explanatory purposes the information is used for")
+    values_ends: list[str] = Field(default_factory=list, description="The context's constitutive values, ends, and goals")
 
 
 class NonhumanRole(BaseModel):
@@ -60,10 +60,10 @@ class NonhumanRole(BaseModel):
 
 class S3Actors(BaseModel):
     """Step 3: identify information subjects, senders, and recipients."""
-    senders: List[str] = Field(..., description="Entities that transmit information")
-    recipients: List[str] = Field(..., description="Entities information is transmitted to")
-    subjects: List[str] = Field(..., description="Entities the information pertains to")
-    nonhuman_roles: List[NonhumanRole] = Field(default_factory=list)
+    senders: list[str] = Field(..., description="Entities that transmit information")
+    recipients: list[str] = Field(..., description="Entities information is transmitted to")
+    subjects: list[str] = Field(..., description="Entities the information pertains to")
+    nonhuman_roles: list[NonhumanRole] = Field(default_factory=list)
 
 
 class TransmissionPrinciple(BaseModel):
@@ -74,28 +74,28 @@ class TransmissionPrinciple(BaseModel):
 
 class S4TransmissionPrinciples(BaseModel):
     """Step 4: identify transmission principles — conditions governing the flow."""
-    transmission_principles: List[TransmissionPrinciple] = Field(
+    transmission_principles: list[TransmissionPrinciple] = Field(
         ..., description="Every condition under which the flow ought (not) to occur")
 
 
 class Norm(BaseModel):
     norm_flow: str = Field(..., description="The entrenched flow, stated with all five parameters")
     entrenchment_evidence: str = Field("", description="Why this norm counts as entrenched (law, culture, scholarship, practice)")
-    departures: List[str] = Field(default_factory=list, description="Specific ways the new practice departs from this norm")
+    departures: list[str] = Field(default_factory=list, description="Specific ways the new practice departs from this norm")
     completeness: Literal["entrenched", "contested", "incomplete"] = Field(
         ..., description="incomplete = no settled norm governs this kind of flow yet")
 
 
 class S5Norms(BaseModel):
     """Step 5: locate applicable entrenched informational norms and points of departure."""
-    norms: List[Norm] = Field(..., description="Applicable norms; use completeness='incomplete' when none govern")
+    norms: list[Norm] = Field(..., description="Applicable norms; use completeness='incomplete' when none govern")
 
 
 class S6PrimaFacie(BaseModel):
     """Step 6: prima facie assessment of contextual integrity."""
     violation: Literal["yes", "no", "incomplete_norms"] = Field(
         ..., description="Prima facie violation? incomplete_norms when no entrenched norm applies")
-    departed_parameters: List[DepartedParameter] = Field(
+    departed_parameters: list[DepartedParameter] = Field(
         default_factory=list, description="Which parameters depart from entrenched norms (empty if none)")
     justification: str = Field(..., description="Why, grounded in the step-5 norms; presumption favors entrenched practice")
 
@@ -103,13 +103,13 @@ class S6PrimaFacie(BaseModel):
 class Factor(BaseModel):
     factor: str = Field(..., description="The specific moral/political factor affected by the practice")
     kind: str = Field(..., description="autonomy | freedom | power | justice | equality | fairness | democracy | discrimination | information_asymmetry | coercion | trust | other(<label>)")
-    affected_parties: List[str] = Field(default_factory=list)
+    affected_parties: list[str] = Field(default_factory=list)
     direction: Literal["harm", "benefit", "mixed"] = Field(...)
 
 
 class S7Factors(BaseModel):
     """Step 7 (Evaluation I): moral and political factors affected by the practice."""
-    factors: List[Factor] = Field(..., description="Harms, threats to autonomy/freedom, power effects, justice/equality implications")
+    factors: list[Factor] = Field(..., description="Harms, threats to autonomy/freedom, power effects, justice/equality implications")
 
 
 class ContextualMeaning(BaseModel):
@@ -121,14 +121,14 @@ class ContextualMeaning(BaseModel):
 
 class S8ContextualMeaning(BaseModel):
     """Step 8 (Evaluation II): significance of the factors in light of contextual values, ends, purposes."""
-    meanings: List[ContextualMeaning] = Field(...)
+    meanings: list[ContextualMeaning] = Field(...)
 
 
 class S9Recommendation(BaseModel):
     """Step 9: recommendation for or against the system or practice."""
     decision: Literal["continue", "modify", "reject"] = Field(...)
-    conditions: List[str] = Field(default_factory=list, description="Binding modifications/conditions if decision=modify")
-    carrying_findings: List[str] = Field(..., description="The specific step 6-8 findings that carry the decision")
+    conditions: list[str] = Field(default_factory=list, description="Binding modifications/conditions if decision=modify")
+    carrying_findings: list[str] = Field(..., description="The specific step 6-8 findings that carry the decision")
 
 
 STEP_SCHEMAS = {
@@ -179,4 +179,4 @@ class L1Traversal(BaseModel):
 
 class TPElicitation(BaseModel):
     """'This information flow is fine IF ___' — each condition is a transmission principle."""
-    conditions: List[str] = Field(..., description="Every distinct completion of 'this flow is fine IF ...'")
+    conditions: list[str] = Field(..., description="Every distinct completion of 'this flow is fine IF ...'")

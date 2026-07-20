@@ -26,9 +26,9 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-DEFAULT_THRESHOLDS: Dict[str, float] = {
+DEFAULT_THRESHOLDS: dict[str, float] = {
     "min_reward_gain": 0.0,      # last-third mean reward − first-third mean
     "max_frac_zero_std": 0.2,    # mean fraction of zero-advantage groups
     "max_kl": 1.0,               # mean KL to the SFT reference
@@ -37,7 +37,7 @@ DEFAULT_THRESHOLDS: Dict[str, float] = {
 }
 
 
-def _find_trainer_state(checkpoint_dir: str) -> Optional[str]:
+def _find_trainer_state(checkpoint_dir: str) -> str | None:
     """Locate the highest-step checkpoint-N/trainer_state.json."""
     direct = os.path.join(checkpoint_dir, "trainer_state.json")
     if os.path.exists(direct):
@@ -59,19 +59,19 @@ def _find_trainer_state(checkpoint_dir: str) -> Optional[str]:
     return best_path
 
 
-def _reward_entries(trainer_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _reward_entries(trainer_state: dict[str, Any]) -> list[dict[str, Any]]:
     return [e for e in trainer_state.get("log_history", []) if "reward" in e]
 
 
-def _eval_reward_entries(trainer_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _eval_reward_entries(trainer_state: dict[str, Any]) -> list[dict[str, Any]]:
     return [e for e in trainer_state.get("log_history", []) if "eval_reward" in e]
 
 
 def _gate_reward_trend(
-    entries: List[Dict[str, Any]],
+    entries: list[dict[str, Any]],
     min_gain: float,
     key: str = "reward",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Last-third vs first-third trend over ``key``.
 
     Prefers the held-out ``eval_reward`` curve when the caller passes it
@@ -94,7 +94,7 @@ def _gate_reward_trend(
     }
 
 
-def _gate_zero_std(entries: List[Dict[str, Any]], max_frac: float) -> Dict[str, Any]:
+def _gate_zero_std(entries: list[dict[str, Any]], max_frac: float) -> dict[str, Any]:
     vals = [e["frac_reward_zero_std"] for e in entries if "frac_reward_zero_std" in e]
     if not vals:
         return {"status": "skipped", "reason": "frac_reward_zero_std not logged"}
@@ -106,7 +106,7 @@ def _gate_zero_std(entries: List[Dict[str, Any]], max_frac: float) -> Dict[str, 
     }
 
 
-def _gate_kl(entries: List[Dict[str, Any]], max_kl: float) -> Dict[str, Any]:
+def _gate_kl(entries: list[dict[str, Any]], max_kl: float) -> dict[str, Any]:
     vals = [e["kl"] for e in entries if "kl" in e]
     if not vals:
         return {"status": "skipped", "reason": "kl not logged (beta=0?)"}
@@ -121,16 +121,16 @@ def _gate_kl(entries: List[Dict[str, Any]], max_kl: float) -> Dict[str, Any]:
 
 def _gate_no_flow(
     traces_path: str,
-    gold_base_rate: Optional[float],
+    gold_base_rate: float | None,
     tolerance: float,
     tail_calls: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if gold_base_rate is None:
         return {"status": "skipped", "reason": "gold base rate unavailable"}
     if not os.path.exists(traces_path):
         return {"status": "skipped", "reason": f"no traces at {traces_path}"}
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     with open(traces_path, "r", encoding="utf-8") as f:
         for line in f:
             try:
@@ -158,8 +158,8 @@ def _gate_no_flow(
 
 def check_promotion_gates(
     checkpoint_dir: str,
-    thresholds: Optional[Dict[str, float]] = None,
-) -> Dict[str, Any]:
+    thresholds: dict[str, float] | None = None,
+) -> dict[str, Any]:
     """Evaluate all promotion gates for a GRPO checkpoint directory.
 
     Expects the layout the training stage writes: ``checkpoint-N/
@@ -180,7 +180,7 @@ def check_promotion_gates(
         trainer_state = json.load(f)
     entries = _reward_entries(trainer_state)
 
-    gold_base_rate: Optional[float] = None
+    gold_base_rate: float | None = None
     meta_path = os.path.join(checkpoint_dir, "training_metadata.json")
     if os.path.exists(meta_path):
         try:

@@ -20,10 +20,9 @@ import signal
 import subprocess
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
-
 
 # Model families with VLM prompt builders in vlm_geoprivacy_bench.
 # Must match keys in dagspaces/vlm_geoprivacy_bench/model_prompts.py PROMPT_BUILDERS.
@@ -134,7 +133,7 @@ def run_eval_all(cfg: DictConfig) -> None:
     # them to the cluster judge endpoint. Judged benchmarks run their
     # *_async pipelines (export-only, no compute_metrics), then we drain,
     # then we run their *_async_finalize pipelines.
-    sidecar_proc: Optional[subprocess.Popen] = None
+    sidecar_proc: subprocess.Popen | None = None
     sidecar_cfg = OmegaConf.select(cfg, "judge_sidecar")
     if sidecar_cfg is not None and bool(sidecar_cfg.get("enabled", False)):
         sidecar_proc = _launch_judge_sidecar(
@@ -153,7 +152,7 @@ def run_eval_all(cfg: DictConfig) -> None:
                 pass
 
     results = {}
-    durations: Dict[str, float] = {}
+    durations: dict[str, float] = {}
     drain_seconds: float = 0.0
     try:
         for bench_name, bench_cfg in benchmarks.items():
@@ -168,7 +167,7 @@ def run_eval_all(cfg: DictConfig) -> None:
             #   2. benchmark_filter.include non-empty whitelist
             #   3. benchmark_filter.exclude blacklist
             #   4. vlm_only constraint vs. the model family
-            skip_reason: Optional[str] = None
+            skip_reason: str | None = None
             if not enabled:
                 skip_reason = "enabled=false"
             elif benchmark_include and bench_name not in benchmark_include:
@@ -223,8 +222,8 @@ def run_eval_all(cfg: DictConfig) -> None:
         # Phase 2 (drain) and Phase 3 (finalize) for the async-judge flow.
         # Run BEFORE shutting down the task vLLM server so finalize stages
         # that re-use it (none today, but defensive) still see it.
-        finalize_results: Dict[str, str] = {}
-        finalize_durations: Dict[str, float] = {}
+        finalize_results: dict[str, str] = {}
+        finalize_durations: dict[str, float] = {}
         if sidecar_proc is not None:
             try:
                 _drain_t0 = time.time()
@@ -328,8 +327,8 @@ def _launch_judge_sidecar(
     *,
     sidecar_cfg: Any,
     watch_root: str,
-    child_env: Dict[str, str],
-) -> Optional[subprocess.Popen]:
+    child_env: dict[str, str],
+) -> subprocess.Popen | None:
     """Spawn the judge sidecar as a same-process-tree subprocess.
 
     Returns the Popen handle so the parent can terminate it on exit.
@@ -347,7 +346,7 @@ def _launch_judge_sidecar(
         )
         return None
 
-    cmd: List[str] = [
+    cmd: list[str] = [
         sys.executable, "-m", "dagspaces.eval_all.judge_sidecar", "run",
         "--run-dir", watch_root,
         "--base-url", base_url,
@@ -396,7 +395,7 @@ def _launch_judge_sidecar(
         return None
 
 
-def _terminate_judge_sidecar(proc: Optional[subprocess.Popen]) -> None:
+def _terminate_judge_sidecar(proc: subprocess.Popen | None) -> None:
     """SIGTERM the sidecar, SIGKILL if it doesn't exit in 30s."""
     if proc is None or proc.poll() is not None:
         return
@@ -465,16 +464,16 @@ def _wait_for_judge_drain(
 
 def _run_judged_finalize(
     *,
-    benchmarks: Dict[str, Any],
-    benchmark_results: Dict[str, str],
+    benchmarks: dict[str, Any],
+    benchmark_results: dict[str, str],
     model_name: str,
     parent_output_dir: str,
-    child_env: Dict[str, str],
+    child_env: dict[str, str],
     cfg: DictConfig,
     wandb_project: str,
     debug: bool,
     sample_n: Any,
-) -> "tuple[Dict[str, str], Dict[str, float]]":
+) -> "tuple[dict[str, str], dict[str, float]]":
     """Dispatch each judged benchmark's ``finalize_pipeline`` as a child
     CLI invocation against the same per-benchmark output dir as the
     export pipeline used.
@@ -484,8 +483,8 @@ def _run_judged_finalize(
     ``skipped:<reason>`` entries instead of hard failures, so a single
     flaky judge run doesn't kill the whole sweep summary.
     """
-    finalize_results: Dict[str, str] = {}
-    finalize_durations: Dict[str, float] = {}
+    finalize_results: dict[str, str] = {}
+    finalize_durations: dict[str, float] = {}
     for bench_name, bench_cfg in benchmarks.items():
         finalize_pipeline = bench_cfg.get("finalize_pipeline")
         if not finalize_pipeline:
@@ -599,7 +598,7 @@ def _open_eval_all_summary_run(
     if model_name:
         tags.append(f"family:{model_name}")
 
-    init_kwargs: Dict[str, Any] = {
+    init_kwargs: dict[str, Any] = {
         "project": wandb_project,
         "entity": entity,
         "group": group,
@@ -624,7 +623,7 @@ def _open_eval_all_summary_run(
         return None
 
 
-def _read_pipeline_manifest(child_output_dir: str) -> Dict[str, Any]:
+def _read_pipeline_manifest(child_output_dir: str) -> dict[str, Any]:
     """Find any pipeline_manifest.json under a child run's output and
     return it (sanity counts live in node metadata). Tolerant: returns
     {} if not found or unparseable.
@@ -642,7 +641,7 @@ def _read_pipeline_manifest(child_output_dir: str) -> Dict[str, Any]:
     return {}
 
 
-def _aggregate_sanity_warnings(manifest: Dict[str, Any]) -> "tuple[int, str]":
+def _aggregate_sanity_warnings(manifest: dict[str, Any]) -> "tuple[int, str]":
     """Count sanity warnings + extract the worst-warning string from a
     pipeline_manifest.json. Used by the summary table.
     """
@@ -665,11 +664,11 @@ def _aggregate_sanity_warnings(manifest: Dict[str, Any]) -> "tuple[int, str]":
 def _close_eval_all_summary_run(
     *,
     run,
-    benchmarks: Dict[str, Any],
-    dispatch_results: Dict[str, str],
-    dispatch_durations: Dict[str, float],
-    finalize_results: Dict[str, str],
-    finalize_durations: Dict[str, float],
+    benchmarks: dict[str, Any],
+    dispatch_results: dict[str, str],
+    dispatch_durations: dict[str, float],
+    finalize_results: dict[str, str],
+    finalize_durations: dict[str, float],
     drain_seconds: float,
     parent_output_dir: str,
     model_name: str,
@@ -679,8 +678,11 @@ def _close_eval_all_summary_run(
         return
     try:
         import wandb  # type: ignore
+
         from .primary_metrics import (
-            extract_primary_metrics, format_primary_metrics, PRIMARY_METRICS,
+            PRIMARY_METRICS,
+            extract_primary_metrics,
+            format_primary_metrics,
         )
     except Exception as exc:
         try:
@@ -695,8 +697,8 @@ def _close_eval_all_summary_run(
         "finalize_status", "finalize_seconds",
         "primary_metrics", "sanity_warnings", "worst_sanity",
     ]
-    rows: List[List[Any]] = []
-    aggregate_metrics: Dict[str, Any] = {}
+    rows: list[list[Any]] = []
+    aggregate_metrics: dict[str, Any] = {}
 
     for bench_name in benchmarks.keys():
         child_output_dir = os.path.join(parent_output_dir, bench_name)

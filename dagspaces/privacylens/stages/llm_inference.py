@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
@@ -19,8 +19,11 @@ from dagspaces.common.vllm_inference import (
     model_needs_reasoning_budget,
     run_vllm_inference,
 )
+
 from ..prompts import (
-    _clean_generated_action, _extract_t_dict, _list_sensitive_items,
+    _clean_generated_action,
+    _extract_t_dict,
+    _list_sensitive_items,
     build_action_prompt,
     build_helpfulness_judge_prompt,
     build_leakage_judge_prompt_per_secret,
@@ -28,7 +31,6 @@ from ..prompts import (
     extract_ci_fields,
     post_process_action,
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. QA Probing
@@ -78,7 +80,7 @@ def run_qa_probe_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     from dagspaces.common.eval_schemas import YesNoResult
     _qa_schema = YesNoResult.model_json_schema()
 
-    def preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess(row: dict[str, Any]) -> dict[str, Any]:
         axis = row["_qa_axis"]
         prompt = build_qa_prompt(row, axis)
         # Upstream SALT-NLP/PrivacyLens probing.py uses a single-turn
@@ -94,7 +96,7 @@ def run_qa_probe_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         row["sampling_params"] = dict(sp_qa, guided_decoding={"json": _qa_schema})
         return row
 
-    def postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def postprocess(row: dict[str, Any]) -> dict[str, Any]:
         return row
 
     result_df = run_vllm_inference(
@@ -131,7 +133,7 @@ def run_action_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     action_max_tokens = 8192 if model_needs_reasoning_budget(cfg.model) else 4096
     sp_action = dict(sp_base, max_tokens=action_max_tokens)
 
-    def preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess(row: dict[str, Any]) -> dict[str, Any]:
         prompt = build_action_prompt(row)
         row["messages"] = [
             {"role": "system", "content": prompt["system"]},
@@ -140,7 +142,7 @@ def run_action_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
         row["sampling_params"] = sp_action
         return row
 
-    def postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def postprocess(row: dict[str, Any]) -> dict[str, Any]:
         # Truncate the raw generation to its first ReAct Action/Action Input
         # block (upstream-faithful — see prompts.py::post_process_action).
         # Storing the post-processed text in generated_action means every
@@ -254,7 +256,7 @@ def _get_judge_client(cfg: DictConfig, *, skip_health_check: bool = False):
     return client
 
 
-def _write_batch_manifest(output_dir: str, manifest: Dict[str, Any]) -> str:
+def _write_batch_manifest(output_dir: str, manifest: dict[str, Any]) -> str:
     """Write ``manifest.json`` next to a requests.jsonl file."""
     path = os.path.join(output_dir, "manifest.json")
     with open(path, "w", encoding="utf-8") as f:
@@ -287,7 +289,7 @@ def _agent_action_has_format(action: str) -> bool:
     return bool(a) and "Action:" in a
 
 
-def _build_leakage_fanout_items(df: pd.DataFrame) -> tuple[list[dict], Dict[Any, str]]:
+def _build_leakage_fanout_items(df: pd.DataFrame) -> tuple[list[dict], dict[Any, str]]:
     """Fan out each row into one (row_idx, sub_idx, secret) item per secret.
 
     Upstream PrivacyLens calls the leakage judge once per
@@ -306,7 +308,7 @@ def _build_leakage_fanout_items(df: pd.DataFrame) -> tuple[list[dict], Dict[Any,
     skipped row index to one of the strings above.
     """
     items: list[dict] = []
-    skip_reasons: Dict[Any, str] = {}
+    skip_reasons: dict[Any, str] = {}
     for idx, row in df.iterrows():
         action = str(row.get("generated_action") or "")
         if not _agent_action_has_format(action):
@@ -333,8 +335,8 @@ def _build_leakage_fanout_items(df: pd.DataFrame) -> tuple[list[dict], Dict[Any,
 def _stamp_format_status_columns(
     result_df: pd.DataFrame,
     *,
-    leakage_skip_reasons: Optional[Dict[Any, str]] = None,
-    helpfulness_skipped: Optional[set] = None,
+    leakage_skip_reasons: dict[Any, str] | None = None,
+    helpfulness_skipped: set | None = None,
 ) -> None:
     """In-place stamp format-status columns onto ``result_df``.
 
@@ -410,7 +412,7 @@ def export_leakage_judge_batch(
             flush=True,
         )
 
-    def build_messages(item: Dict[str, Any]):
+    def build_messages(item: dict[str, Any]):
         prompt = build_leakage_judge_prompt_per_secret(
             user_name=item["user_name"],
             secret=item["secret"],
@@ -420,7 +422,7 @@ def export_leakage_judge_batch(
         # as a single user turn — no system message.
         return [{"role": "user", "content": prompt}]
 
-    def custom_id_fn(item: Dict[str, Any], _idx: int) -> str:
+    def custom_id_fn(item: dict[str, Any], _idx: int) -> str:
         return f"privacylens:leakage_judge:{item['row_idx']}:{item['sub_idx']}"
 
     os.makedirs(output_dir, exist_ok=True)
@@ -510,11 +512,11 @@ def export_helpfulness_judge_batch(
             flush=True,
         )
 
-    def build_messages(item: Dict[str, Any]):
+    def build_messages(item: dict[str, Any]):
         prompt = build_helpfulness_judge_prompt(item["row"], item["action"])
         return [{"role": "user", "content": prompt}]
 
-    def custom_id_fn(item: Dict[str, Any], _idx: int) -> str:
+    def custom_id_fn(item: dict[str, Any], _idx: int) -> str:
         return f"privacylens:helpfulness_judge:{item['row_idx']}"
 
     os.makedirs(output_dir, exist_ok=True)
@@ -586,7 +588,7 @@ def run_leakage_judge_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFra
             flush=True,
         )
 
-    def build_messages(item: Dict[str, Any]):
+    def build_messages(item: dict[str, Any]):
         prompt = build_leakage_judge_prompt_per_secret(
             user_name=item["user_name"],
             secret=item["secret"],
@@ -620,7 +622,7 @@ def run_leakage_judge_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFra
         tail = text[text.find("Answer:") + len("Answer:"):] if "Answer:" in text else text
         return "Yes" in tail
 
-    row_judgments: Dict[Any, list] = {idx: [] for idx in df.index}
+    row_judgments: dict[Any, list] = {idx: [] for idx in df.index}
     for item, resp in zip(items, responses):
         row_judgments[item["row_idx"]].append((item["secret"], resp))
 
@@ -665,7 +667,7 @@ def run_helpfulness_judge_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.Dat
     client = _get_judge_client(cfg)
     schema = HelpfulnessResult.model_json_schema()
 
-    items: list[Dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
     skipped_indices: set = set()
     for idx, row in df.iterrows():
         action = str(row.get("generated_action") or "")
@@ -683,7 +685,7 @@ def run_helpfulness_judge_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.Dat
             flush=True,
         )
 
-    def build_messages(item: Dict[str, Any]):
+    def build_messages(item: dict[str, Any]):
         prompt = build_helpfulness_judge_prompt(item["row"], item["action"])
         return [{"role": "user", "content": prompt}]
 

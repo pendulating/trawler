@@ -19,16 +19,16 @@ Two vLLM modes supported (configured via training.grpo.vllm_mode):
 import json
 import os
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 from omegaconf import OmegaConf
 
 
 def _generate_vignettes(
-    norm_universes: Dict[str, list],
+    norm_universes: dict[str, list],
     prompt_template: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Generate judgment vignettes from info-flow-governing norms.
 
     Each norm with ``governs_info_flow=true`` and a clear normative force
@@ -91,9 +91,9 @@ def _generate_vignettes(
 
 
 def _resolve_vignette_universes(
-    norm_universes: Dict[str, list],
+    norm_universes: dict[str, list],
     vignette_norm_universes_path: str,
-) -> Dict[str, list]:
+) -> dict[str, list]:
     """Pick the universe that judgment vignettes are generated from.
 
     Defaults to the grounding ``norm_universes`` — vignettes and R_ground share a
@@ -133,8 +133,8 @@ def _build_grpo_dataset(
     prompt_template: str,
     enable_thinking: bool = True,
     contrastive_ratio: float = 0.0,
-    all_source_ids: Optional[List[str]] = None,
-    vignettes: Optional[List[Dict[str, Any]]] = None,
+    all_source_ids: list[str] | None = None,
+    vignettes: list[dict[str, Any]] | None = None,
     vignette_ratio: float = 0.0,
     vignette_system_prompt: str = "You are an expert in privacy norms and appropriate information sharing.",
 ) -> "Dataset":
@@ -165,12 +165,13 @@ def _build_grpo_dataset(
     """
     import hashlib
     import math
+
     from datasets import Dataset
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     # Maps formatted_prompt → raw user_prompt so OnlineRGround can pass
     # clean text to the judge instead of chat-templated text.
-    raw_prompts: Dict[str, str] = {}
+    raw_prompts: dict[str, str] = {}
 
     for _, row in chunks_df.iterrows():
         chunk_text = row.get("chunk_text", "")
@@ -370,10 +371,10 @@ def run_grpo_training_stage(
             grounding universe (historical behaviour). See
             ``_resolve_vignette_universes``.
     """
-    from trl import GRPOTrainer, GRPOConfig
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    from peft import PeftModel
     import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from trl import GRPOConfig, GRPOTrainer
 
     # Pick a free port for torch distributed to avoid collisions with
     # other training jobs on the same node (default 29500 is often taken).
@@ -519,7 +520,7 @@ def run_grpo_training_stage(
     # Each source maps to its list of unique norm-level context strings,
     # so R_context can do per-flow max-similarity matching instead of
     # comparing against one giant concatenated string.
-    source_contexts: Dict[str, List[str]] = {}
+    source_contexts: dict[str, list[str]] = {}
     for source_id, norms in norm_universes.items():
         contexts = set()
         for norm in norms:
@@ -543,6 +544,11 @@ def run_grpo_training_stage(
     # retrieves norms from the wrong source for contrastive completions,
     # producing naturally low R_ground.
     if use_online_rground:
+        from ..schemas import (
+            CompletionRankingJudgment,
+            FlowGovernanceJudgment,
+            NoFlowCoverageJudgment,
+        )
         from .clients import (
             EmbeddingClient,
             JudgeClient,
@@ -550,11 +556,6 @@ def run_grpo_training_stage(
             RerankerJudgeClient,
         )
         from .online_rground import OnlineRGround
-        from ..schemas import (
-            CompletionRankingJudgment,
-            FlowGovernanceJudgment,
-            NoFlowCoverageJudgment,
-        )
 
         emb_port = grpo_cfg.get("embedding_server_port", 8001)
         judge_port = grpo_cfg.get("judge_server_port", 8002)
@@ -772,7 +773,6 @@ def run_grpo_training_stage(
     _is_multimodal_merge = hasattr(_merge_cfg, "vision_config") and _merge_cfg.vision_config is not None
     if _is_multimodal_merge:
         # Use the model's own ConditionalGeneration class to preserve vision weights
-        from transformers import AutoModel
         _model_class = _merge_cfg.architectures[0] if _merge_cfg.architectures else None
         if _model_class:
             import transformers as _tf
@@ -849,7 +849,8 @@ def run_grpo_training_stage(
         merged_dir, trust_remote_code=True, torch_dtype=torch.bfloat16,
         device_map="cpu",
     )
-    from peft import LoraConfig as _LoraConfig, get_peft_model
+    from peft import LoraConfig as _LoraConfig
+    from peft import get_peft_model
     # Build a fresh LoraConfig matching the SFT adapter's architecture.
     # LoraConfig.from_pretrained() marks the adapter as inference-only,
     # resulting in zero trainable params.
@@ -1197,8 +1198,9 @@ def run_grpo_training_stage(
     # Callback to fix base_model_name_or_path in intermediate checkpoint
     # adapter configs.  PEFT records model.name_or_path (the ephemeral scratch
     # dir) — rewrite to the persistent base model path after every save.
-    from transformers import TrainerCallback
     import json as _json_cb
+
+    from transformers import TrainerCallback
 
     class _FixAdapterBasePathCallback(TrainerCallback):
         def on_save(self, args, state, control, **kwargs):

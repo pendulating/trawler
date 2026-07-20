@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -43,7 +43,7 @@ class Persona:
 
 # Step 5: a small varied population for norm elicitation (hand-built source;
 # ANES-sampled personas are the PLURALS path, persona_source config).
-NORM_POPULATION: List[Persona] = [
+NORM_POPULATION: list[Persona] = [
     Persona("retired_teacher", "a 68-year-old retired schoolteacher in a small town, cautious with technology"),
     Persona("gig_courier", "a 26-year-old gig-economy courier in a large city, on their phone all day"),
     Persona("nurse_parent", "a 41-year-old hospital nurse and parent of two teenagers"),
@@ -57,7 +57,7 @@ NORM_POPULATION: List[Persona] = [
 ]
 
 # Step 7: stakeholder roles. {practice} is interpolated per case.
-STAKEHOLDERS: List[Persona] = [
+STAKEHOLDERS: list[Persona] = [
     Persona("subject", "a person whose information is captured by the practice — you appear in the data without having sought to"),
     Persona("operator", "the person or organization operating the capturing system — you benefit from and are responsible for it"),
     Persona("recipient_company", "an executive at the company that receives and monetizes the data"),
@@ -68,7 +68,7 @@ STAKEHOLDERS: List[Persona] = [
 ]
 
 
-def stakeholder_set(include_marginalized: bool = True) -> List[Persona]:
+def stakeholder_set(include_marginalized: bool = True) -> list[Persona]:
     """The step-7 panel; the McDonald-Forte test toggles the marginalized members."""
     return [p for p in STAKEHOLDERS if include_marginalized or not p.marginalized]
 
@@ -121,8 +121,8 @@ appropriate (yes/no/unsure), expectation (one sentence)."""
 
 
 def build_norm_elicitation_prompts(
-    practice_input: str, state: Dict[str, Any], personas: List[Persona]
-) -> List[Tuple[str, str]]:
+    practice_input: str, state: dict[str, Any], personas: list[Persona]
+) -> list[tuple[str, str]]:
     flows = json.dumps((state.get("s1") or {}).get("flows", []))
     return [
         ("You answer only as the person described, from their lived experience.",
@@ -132,10 +132,10 @@ def build_norm_elicitation_prompts(
 
 
 def aggregate_expectations(
-    expectations: List[Dict[str, Any]],
+    expectations: list[dict[str, Any]],
     entrenched_threshold: float = 0.8,
     incomplete_threshold: float = 0.5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Population statistics -> completeness verdict for the located norm.
 
     - incomplete: a majority of the population finds the flow unfamiliar
@@ -191,8 +191,8 @@ identify how the practice departs from them. Return the S5 JSON artifact."""
 
 
 def build_norm_synthesis_prompt(
-    practice_input: str, state: Dict[str, Any], stats: Dict[str, Any]
-) -> Tuple[str, str]:
+    practice_input: str, state: dict[str, Any], stats: dict[str, Any]
+) -> tuple[str, str]:
     prior = {k: state[k] for k in ("s1", "s2", "s3", "s4") if k in state}
     usr = NORM_SYNTH_TEMPLATE.format(
         practice=practice_input,
@@ -224,11 +224,11 @@ Be concrete; name who is affected and how. Return the S7 JSON artifact
 
 def build_stakeholder_prompt(
     practice_input: str,
-    state: Dict[str, Any],
+    state: dict[str, Any],
     persona: Persona,
-    prior_responses: List[str] | None = None,
+    prior_responses: list[str] | None = None,
     combination_template: str = SECOND_WAVE,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     combination = ""
     if prior_responses:
         combination = "\n" + combination_template.format(prior="\n---\n".join(prior_responses)) + "\n"
@@ -241,15 +241,15 @@ def build_stakeholder_prompt(
     return ("You answer only as the person described, from their lived experience.", usr)
 
 
-def merge_factor_artifacts(member_artifacts: List[Tuple[str, Dict[str, Any]]]) -> Dict[str, Any]:
+def merge_factor_artifacts(member_artifacts: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
     """Union stakeholders' factors with alias-dedup; keep persona provenance.
 
     member_artifacts: [(persona_id, s7_artifact_dict), ...]. Dedup keeps the
     first occurrence and appends later personas to its affected_parties
     provenance tag rather than dropping their voice silently.
     """
-    merged: List[Dict[str, Any]] = []
-    raised_by: List[List[str]] = []
+    merged: list[dict[str, Any]] = []
+    raised_by: list[list[str]] = []
     for pid, artifact in member_artifacts:
         for f in (artifact or {}).get("factors") or []:
             if not isinstance(f, dict):
@@ -287,7 +287,7 @@ context is not doing step 8. Return the S8 JSON artifact (meanings list,
 factor_ref indexing the step-7 list)."""
 
 
-def build_s8_analyst_prompt(practice_input: str, state: Dict[str, Any]) -> Tuple[str, str]:
+def build_s8_analyst_prompt(practice_input: str, state: dict[str, Any]) -> tuple[str, str]:
     usr = ANALYST_S8_TEMPLATE.format(
         practice=practice_input,
         s2=json.dumps(state.get("s2") or {}),
@@ -315,7 +315,7 @@ decision (continue/modify/reject), binding conditions if any, and the
 specific findings that carry the decision."""
 
 
-def build_moderator_prompt(practice_input: str, state: Dict[str, Any]) -> Tuple[str, str]:
+def build_moderator_prompt(practice_input: str, state: dict[str, Any]) -> tuple[str, str]:
     usr = MODERATOR_S9_TEMPLATE.format(
         practice=practice_input,
         s6=json.dumps(state.get("s6") or {}),

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict
+from typing import Any
 
 from procoder.functional import add_refnames, format_multiple_prompts
 
@@ -21,7 +21,6 @@ from dagspaces.common.toolemu.prompts.agent import (
 )
 from dagspaces.common.toolemu.tools import get_toolkits_by_names
 from dagspaces.common.vllm_inference import _strip_think_blocks
-
 
 # ---------------------------------------------------------------------------
 # CI tuple extraction (from PrivacyLens HF dataset S/V JSON fields)
@@ -42,7 +41,7 @@ def _parse_json_like_payload(raw: Any) -> dict[str, Any]:
         return {}
 
 
-def extract_ci_fields(row: Dict[str, Any]) -> dict[str, str]:
+def extract_ci_fields(row: dict[str, Any]) -> dict[str, str]:
     """Extract contextual integrity tuple fields from a PrivacyLens row.
 
     Parses the S (seed) and V (vignette) JSON columns to extract:
@@ -311,7 +310,7 @@ def _build_trajectory_qa_prompt(s: dict, t: dict) -> str:
     return full_prompt
 
 
-def build_qa_prompt(row: Dict[str, Any], axis: str) -> Dict[str, str]:
+def build_qa_prompt(row: dict[str, Any], axis: str) -> dict[str, str]:
     """Build a PrivacyLens QA probing prompt for axis ∈ {``S``, ``V``, ``T``}.
 
     Mirrors SALT-NLP/PrivacyLens ``evaluation/probing.py`` modulo the
@@ -384,7 +383,7 @@ def _coerce_toolkit_names(toolkits: Any) -> list[str]:
         return [str(toolkits)]
 
 
-def build_action_prompt(row: Dict[str, Any]) -> Dict[str, str]:
+def build_action_prompt(row: dict[str, Any]) -> dict[str, str]:
     """Build the agent's next-action prompt for a PrivacyLens trajectory.
 
     Returns ``{"system", "user"}`` to match the chat-template interface used
@@ -498,7 +497,7 @@ def post_process_action(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _extract_t_dict(row: Dict[str, Any]) -> dict[str, Any]:
+def _extract_t_dict(row: dict[str, Any]) -> dict[str, Any]:
     """Return the ``T`` dict from a PrivacyLens row, or ``{}`` if absent.
 
     The HF PrivacyLens dataset packs the agent's trajectory-level context
@@ -614,7 +613,7 @@ Reasoning: Let's think step by step in order to
 
 
 def build_helpfulness_judge_prompt(
-    row: Dict[str, Any],
+    row: dict[str, Any],
     generated_action: str,
 ) -> str:
     """Upstream-verbatim helpfulness judge prompt (zero-shot, 4-point rubric).
@@ -676,7 +675,7 @@ Reasoning: Let's think step by step in order to
 
 
 def build_leakage_judge_prompt(
-    row: Dict[str, Any],
+    row: dict[str, Any],
     generated_action: str,
 ) -> str:
     """Back-compat wrapper: returns a prompt covering ALL secrets at once.

@@ -19,16 +19,16 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
     if _STAGE_REGISTRY is None:
         # New clean PrivacyLens eval runners
         from .privacylens_runners import (
-            LoadDatasetRunner,
-            PerturbCultureRunner,
-            QAProbeInferenceRunner,
             AgentActionInferenceRunner,
-            LeakageJudgeInferenceRunner,
+            ComputeMetricsRunner,
+            HelpfulnessJudgeBatchExportRunner,
             HelpfulnessJudgeInferenceRunner,
             LeakageJudgeBatchExportRunner,
-            HelpfulnessJudgeBatchExportRunner,
-            ComputeMetricsRunner,
+            LeakageJudgeInferenceRunner,
+            LoadDatasetRunner,
+            PerturbCultureRunner,
             PrivacylensFinalizeAsyncRunner,
+            QAProbeInferenceRunner,
         )
 
         _STAGE_REGISTRY = {

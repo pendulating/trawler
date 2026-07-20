@@ -21,11 +21,10 @@ letter ``A``/``B``/``C``/``D`` (see :data:`MMLU_LETTER_SCHEMA`).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from typing import Literal
-
 
 # ---------------------------------------------------------------------------
 # MCQ schema (guided-decoded into the model's response)
@@ -39,7 +38,7 @@ class MMLUAnswer(BaseModel):
     )
 
 
-MMLU_LETTER_SCHEMA: Dict[str, Any] = MMLUAnswer.model_json_schema()
+MMLU_LETTER_SCHEMA: dict[str, Any] = MMLUAnswer.model_json_schema()
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +61,7 @@ def _format_one_example(
     question: str,
     choices: Sequence[str],
     *,
-    answer_letter: Optional[str] = None,
+    answer_letter: str | None = None,
 ) -> str:
     """Render one MMLU example block.
 
@@ -84,7 +83,7 @@ def build_mmlu_prompt(
     choices: Sequence[str],
     subject: str,
     *,
-    few_shot_examples: Optional[Sequence[Dict[str, Any]]] = None,
+    few_shot_examples: Sequence[dict[str, Any]] | None = None,
     instruction_response_json: bool = True,
 ) -> str:
     """Assemble the user-turn prompt for one MMLU question.
@@ -106,7 +105,7 @@ def build_mmlu_prompt(
         f"about {_subject_phrase(subject)}."
     )
 
-    blocks: List[str] = [header, ""]
+    blocks: list[str] = [header, ""]
     # Callers may pass None or a list; we avoid `or []` because a numpy
     # array (common after a parquet round-trip) raises on bool().
     examples = few_shot_examples if few_shot_examples is not None else []

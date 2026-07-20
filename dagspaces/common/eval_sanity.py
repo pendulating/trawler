@@ -34,12 +34,12 @@ from __future__ import annotations
 import math
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 import pandas as pd
-
 
 # ---------------------------------------------------------------------------
 # Shared per-row failure schema
@@ -48,7 +48,7 @@ import pandas as pd
 #: Canonical column order for the per-row failure log table. Both parse
 #: stages (via :func:`compute_parse_health`) and the async-judge sidecar
 #: write rows in this schema, so a single W&B filter unifies them.
-FAILURE_ROW_COLUMNS: List[str] = [
+FAILURE_ROW_COLUMNS: list[str] = [
     "custom_id",
     "dagspace",
     "stage",
@@ -80,7 +80,7 @@ RAW_PREVIEW_CHARS: int = 500
 #: refusal regardless of benchmark. Each benchmark's parse stage should
 #: pass its own ``refusal_patterns`` list via cfg, optionally extending
 #: this set.
-DEFAULT_REFUSAL_PATTERNS: List[str] = [
+DEFAULT_REFUSAL_PATTERNS: list[str] = [
     r"\bI cannot\b",
     r"\bI can't\b",
     r"\bI won't\b",
@@ -99,7 +99,7 @@ DEFAULT_REFUSAL_PATTERNS: List[str] = [
 #: Warning thresholds. ``"<metric>:gt"`` means warn when value > threshold;
 #: ``"<metric>:lt"`` means warn when value < threshold. Each benchmark's
 #: ``conf/config.yaml`` may override individual entries.
-DEFAULT_THRESHOLDS: Dict[str, float] = {
+DEFAULT_THRESHOLDS: dict[str, float] = {
     "parseable_rate:lt": 0.95,
     "format_adherence_rate:lt": 0.95,
     "truncated_rate:gt": 0.02,
@@ -132,7 +132,7 @@ DEFAULT_THRESHOLDS: Dict[str, float] = {
 #: This is essential for base-model sweeps, where weak instruction
 #: followers can easily fall below any reasonable gate even though the
 #: downstream judge numbers on the parseable subset are still meaningful.
-DEFAULT_FAIL_THRESHOLDS: Dict[str, float] = {
+DEFAULT_FAIL_THRESHOLDS: dict[str, float] = {
     "parseable_rate:lt": 0.7,
     "judge_unparseable_rate:gt": 0.2,
     "judge_api_error_rate:gt": 0.05,
@@ -152,7 +152,7 @@ class SanityFailure(RuntimeError):
     hatch — only for debugging known-broken runs).
     """
 
-    def __init__(self, dagspace: str, stage: str, failures: "List[SanityWarning]"):
+    def __init__(self, dagspace: str, stage: str, failures: list[SanityWarning]):
         self.dagspace = dagspace
         self.stage = stage
         self.failures = list(failures)
@@ -189,19 +189,19 @@ class SanityReport:
 
     dagspace: str
     stage: str
-    metrics: Dict[str, float] = field(default_factory=dict)
-    warnings: List[SanityWarning] = field(default_factory=list)
+    metrics: dict[str, float] = field(default_factory=dict)
+    warnings: list[SanityWarning] = field(default_factory=list)
     failure_rows: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=FAILURE_ROW_COLUMNS))
     failures_dropped: int = 0
     n_rows: int = 0
 
     @property
-    def warns(self) -> List[SanityWarning]:
+    def warns(self) -> list[SanityWarning]:
         """Threshold violations at warn severity only."""
         return [w for w in self.warnings if w.severity == "warn"]
 
     @property
-    def failures(self) -> List[SanityWarning]:
+    def failures(self) -> list[SanityWarning]:
         """Threshold violations at fail severity (pipeline-halting)."""
         return [w for w in self.warnings if w.severity == "fail"]
 
@@ -211,7 +211,7 @@ class SanityReport:
     def has_failures(self) -> bool:
         return any(w.severity == "fail" for w in self.warnings)
 
-    def worst_warning(self) -> Optional[SanityWarning]:
+    def worst_warning(self) -> SanityWarning | None:
         if not self.warnings:
             return None
         # Severity ranking: fail beats warn, then ratio of (value − threshold)
@@ -223,7 +223,7 @@ class SanityReport:
             return (sev_rank, abs(w.value - w.threshold) / max(abs(w.threshold), 1e-9))
         return max(self.warnings, key=_badness)
 
-    def worst_failure(self) -> Optional[SanityWarning]:
+    def worst_failure(self) -> SanityWarning | None:
         fails = self.failures
         if not fails:
             return None
@@ -274,9 +274,9 @@ class SanityReport:
 def _resolve_threshold(
     metric: str,
     comparison: str,
-    overrides: Optional[Dict[str, float]],
+    overrides: dict[str, float] | None,
     severity: str = "warn",
-) -> Optional[float]:
+) -> float | None:
     """Resolve a threshold for ``(metric, comparison, severity)``.
 
     Per-run overrides take precedence over the built-in defaults. Override
@@ -303,7 +303,7 @@ def _emit_warning(
     metric: str,
     value: float,
     comparison: str,
-    overrides: Optional[Dict[str, float]],
+    overrides: dict[str, float] | None,
 ) -> None:
     """Check fail-tier and warn-tier thresholds for ``(metric, comparison)``.
 
@@ -312,7 +312,7 @@ def _emit_warning(
     warn-severity warning. At most one warning per ``(metric, comparison)``
     pair so the same violation doesn't appear twice in the report.
     """
-    def _crossed(thr: Optional[float]) -> bool:
+    def _crossed(thr: float | None) -> bool:
         if thr is None:
             return False
         return (value > thr) if comparison == "gt" else (value < thr)
@@ -350,9 +350,9 @@ def _truncate(text: Any, n: int = RAW_PREVIEW_CHARS) -> str:
     return s[:n] + f"…(+{len(s) - n} chars)"
 
 
-def _compile_refusal_patterns(patterns: Optional[Sequence[str]]) -> List[re.Pattern]:
+def _compile_refusal_patterns(patterns: Sequence[str] | None) -> list[re.Pattern]:
     pats = list(patterns) if patterns is not None else DEFAULT_REFUSAL_PATTERNS
-    out: List[re.Pattern] = []
+    out: list[re.Pattern] = []
     for p in pats:
         try:
             out.append(re.compile(p, re.IGNORECASE))
@@ -362,7 +362,7 @@ def _compile_refusal_patterns(patterns: Optional[Sequence[str]]) -> List[re.Patt
     return out
 
 
-def _matches_any(text: str, patterns: List[re.Pattern]) -> bool:
+def _matches_any(text: str, patterns: list[re.Pattern]) -> bool:
     if not text:
         return False
     return any(p.search(text) for p in patterns)
@@ -374,10 +374,10 @@ def _build_failure_rows(
     dagspace: str,
     stage: str,
     model: str,
-    id_col: Optional[str],
-    completion_col: Optional[str],
+    id_col: str | None,
+    completion_col: str | None,
     failure_type_col: str = "_sanity_failure_type",
-    parse_error_col: Optional[str] = None,
+    parse_error_col: str | None = None,
 ) -> tuple[pd.DataFrame, int]:
     """Materialize a capped failure-row table in the shared schema."""
     n = len(flagged)
@@ -417,12 +417,12 @@ def compute_parse_health(
     model: str = "",
     status_col: str = "parse_status",
     completion_col: str = "generated_text",
-    label_col: Optional[str] = None,
-    id_col: Optional[str] = None,
-    finish_reason_col: Optional[str] = "finish_reason",
-    expected_input_n: Optional[int] = None,
-    refusal_patterns: Optional[Sequence[str]] = None,
-    thresholds: Optional[Dict[str, float]] = None,
+    label_col: str | None = None,
+    id_col: str | None = None,
+    finish_reason_col: str | None = "finish_reason",
+    expected_input_n: int | None = None,
+    refusal_patterns: Sequence[str] | None = None,
+    thresholds: dict[str, float] | None = None,
     parsed_status_value: str = "parsed",
     schema_violation_status_value: str = "schema_violation",
 ) -> SanityReport:
@@ -585,9 +585,9 @@ def compute_format_health(
     format_col: str,
     model: str = "",
     valid_value: str = "valid",
-    raw_response_col: Optional[str] = None,
-    id_col: Optional[str] = None,
-    thresholds: Optional[Dict[str, float]] = None,
+    raw_response_col: str | None = None,
+    id_col: str | None = None,
+    thresholds: dict[str, float] | None = None,
 ) -> SanityReport:
     """Compute health metrics for a downstream format-extraction step.
 
@@ -693,12 +693,12 @@ def compute_judge_health(
     judge_model: str = "",
     label_col: str,
     valid_labels: Sequence[Any],
-    raw_response_col: Optional[str] = None,
-    id_col: Optional[str] = None,
-    skipped_input_n: Optional[int] = None,
-    thresholds: Optional[Dict[str, float]] = None,
-    n_api_errors: Optional[int] = None,
-    api_error_denominator: Optional[int] = None,
+    raw_response_col: str | None = None,
+    id_col: str | None = None,
+    skipped_input_n: int | None = None,
+    thresholds: dict[str, float] | None = None,
+    n_api_errors: int | None = None,
+    api_error_denominator: int | None = None,
 ) -> SanityReport:
     """Compute health metrics for an LLM-judge stage's output.
 

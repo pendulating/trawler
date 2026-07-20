@@ -1,4 +1,5 @@
 # Vendored from CI-RL (github.com/EricGLan/CI-RL) - Apache 2.0 License
+from typing import Any, Callable, Dict, List
 """Tool interface"""
 from abc import abstractmethod
 

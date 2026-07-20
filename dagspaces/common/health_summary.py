@@ -20,14 +20,13 @@ import glob
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Aggregation
 # ---------------------------------------------------------------------------
 
-def collect_health(run_dir: str) -> Dict[str, Any]:
+def collect_health(run_dir: str) -> dict[str, Any]:
     """Walk ``run_dir`` for pipeline_manifest.json + metrics.json files.
 
     Returns a dict with two top-level lists:
@@ -43,8 +42,8 @@ def collect_health(run_dir: str) -> Dict[str, Any]:
     ``defaulted_rate`` across any metric, list of halted stages.
     """
     run_dir = os.path.abspath(run_dir)
-    sanity_entries: List[Dict[str, Any]] = []
-    provenance_entries: List[Dict[str, Any]] = []
+    sanity_entries: list[dict[str, Any]] = []
+    provenance_entries: list[dict[str, Any]] = []
 
     # Manifests can live at varying depths (eval_all/<bench>/<dagspace>/...)
     # — glob recursively.
@@ -171,7 +170,7 @@ def _bench_from_metrics_path(metrics_path: str, run_dir: str) -> str:
 # Serialization
 # ---------------------------------------------------------------------------
 
-def write_health_summary(run_dir: str, *, output_path: Optional[str] = None) -> str:
+def write_health_summary(run_dir: str, *, output_path: str | None = None) -> str:
     """Write ``health_summary.json`` next to (or inside) ``run_dir``.
 
     Returns the path written.
@@ -194,7 +193,7 @@ def _color(s: str, code: str) -> str:
     return f"\033[{code}m{s}\033[0m"
 
 
-def _print_table(summary: Dict[str, Any]) -> None:
+def _print_table(summary: dict[str, Any]) -> None:
     totals = summary["totals"]
     sanity = summary["sanity"]
     prov = summary["metric_provenance"]
@@ -260,7 +259,7 @@ def _print_table(summary: Dict[str, Any]) -> None:
     print("=" * 72)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="health_summary",
         description="Aggregate sanity + provenance signals across a pipeline run.",

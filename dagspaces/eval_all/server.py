@@ -16,18 +16,16 @@ On normal completion, interrupt, or exception, the job is cancelled.
 from __future__ import annotations
 
 import os
-import signal
 import socket
-import subprocess
 import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 
 
-def _serve_entrypoint(args: Dict[str, Any]) -> None:
+def _serve_entrypoint(args: dict[str, Any]) -> None:
     """Runs inside the SLURM job — writes an address file then execs vLLM server.
 
     This function is pickled and shipped to the compute node by submitit.
@@ -41,7 +39,7 @@ def _serve_entrypoint(args: Dict[str, Any]) -> None:
     # on the same node (array_parallelism > 1 on one box) — the loser fails
     # to bind and burns the whole startup timeout. port=0 means "pick a free
     # ephemeral port"; a non-zero request falls back to ephemeral if taken.
-    def _bind_probe(p: int) -> Optional[int]:
+    def _bind_probe(p: int) -> int | None:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -108,7 +106,7 @@ def _serve_entrypoint(args: Dict[str, Any]) -> None:
     os.execvpe(cmd[0], cmd, env)
 
 
-def _read_address_file(path: str) -> Optional[str]:
+def _read_address_file(path: str) -> str | None:
     """Return ``host:port`` from the address file, or None if not yet written."""
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -122,8 +120,8 @@ def _read_address_file(path: str) -> Optional[str]:
 
 def _poll_health(url: str, timeout: float) -> bool:
     """Poll ``<url>/health`` until the server responds 200 or timeout."""
-    import urllib.request
     import urllib.error
+    import urllib.request
     health = url.rstrip("/").removesuffix("/v1") + "/health"
     t0 = time.time()
     while time.time() - t0 < timeout:
@@ -144,7 +142,7 @@ def launch_vllm_server(
     output_dir: str,
     *,
     startup_timeout_s: float = 900.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Launch a vLLM server as a SLURM job and wait until it is healthy.
 
     Args:
@@ -159,7 +157,9 @@ def launch_vllm_server(
         in ``/v1``), ``served_name``, ``address_file``.
     """
     from dagspaces.common.orchestrator import (
-        _create_submitit_executor, _load_launcher_config, _submit_slurm_job,
+        _create_submitit_executor,
+        _load_launcher_config,
+        _submit_slurm_job,
     )
 
     port = int(server_cfg.get("port", 8000))
@@ -319,7 +319,7 @@ def launch_vllm_server(
     }
 
 
-def shutdown_vllm_server(server_info: Dict[str, Any]) -> None:
+def shutdown_vllm_server(server_info: dict[str, Any]) -> None:
     """Cancel the SLURM job hosting the server, if still running."""
     job = server_info.get("job")
     if job is None:

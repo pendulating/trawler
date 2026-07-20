@@ -65,10 +65,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import requests
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -121,9 +120,9 @@ class ManifestStats:
     n_completed: int = 0  # successful responses written
     n_failed: int = 0     # rows where every retry failed
     n_skipped: int = 0    # already-completed via partial-file resume
-    started_at: Optional[float] = None
-    finished_at: Optional[float] = None
-    latencies_ms: List[float] = field(default_factory=list)
+    started_at: float | None = None
+    finished_at: float | None = None
+    latencies_ms: list[float] = field(default_factory=list)
 
     def is_done(self) -> bool:
         return (self.n_completed + self.n_failed + self.n_skipped) >= self.n_requests
@@ -166,7 +165,7 @@ class FailureRecord:
 # Manifest discovery + parsing
 # ---------------------------------------------------------------------------
 
-def _discover_manifests(watch_root: str) -> List[str]:
+def _discover_manifests(watch_root: str) -> list[str]:
     """Return absolute paths to every judge ``manifest.json`` under root.
 
     A manifest is recognised by having an adjacent ``requests.jsonl`` —
@@ -176,19 +175,19 @@ def _discover_manifests(watch_root: str) -> List[str]:
     requests.jsonl check is what makes this filter judge-specific.
     """
     pattern = os.path.join(watch_root, MANIFEST_GLOB)
-    out: List[str] = []
+    out: list[str] = []
     for p in sorted(glob.glob(pattern, recursive=True)):
         if os.path.exists(os.path.join(os.path.dirname(p), "requests.jsonl")):
             out.append(p)
     return out
 
 
-def _read_manifest(path: str) -> Dict[str, Any]:
+def _read_manifest(path: str) -> dict[str, Any]:
     with open(path) as f:
         return json.load(f)
 
 
-def _output_paths(manifest_path: str) -> Tuple[str, str, str, str]:
+def _output_paths(manifest_path: str) -> tuple[str, str, str, str]:
     """Return (requests.jsonl, output.jsonl.partial, output.jsonl, done.flag)."""
     base = os.path.dirname(manifest_path)
     return (
@@ -199,7 +198,7 @@ def _output_paths(manifest_path: str) -> Tuple[str, str, str, str]:
     )
 
 
-def _load_requests(requests_path: str) -> List[Dict[str, Any]]:
+def _load_requests(requests_path: str) -> list[dict[str, Any]]:
     out = []
     with open(requests_path) as f:
         for line in f:
@@ -210,9 +209,9 @@ def _load_requests(requests_path: str) -> List[Dict[str, Any]]:
     return out
 
 
-def _load_completed_ids(partial_path: str) -> Set[str]:
+def _load_completed_ids(partial_path: str) -> set[str]:
     """Return custom_ids already committed to output.jsonl.partial."""
-    seen: Set[str] = set()
+    seen: set[str] = set()
     if not os.path.exists(partial_path):
         return seen
     try:
@@ -237,7 +236,7 @@ def _load_completed_ids(partial_path: str) -> Set[str]:
 # HTTP forwarder
 # ---------------------------------------------------------------------------
 
-def _classify_failure(exc: BaseException, status_code: Optional[int]) -> str:
+def _classify_failure(exc: BaseException, status_code: int | None) -> str:
     """Map an exception or non-2xx HTTP code to one of the canonical
     failure_type values shared with the parse-side sanity layer.
     """
@@ -269,13 +268,13 @@ def _normalize_endpoint(base_url: str, request_url: str) -> str:
 def _post_one(
     session: requests.Session,
     base_url: str,
-    request: Dict[str, Any],
+    request: dict[str, Any],
     *,
     timeout: float,
     retries: int,
     backoff: float,
-    api_key: Optional[str] = None,
-) -> Tuple[Optional[Dict[str, Any]], Optional[str], int]:
+    api_key: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None, int]:
     """Forward one request and return (response_json, error, attempts).
 
     On success: ``(response_json, None, attempt_count)``. On exhaustion:
@@ -288,8 +287,8 @@ def _post_one(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    last_err: Optional[str] = None
-    last_status: Optional[int] = None
+    last_err: str | None = None
+    last_status: int | None = None
     attempt = 0
     while attempt < retries:
         attempt += 1
@@ -324,8 +323,8 @@ def _emit_response_line(
     partial_path: str,
     *,
     custom_id: str,
-    response_json: Optional[Dict[str, Any]],
-    error: Optional[str],
+    response_json: dict[str, Any] | None,
+    error: str | None,
     lock: threading.Lock,
 ) -> None:
     """Append one line to output.jsonl.partial (success or error)."""
@@ -367,16 +366,16 @@ def process_manifest(
     manifest_path: str,
     *,
     base_url: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     concurrency: int = DEFAULT_PER_MANIFEST_CONCURRENCY,
     timeout: float = DEFAULT_PER_REQUEST_TIMEOUT_S,
     retries: int = DEFAULT_HTTP_RETRIES,
     backoff: float = DEFAULT_HTTP_BACKOFF_S,
-    on_progress: Optional[Any] = None,
-    on_failure: Optional[Any] = None,
-    on_start: Optional[Any] = None,
-    stop_event: Optional[threading.Event] = None,
-    global_sem: Optional[threading.Semaphore] = None,
+    on_progress: Any | None = None,
+    on_failure: Any | None = None,
+    on_start: Any | None = None,
+    stop_event: threading.Event | None = None,
+    global_sem: threading.Semaphore | None = None,
 ) -> ManifestStats:
     """Fan-out one manifest's requests; resume-safe; emit output.jsonl + done.flag.
 
@@ -459,7 +458,7 @@ def process_manifest(
     write_lock = threading.Lock()
     session = requests.Session()
 
-    def _work(req: Dict[str, Any]) -> Optional[FailureRecord]:
+    def _work(req: dict[str, Any]) -> FailureRecord | None:
         if stop_event is not None and stop_event.is_set():
             return None
         cid = str(req.get("custom_id") or "")
@@ -547,19 +546,19 @@ class _SidecarRuntime:
 
     def __init__(self) -> None:
         self.stop_event = threading.Event()
-        self.in_flight_manifests: Set[str] = set()
+        self.in_flight_manifests: set[str] = set()
         # Live ManifestStats for in-flight manifests, registered via
         # process_manifest's on_start hook — this is what lets the tick
         # line report row progress BEFORE a manifest finishes.
-        self.active_stats: Dict[str, ManifestStats] = {}
-        self.completed_manifests: Dict[str, ManifestStats] = {}
+        self.active_stats: dict[str, ManifestStats] = {}
+        self.completed_manifests: dict[str, ManifestStats] = {}
         self.cumulative_failures: int = 0
-        self.failure_buffer: List[FailureRecord] = []
+        self.failure_buffer: list[FailureRecord] = []
         self.lock = threading.Lock()
         self.start_time = time.time()
 
 
-def _aggregate_pending(watch_root: str, runtime: _SidecarRuntime) -> List[str]:
+def _aggregate_pending(watch_root: str, runtime: _SidecarRuntime) -> list[str]:
     """Manifests not yet started and not yet done."""
     manifests = _discover_manifests(watch_root)
     pending = []
@@ -589,7 +588,7 @@ def wait_for_drain(
     *,
     timeout_s: float = DEFAULT_DRAIN_TIMEOUT_S,
     poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
-    on_tick: Optional[Any] = None,
+    on_tick: Any | None = None,
 ) -> bool:
     """Block until every manifest under ``watch_root`` has ``done.flag``.
 
@@ -619,8 +618,8 @@ def wait_for_drain(
 def _start_sidecar_wandb_run(
     *,
     project: str,
-    entity: Optional[str],
-    group: Optional[str],
+    entity: str | None,
+    group: str | None,
     judge_base_url: str,
     judge_model: str,
     concurrency: int,
@@ -650,7 +649,7 @@ def _start_sidecar_wandb_run(
     if group:
         tags.append(f"eval_all_run:{group}")
 
-    init_kwargs: Dict[str, Any] = {
+    init_kwargs: dict[str, Any] = {
         "project": project,
         "entity": entity,
         "group": group,
@@ -676,10 +675,10 @@ def _start_sidecar_wandb_run(
         return None
 
 
-def _wandb_log_with_retries(run, payload: Dict[str, Any], *, attempts: int = 3, backoff: float = 1.0) -> None:
+def _wandb_log_with_retries(run, payload: dict[str, Any], *, attempts: int = 3, backoff: float = 1.0) -> None:
     if run is None:
         return
-    last_exc: Optional[Exception] = None
+    last_exc: Exception | None = None
     for i in range(attempts):
         try:
             run.log(payload)
@@ -698,7 +697,7 @@ def run_sidecar(
     watch_root: str,
     *,
     base_url: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     concurrency: int = DEFAULT_PER_MANIFEST_CONCURRENCY,
     parallel_manifests: int = 4,
     max_inflight_requests: int = DEFAULT_MAX_INFLIGHT_REQUESTS,
@@ -709,11 +708,11 @@ def run_sidecar(
     backoff: float = DEFAULT_HTTP_BACKOFF_S,
     judge_model: str = "",
     wandb_project: str = "eval-all",
-    wandb_entity: Optional[str] = None,
-    wandb_group: Optional[str] = None,
+    wandb_entity: str | None = None,
+    wandb_group: str | None = None,
     health_check: bool = True,
     drain_after: bool = False,
-) -> Dict[str, ManifestStats]:
+) -> dict[str, ManifestStats]:
     """Continuous sidecar loop: watches ``watch_root`` for new manifests,
     fans them out concurrently, exits on SIGTERM or when ``drain_after``
     is set and no new manifests appear for one full poll.
@@ -724,7 +723,7 @@ def run_sidecar(
     # Global request-level backpressure: bounds simultaneous judge HTTP
     # requests across all manifests (see DEFAULT_MAX_INFLIGHT_REQUESTS).
     # <=0 disables the cap (old behavior: parallel_manifests x concurrency).
-    global_sem: Optional[threading.Semaphore] = (
+    global_sem: threading.Semaphore | None = (
         threading.BoundedSemaphore(max_inflight_requests)
         if max_inflight_requests and max_inflight_requests > 0
         else None
@@ -844,7 +843,7 @@ def run_sidecar(
     # Worker pool across manifests.
     idle_polls_after_drain = 0
     with ThreadPoolExecutor(max_workers=max(1, parallel_manifests)) as pool:
-        running_futures: Dict[Any, str] = {}
+        running_futures: dict[Any, str] = {}
 
         while not runtime.stop_event.is_set():
             with runtime.lock:
@@ -942,7 +941,7 @@ def _wandb_log_manifest_summary(run, stats: ManifestStats) -> None:
     _wandb_log_with_retries(run, payload)
 
 
-def _wandb_log_failures(run, failures: List[FailureRecord], *, dropped: int) -> None:
+def _wandb_log_failures(run, failures: list[FailureRecord], *, dropped: int) -> None:
     if run is None or not failures:
         return
     try:
@@ -975,7 +974,7 @@ def oneshot(
     run_dir: str,
     *,
     base_url: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     concurrency: int = DEFAULT_PER_MANIFEST_CONCURRENCY,
     parallel_manifests: int = 4,
     max_inflight_requests: int = DEFAULT_MAX_INFLIGHT_REQUESTS,
@@ -984,9 +983,9 @@ def oneshot(
     backoff: float = DEFAULT_HTTP_BACKOFF_S,
     judge_model: str = "",
     wandb_project: str = "eval-all",
-    wandb_entity: Optional[str] = None,
-    wandb_group: Optional[str] = None,
-) -> Dict[str, ManifestStats]:
+    wandb_entity: str | None = None,
+    wandb_group: str | None = None,
+) -> dict[str, ManifestStats]:
     """Process every manifest under ``run_dir`` once, then exit.
 
     Equivalent to ``run_sidecar(..., drain_after=True)`` but skips the
@@ -1053,7 +1052,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _resolve_api_key(env_name: Optional[str]) -> Optional[str]:
+def _resolve_api_key(env_name: str | None) -> str | None:
     if not env_name:
         return None
     val = os.environ.get(env_name)
@@ -1062,7 +1061,7 @@ def _resolve_api_key(env_name: Optional[str]) -> Optional[str]:
     return val
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.cmd in ("oneshot", "run"):
         api_key = _resolve_api_key(args.api_key_env)

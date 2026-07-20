@@ -18,7 +18,7 @@ hand-scored subset before trusting (TODOS Phase 4).
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -62,11 +62,11 @@ class ContextualizationVerdict(BaseModel):
     rationale: str = Field(...)
 
 
-def build_judge_prompts(state: Dict[str, Any], case_idx: int = 0) -> List[Tuple[str, str]]:
+def build_judge_prompts(state: dict[str, Any], case_idx: int = 0) -> list[tuple[str, str]]:
     """One (sys, usr) prompt per s8 entry in a traversal state."""
     s2 = state.get("s2") or {}
     factors = (state.get("s7") or {}).get("factors") or []
-    prompts: List[Tuple[str, str]] = []
+    prompts: list[tuple[str, str]] = []
     for i, m in enumerate((state.get("s8") or {}).get("meanings") or []):
         if not isinstance(m, dict):
             continue
@@ -87,7 +87,7 @@ def build_judge_prompts(state: Dict[str, Any], case_idx: int = 0) -> List[Tuple[
     return prompts
 
 
-def entry_score(verdict: Dict[str, Any]) -> int:
+def entry_score(verdict: dict[str, Any]) -> int:
     """1 iff specific + argued + fails the transplant test."""
     return int(
         bool(verdict.get("specific_end"))
@@ -96,7 +96,7 @@ def entry_score(verdict: Dict[str, Any]) -> int:
     )
 
 
-def aggregate(verdicts: List[Dict[str, Any]]) -> Dict[str, Any]:
+def aggregate(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
     """Case-level contextualization metrics from per-entry judge verdicts."""
     if not verdicts:
         return {"contextualization_score": None, "n_entries": 0}
@@ -108,7 +108,7 @@ def aggregate(verdicts: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def parse_judge_reply(text: str) -> Dict[str, Any] | None:
+def parse_judge_reply(text: str) -> dict[str, Any] | None:
     """Parse a judge completion; None when unparseable."""
     raw = str(text or "").strip()
     start, end = raw.find("{"), raw.rfind("}") + 1

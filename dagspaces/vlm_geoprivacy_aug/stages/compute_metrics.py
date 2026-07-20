@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -35,7 +35,7 @@ def _extract_first_char(value: Any) -> str | None:
     return value[0].upper()
 
 
-def _directionality_stats(y_true: List[str], y_pred: List[str]) -> Dict[str, float]:
+def _directionality_stats(y_true: list[str], y_pred: list[str]) -> dict[str, float]:
     """Compute over/under disclosure rates and MAE on ordinal scale."""
     pairs = []
     for t, p in zip(y_true, y_pred):
@@ -68,7 +68,7 @@ def _directionality_stats(y_true: List[str], y_pred: List[str]) -> Dict[str, flo
     }
 
 
-def _error_distribution(y_true: List[str], y_pred: List[str]) -> Dict[str, Any]:
+def _error_distribution(y_true: list[str], y_pred: list[str]) -> dict[str, Any]:
     """Compute distribution of ordinal errors over {-2, -1, 0, 1, 2}."""
     buckets = {str(k): 0 for k in [2, 1, 0, -1, -2]}
     total = 0
@@ -97,7 +97,7 @@ def _privacy_preservation_score(
     return float(1 - (a + b + c) / 3.0)
 
 
-def compute_metrics(df: pd.DataFrame, free_form: bool = False) -> Dict[str, Any]:
+def compute_metrics(df: pd.DataFrame, free_form: bool = False) -> dict[str, Any]:
     """Compute all evaluation metrics with provenance.
 
     For MCQ: per-question accuracy and F1, Q7 confusion matrix, directionality.
@@ -118,7 +118,7 @@ def compute_metrics(df: pd.DataFrame, free_form: bool = False) -> Dict[str, Any]
     em.emit_raw("n_samples", int(n_total))
 
     questions = ["Q7"] if free_form else [f"Q{i}" for i in range(1, 8)]
-    per_question: Dict[str, Dict[str, Any]] = {}
+    per_question: dict[str, dict[str, Any]] = {}
 
     for q in questions:
         true_col = f"{q}_true"
@@ -205,7 +205,7 @@ def compute_metrics(df: pd.DataFrame, free_form: bool = False) -> Dict[str, Any]
     # Subgroup analysis for MCQ mode (no provenance — these are
     # per-cell rates with their own n; embedded in nested raw block).
     if not free_form and "Q2_true" in df.columns and "Q7_true" in df.columns and "Q7_pred" in df.columns:
-        subgroups: Dict[str, Any] = {}
+        subgroups: dict[str, Any] = {}
 
         for label, desc in [("A", "sharing_intent_yes"), ("B", "sharing_intent_no")]:
             mask = df["Q2_true"].apply(_extract_first_char) == label
@@ -245,13 +245,13 @@ def compute_metrics(df: pd.DataFrame, free_form: bool = False) -> Dict[str, Any]
     return em.to_dict()
 
 
-def metrics_to_dataframe(metrics: Dict[str, Any]) -> pd.DataFrame:
+def metrics_to_dataframe(metrics: dict[str, Any]) -> pd.DataFrame:
     """Flatten metrics dict into a single-row DataFrame for saving.
 
     Compatible with the legacy flat schema (per-question fields prefixed
     by ``Q*_``) so downstream W&B / sweep code keeps working.
     """
-    flat: Dict[str, Any] = {"n_samples": metrics.get("n_samples", 0)}
+    flat: dict[str, Any] = {"n_samples": metrics.get("n_samples", 0)}
 
     for q, q_metrics in metrics.get("per_question", {}).items():
         for k, v in q_metrics.items():

@@ -13,7 +13,7 @@ actually computed on.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 from sklearn.metrics import (
@@ -26,7 +26,7 @@ from sklearn.metrics import (
 from dagspaces.common.metric_provenance import MetricEmitter
 
 
-def compute_metrics(df: pd.DataFrame, task: str) -> Dict[str, Any]:
+def compute_metrics(df: pd.DataFrame, task: str) -> dict[str, Any]:
     """Accuracy, macro F1, per-class metrics, and confusion matrix.
 
     Args:
@@ -101,7 +101,7 @@ def compute_metrics(df: pd.DataFrame, task: str) -> Dict[str, Any]:
     report = classification_report(
         true_labels, predictions, labels=labels, output_dict=True, zero_division=0
     )
-    per_class: Dict[str, Any] = {}
+    per_class: dict[str, Any] = {}
     for label in labels:
         if label in report:
             per_class[label] = {
@@ -114,7 +114,7 @@ def compute_metrics(df: pd.DataFrame, task: str) -> Dict[str, Any]:
 
     # Confusion matrix
     cm = confusion_matrix(true_labels, predictions, labels=labels)
-    cm_dict: Dict[str, Dict[str, int]] = {}
+    cm_dict: dict[str, dict[str, int]] = {}
     for i, true_label in enumerate(labels):
         cm_dict[true_label] = {}
         for j, pred_label in enumerate(labels):
@@ -122,7 +122,7 @@ def compute_metrics(df: pd.DataFrame, task: str) -> Dict[str, Any]:
     em.emit_raw("confusion_matrix", cm_dict)
 
     # Per-class correct/error counts
-    class_counts: Dict[str, Dict[str, int]] = {}
+    class_counts: dict[str, dict[str, int]] = {}
     for label in labels:
         mask = df_parseable["ground_truth"] == label
         class_total = int(mask.sum())
@@ -145,9 +145,9 @@ def compute_metrics(df: pd.DataFrame, task: str) -> Dict[str, Any]:
     return em.to_dict()
 
 
-def metrics_to_dataframe(metrics: Dict[str, Any]) -> pd.DataFrame:
+def metrics_to_dataframe(metrics: dict[str, Any]) -> pd.DataFrame:
     """Flatten metrics dict into a single-row DataFrame for parquet storage."""
-    flat: Dict[str, Any] = {}
+    flat: dict[str, Any] = {}
     for k, v in metrics.items():
         if isinstance(v, dict):
             flat[k] = json.dumps(v, default=str)

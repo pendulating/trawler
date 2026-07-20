@@ -18,11 +18,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import itertools
 import os
 import random
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -46,12 +44,12 @@ class ContextNorm:
     subject: str
     information_type: str
     tp: str                      # primary transmission principle, rendered as a clause
-    tp_secondary: Optional[str] = None
-    departures: Dict[str, List[str]] = field(default_factory=dict)
+    tp_secondary: str | None = None
+    departures: dict[str, list[str]] = field(default_factory=dict)
     sender_is_subject: bool = True
 
 
-CONTEXTS: List[ContextNorm] = [
+CONTEXTS: list[ContextNorm] = [
     ContextNorm(
         key="health_gp",
         context="primary medical care",
@@ -281,7 +279,7 @@ def _render_norm(ctx: ContextNorm, rng: random.Random) -> str:
                         subject=ctx.subject, recipient=ctx.recipient, tp=ctx.tp, tp2=tp2)
 
 
-def _render_flow(ctx: ContextNorm, values: Dict[str, str], rng: random.Random) -> str:
+def _render_flow(ctx: ContextNorm, values: dict[str, str], rng: random.Random) -> str:
     tp = values["transmission_principle"]
     if ctx.tp_secondary:
         tp = f"{tp}, and {ctx.tp_secondary}"
@@ -299,7 +297,7 @@ def _case_id(*parts: str) -> str:
 def generate(seed: int = 7, phrasings_per_cell: int = 2) -> pd.DataFrame:
     """Generate the full Tier B corpus. Deterministic for a given seed."""
     rng = random.Random(seed)
-    rows: List[Dict] = []
+    rows: list[dict] = []
 
     for ctx in CONTEXTS:
         norm_values = {p: getattr(ctx, p if p != "transmission_principle" else "tp") for p in PARAMETERS}
@@ -362,7 +360,7 @@ def generate(seed: int = 7, phrasings_per_cell: int = 2) -> pd.DataFrame:
     return df
 
 
-def validate_structure(df: pd.DataFrame) -> Dict[str, int]:
+def validate_structure(df: pd.DataFrame) -> dict[str, int]:
     """Structural self-checks: label semantics hold by construction."""
     problems = 0
     for _, r in df.iterrows():

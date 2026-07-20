@@ -15,14 +15,14 @@ tell whether a low score reflects model behavior or a parse problem.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 
 from dagspaces.common.metric_provenance import MetricEmitter
 
 
-def compute_metrics(df: pd.DataFrame) -> Dict[str, Any]:
+def compute_metrics(df: pd.DataFrame) -> dict[str, Any]:
     """Probing accuracy overall, per level, and conditional-on-parseable."""
     em = MetricEmitter()
     em.emit_raw("task", "cirl_vignettes_probing")
@@ -78,7 +78,7 @@ def compute_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     )
 
     # Per probing level — same denominator semantics as overall.
-    per_level: Dict[str, Any] = {}
+    per_level: dict[str, Any] = {}
     if "probing_level" in df.columns:
         for level, grp_all in df.groupby("probing_level"):
             level_total = len(grp_all)
@@ -105,9 +105,9 @@ def compute_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     return em.to_dict()
 
 
-def metrics_to_dataframe(metrics: Dict[str, Any]) -> pd.DataFrame:
+def metrics_to_dataframe(metrics: dict[str, Any]) -> pd.DataFrame:
     """Flatten metrics dict into a single-row DataFrame for parquet storage."""
-    flat: Dict[str, Any] = {}
+    flat: dict[str, Any] = {}
     for k, v in metrics.items():
         if isinstance(v, dict):
             flat[k] = json.dumps(v, default=str)

@@ -20,10 +20,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 
-def _std(values: List[float]) -> float:
+def _std(values: list[float]) -> float:
     """Population standard deviation."""
     if len(values) < 2:
         return 0.0
@@ -32,10 +32,10 @@ def _std(values: List[float]) -> float:
 
 
 def select_prompts_by_reward_std(
-    rewards_by_prompt: Dict[str, List[float]],
+    rewards_by_prompt: dict[str, list[float]],
     reward_std_min: float,
     min_keep: int = 8,
-) -> Tuple[List[str], Dict[str, float]]:
+) -> tuple[list[str], dict[str, float]]:
     """Pick prompts whose sampled-completion rewards vary enough to train on.
 
     Args:
@@ -53,7 +53,7 @@ def select_prompts_by_reward_std(
     return _select_from_stds(stds, reward_std_min, min_keep)
 
 
-def _vignette_gold_counts(rows) -> Dict[str, int]:
+def _vignette_gold_counts(rows) -> dict[str, int]:
     """Count judgment vignettes by gold verdict ("yes"/"no").
 
     The vignette force balance is the v11 steering variable
@@ -117,7 +117,7 @@ def _reward_signature(reward_fn, temperature: float, max_tokens: int) -> str:
 
 def _cache_key(
     sft_checkpoint: str,
-    prompt_keys: List[str],
+    prompt_keys: list[str],
     num_samples: int,
     reward_signature: str,
 ) -> str:
@@ -135,7 +135,7 @@ def prescreen_dataset(
     dataset,
     reward_fn,
     model_dir: str,
-    grpo_cfg: Dict[str, Any],
+    grpo_cfg: dict[str, Any],
     output_dir: str,
     cache_identity: str = "",
     composite_config_path: str = "",
@@ -190,9 +190,9 @@ def prescreen_dataset(
         prompt_keys, num_samples, reward_signature,
     )
 
-    stds: Optional[Dict[str, float]] = None
-    extract_fracs: Optional[Dict[str, float]] = None
-    no_flow_rate: Optional[float] = None
+    stds: dict[str, float] | None = None
+    extract_fracs: dict[str, float] | None = None
+    no_flow_rate: float | None = None
     cache_hit = False
     if cache_path and os.path.exists(cache_path):
         try:
@@ -305,7 +305,7 @@ def prescreen_dataset(
     return filtered
 
 
-def _log_report_to_wandb(report: Dict[str, Any]) -> None:
+def _log_report_to_wandb(report: dict[str, Any]) -> None:
     """Surface the screen result on the active W&B run.
 
     The full report goes into ``config.prescreen`` (run-level fact, not a
@@ -328,11 +328,11 @@ def _log_report_to_wandb(report: Dict[str, Any]) -> None:
 
 
 def _apply_flow_variance_filter(
-    stds: Dict[str, float],
-    extract_fracs: Optional[Dict[str, float]],
+    stds: dict[str, float],
+    extract_fracs: dict[str, float] | None,
     require_flow_variance: bool,
-    ci_prompt_keys: Optional[set] = None,
-) -> Tuple[Dict[str, float], int]:
+    ci_prompt_keys: set | None = None,
+) -> tuple[dict[str, float], int]:
     """Drop prompts whose SFT samples unanimously abstain from extraction.
 
     Such a group has no flow-decision variance: every sample declared no
@@ -371,10 +371,10 @@ def _apply_flow_variance_filter(
 
 
 def _select_from_stds(
-    stds: Dict[str, float],
+    stds: dict[str, float],
     reward_std_min: float,
     min_keep: int,
-) -> Tuple[List[str], Dict[str, float]]:
+) -> tuple[list[str], dict[str, float]]:
     """Threshold pre-computed stds (cache path skips re-sampling)."""
     kept = [k for k, s in stds.items() if s >= reward_std_min]
     if len(kept) < min_keep:
@@ -387,7 +387,7 @@ def _select_from_stds(
     return kept, stds
 
 
-def _quantiles(sorted_vals: List[float]) -> Dict[str, float]:
+def _quantiles(sorted_vals: list[float]) -> dict[str, float]:
     """Distribution summary for the screening report."""
     if not sorted_vals:
         return {}
@@ -400,16 +400,16 @@ def _quantiles(sorted_vals: List[float]) -> Dict[str, float]:
 
 
 def _sample_and_score(
-    prompt_keys: List[str],
+    prompt_keys: list[str],
     reward_fn,
     model_dir: str,
     num_samples: int,
     temperature: float,
     max_tokens: int,
     gpu_memory_utilization: float,
-    max_model_len: Optional[int],
+    max_model_len: int | None,
     composite_config_path: str = "",
-) -> Tuple[Dict[str, List[float]], float]:
+) -> tuple[dict[str, list[float]], float]:
     """Generate G samples per prompt from the SFT policy and score them.
 
     The vLLM engine is constructed and destroyed here so the GPUs are free
@@ -423,7 +423,7 @@ def _sample_and_score(
     print(f"[prompt_screening] Sampling {num_samples} completions × "
           f"{len(prompt_keys)} prompts from {model_dir}")
 
-    llm_kwargs: Dict[str, Any] = dict(
+    llm_kwargs: dict[str, Any] = dict(
         model=model_dir,
         gpu_memory_utilization=gpu_memory_utilization,
         trust_remote_code=True,
@@ -461,8 +461,8 @@ def _sample_and_score(
 
     # Score with the training reward, suppressing trace logging so the
     # screening pass doesn't pollute reward_traces.jsonl call numbering.
-    flat_prompts: List[str] = []
-    flat_completions: List[str] = []
+    flat_prompts: list[str] = []
+    flat_completions: list[str] = []
     for prompt_key, out in zip(prompt_keys, outputs):
         for sample in out.outputs:
             flat_prompts.append(prompt_key)
@@ -473,14 +473,14 @@ def _sample_and_score(
     # 2026-06-10 launch died on an embedding read-timeout at 1103 prompts
     # × 8 samples. Chunks must not split a group (ranked R_ground scores
     # same-prompt completions jointly).
-    group_bounds: List[int] = [0]
+    group_bounds: list[int] = [0]
     for out in outputs:
         group_bounds.append(group_bounds[-1] + len(out.outputs))
     groups_per_chunk = 64
 
     _saved_trace_path = reward_fn._trace_path
     reward_fn._trace_path = None
-    flat_rewards: List[float] = []
+    flat_rewards: list[float] = []
     try:
         for g0 in range(0, len(outputs), groups_per_chunk):
             g1 = min(g0 + groups_per_chunk, len(outputs))
@@ -494,7 +494,7 @@ def _sample_and_score(
     finally:
         reward_fn._trace_path = _saved_trace_path
 
-    rewards_by_prompt: Dict[str, List[float]] = {}
+    rewards_by_prompt: dict[str, list[float]] = {}
     pos = 0
     for prompt_key, out in zip(prompt_keys, outputs):
         n_out = len(out.outputs)
@@ -509,7 +509,7 @@ def _sample_and_score(
     #    screens on (a prompt with extract_frac 0 unanimously abstained).
     from .rewards import _parse_completion
     n_no_flow = 0
-    extract_frac_by_prompt: Dict[str, float] = {}
+    extract_frac_by_prompt: dict[str, float] = {}
     for prompt_key, out in zip(prompt_keys, outputs):
         n_extracted = 0
         for sample in out.outputs:

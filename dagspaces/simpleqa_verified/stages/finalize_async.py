@@ -15,21 +15,20 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
 
 from dagspaces.common.batch_api import classify_response_line, load_jsonl
 
-from .judge_grade import parse_grade_letter, letter_to_verdict
-
+from .judge_grade import letter_to_verdict, parse_grade_letter
 
 JUDGE_DIR = "outputs/judge_grade"
 
 
-def _load_classified_responses(output_jsonl: str) -> Dict[str, Dict[str, Any]]:
+def _load_classified_responses(output_jsonl: str) -> dict[str, dict[str, Any]]:
     """``{custom_id: classified-response-dict}`` for every JSONL line."""
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for line in load_jsonl(output_jsonl):
         cid = line.get("custom_id")
         if not cid:
@@ -41,8 +40,8 @@ def _load_classified_responses(output_jsonl: str) -> Dict[str, Dict[str, Any]]:
 def finalize_async(
     output_root: str,
     *,
-    metrics_dir: Optional[str] = None,
-) -> Dict[str, Any]:
+    metrics_dir: str | None = None,
+) -> dict[str, Any]:
     """Drain + parse + compute_metrics for one simpleqa-verified async run.
 
     Args:

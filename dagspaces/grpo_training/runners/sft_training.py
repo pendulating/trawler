@@ -10,7 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from typing import Any, Dict
+from typing import Any
 
 from omegaconf import OmegaConf
 
@@ -18,6 +18,7 @@ from dagspaces.common.orchestrator import (
     StageExecutionContext,
     StageResult,
 )
+
 from .base import StageRunner
 
 
@@ -54,7 +55,7 @@ class SFTTrainingRunner(StageRunner):
             from ..stages.sft_training import run_sft_training_stage
             run_sft_training_stage(dataset_path, base_model, checkpoint_dir, cfg)
 
-        metadata: Dict[str, Any] = {
+        metadata: dict[str, Any] = {
             "base_model": base_model,
             "checkpoint_dir": checkpoint_dir,
             "num_gpus": n_gpus,

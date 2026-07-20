@@ -13,9 +13,10 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 import pandas as pd
 import requests
@@ -31,8 +32,8 @@ REQUEST_TIMEOUT = 30
 RETRY_BACKOFF_S = (1, 3, 8)
 
 
-def _get(url: str, params: Optional[dict] = None) -> dict:
-    last_err: Optional[Exception] = None
+def _get(url: str, params: dict | None = None) -> dict:
+    last_err: Exception | None = None
     for delay in (0, *RETRY_BACKOFF_S):
         if delay:
             time.sleep(delay)
@@ -74,7 +75,7 @@ def refresh_catalog(
     max_pages: int = DEFAULT_MAX_PAGES,
     max_age_days: float = 30.0,
     force: bool = False,
-    out_path: Optional[Path] = None,
+    out_path: Path | None = None,
 ) -> Path:
     """Snapshot Gutendex by descending download_count to ``catalog_latest.parquet``.
 
@@ -95,7 +96,7 @@ def refresh_catalog(
         "languages": ",".join(languages),
         "sort": "popular",   # Gutendex: descending download_count
     }
-    next_url: Optional[str] = GUTENDEX_BASE
+    next_url: str | None = GUTENDEX_BASE
     page = 0
     while next_url and page < max_pages:
         page += 1

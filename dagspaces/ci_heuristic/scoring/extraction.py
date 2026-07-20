@@ -4,14 +4,14 @@ constructed values. Per-parameter P/R/F1 via the shared alias matcher."""
 from __future__ import annotations
 
 import ast
-from typing import Any, Dict, List
+from typing import Any
 
 from .matchers import alias_match, set_prf
 
 
-def _artifact_lists(state: Dict[str, Any]) -> Dict[str, List[str]]:
+def _artifact_lists(state: dict[str, Any]) -> dict[str, list[str]]:
     """Pull the scoreable string lists out of a traversal state's s1/s3/s4."""
-    out: Dict[str, List[str]] = {"senders": [], "recipients": [], "subjects": [],
+    out: dict[str, list[str]] = {"senders": [], "recipients": [], "subjects": [],
                                    "information_types": [], "transmission_principles": []}
     s3 = state.get("s3") or {}
     for k in ("senders", "recipients", "subjects"):
@@ -28,7 +28,7 @@ def _artifact_lists(state: Dict[str, Any]) -> Dict[str, List[str]]:
     return out
 
 
-def score_vs_tier_a(gold: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+def score_vs_tier_a(gold: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     """Per-parameter P/R/F1 of a traversal against a Tier A gold file."""
     pred = _artifact_lists(state)
     g3 = gold.get("s3_actors") or {}
@@ -42,7 +42,7 @@ def score_vs_tier_a(gold: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, An
     return {param: set_prf(gold_lists[param], pred[param]) for param in gold_lists}
 
 
-def score_vs_tier_b(gold_values: str, state: Dict[str, Any]) -> Dict[str, Any]:
+def score_vs_tier_b(gold_values: str, state: dict[str, Any]) -> dict[str, Any]:
     """Hit/miss per parameter against a Tier B row's constructed flow values.
 
     `gold_values` is the generator's stringified dict of the (possibly

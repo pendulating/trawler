@@ -46,12 +46,11 @@ This module exists so that bug can only be fixed in one place.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
 from dagspaces.common.judge_client import JudgeClient
-
 
 __all__ = [
     "JudgeExportConfigError",
@@ -120,7 +119,7 @@ def _resolve_live_base_url(cfg: DictConfig) -> str:
     return url
 
 
-def _list_served_models(client: JudgeClient) -> Tuple[Optional[list], Optional[str]]:
+def _list_served_models(client: JudgeClient) -> tuple[list | None, str | None]:
     """Probe ``/v1/models`` on the judge endpoint.
 
     Returns ``(model_ids, error)``. On success, ``model_ids`` is a list
@@ -145,7 +144,7 @@ def _resolve_live_model_name(
     base_url: str,
     dagspace: str,
     default_max_tokens: int,
-) -> Tuple[str, JudgeClient]:
+) -> tuple[str, JudgeClient]:
     """Probe the live judge server and resolve the body.model name.
 
     Returns ``(model_name, online_client)`` where ``online_client`` is
@@ -226,7 +225,7 @@ def resolve_export_client(
     *,
     dagspace: str,
     default_max_tokens: int = 1024,
-) -> Tuple[JudgeClient, Dict[str, Any]]:
+) -> tuple[JudgeClient, dict[str, Any]]:
     """Build a :class:`JudgeClient` for writing ``requests.jsonl``.
 
     Branches on ``cfg.judge.mode``:

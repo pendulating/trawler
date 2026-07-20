@@ -17,7 +17,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import pandas as pd
 
@@ -28,12 +29,12 @@ from dagspaces.common.vllm_inference import _strip_think_blocks
 #   - Gold says no flows → correct no-flow, moderate reward
 #   - Gold says has flows → false no-flow (reward hacking), punitive
 #   - No gold label      → cautious default
-NO_FLOW_REWARD_CORRECT = 0.6   # Genuinely no flows: decent but < good extraction
-NO_FLOW_REWARD_UNKNOWN = 0.4   # No gold label: hedge
-NO_FLOW_REWARD_WRONG = 0.1     # Gold says flows exist: punish the lazy path
+NO_FLOW_REWARD_CORRECT = 0.6  # Genuinely no flows: decent but < good extraction
+NO_FLOW_REWARD_UNKNOWN = 0.4  # No gold label: hedge
+NO_FLOW_REWARD_WRONG = 0.1  # Gold says flows exist: punish the lazy path
 
 
-def no_flow_reward(gold_has_exchange: Optional[bool] = None) -> float:
+def no_flow_reward(gold_has_exchange: bool | None = None) -> float:
     """Return the appropriate no-flow reward based on the gold label."""
     if gold_has_exchange is True:
         return NO_FLOW_REWARD_WRONG
@@ -52,7 +53,7 @@ def _to_str(val) -> str:
     return str(val)
 
 
-def _parse_completion(text: str) -> Optional[Dict[str, Any]]:
+def _parse_completion(text: str) -> dict[str, Any] | None:
     """Extract JSON from completion text and normalise to the canonical schema.
 
     The canonical (nested) schema expected by reward components:
@@ -86,14 +87,18 @@ def _parse_completion(text: str) -> Optional[Dict[str, Any]]:
         for flow in flat_flows:
             if not isinstance(flow, dict):
                 continue
-            reasoning_entries.append({
-                "original_text_snippet": "",
-                "reasoning": reasoning_val,
-                "context_identified": flow.get("context", ""),
-                "flow_direction": "",
-                "potential_appropriateness": flow.get("appropriateness", "ambiguous"),
-                "is_new_flow": flow.get("is_new_flow", False),
-            })
+            reasoning_entries.append(
+                {
+                    "original_text_snippet": "",
+                    "reasoning": reasoning_val,
+                    "context_identified": flow.get("context", ""),
+                    "flow_direction": "",
+                    "potential_appropriateness": flow.get(
+                        "appropriateness", "ambiguous"
+                    ),
+                    "is_new_flow": flow.get("is_new_flow", False),
+                }
+            )
 
         nested_reasoning = {
             "flows": reasoning_entries,
@@ -118,22 +123,24 @@ def _parse_completion(text: str) -> Optional[Dict[str, Any]]:
         for flow in flat_flows:
             if not isinstance(flow, dict):
                 continue
-            extraction.append({
-                "flow": {
-                    "subject": flow.get("subject"),
-                    "sender": flow.get("sender"),
-                    "recipient": flow.get("recipient"),
-                    "information_type": flow.get("information_type"),
-                    "transmission_principle": flow.get("transmission_principle"),
-                },
-                "context": flow.get("context", ""),
-                "appropriateness": flow.get("appropriateness", "ambiguous"),
-                "norms_invoked": flow.get("norms_invoked", []),
-                "norm_source": flow.get("norm_source", "implicit"),
-                "is_new_flow": flow.get("is_new_flow", False),
-                "confidence_qual": flow.get("confidence", "uncertain"),
-                "confidence_quant": flow.get("confidence_quant", 5),
-            })
+            extraction.append(
+                {
+                    "flow": {
+                        "subject": flow.get("subject"),
+                        "sender": flow.get("sender"),
+                        "recipient": flow.get("recipient"),
+                        "information_type": flow.get("information_type"),
+                        "transmission_principle": flow.get("transmission_principle"),
+                    },
+                    "context": flow.get("context", ""),
+                    "appropriateness": flow.get("appropriateness", "ambiguous"),
+                    "norms_invoked": flow.get("norms_invoked", []),
+                    "norm_source": flow.get("norm_source", "implicit"),
+                    "is_new_flow": flow.get("is_new_flow", False),
+                    "confidence_qual": flow.get("confidence", "uncertain"),
+                    "confidence_quant": flow.get("confidence_quant", 5),
+                }
+            )
 
         obj = {"reasoning": nested_reasoning, "extraction": extraction}
 
@@ -144,9 +151,10 @@ def _parse_completion(text: str) -> Optional[Dict[str, Any]]:
 # Individual reward components
 # ---------------------------------------------------------------------------
 
+
 def r_uncert(
     completion: str,
-    gold_has_exchange: Optional[bool] = None,
+    gold_has_exchange: bool | None = None,
     is_no_flow: bool = False,
     confidence_fallthrough: bool = False,
 ) -> float:
@@ -273,7 +281,7 @@ def r_uncert(
 
 def r_complete(
     completion: str,
-    gold_has_exchange: Optional[bool] = None,
+    gold_has_exchange: bool | None = None,
     is_no_flow: bool = False,
 ) -> float:
     """R_complete: Structural completeness.
@@ -290,21 +298,35 @@ def r_complete(
     if not isinstance(extractions, list) or len(extractions) == 0:
         # Check if this is a valid no-flow completion
         reasoning = parsed.get("reasoning", {})
-        has_exchange = reasoning.get("has_information_exchange") if isinstance(reasoning, dict) else None
+        has_exchange = (
+            reasoning.get("has_information_exchange")
+            if isinstance(reasoning, dict)
+            else None
+        )
         if is_no_flow or has_exchange is False:
             if gold_has_exchange is True:
-                return 0.0   # Missed all flows — completely incomplete
+                return 0.0  # Missed all flows — completely incomplete
             elif gold_has_exchange is False:
-                return 0.9   # Nothing to fill — near-perfect
+                return 0.9  # Nothing to fill — near-perfect
             else:
-                return 0.4   # Unknown
+                return 0.4  # Unknown
         return 0.0
 
     # CI 5-tuple required fields + metadata
-    tuple_fields = ["sender", "recipient", "information_type",
-                    "transmission_principle", "subject"]
-    meta_fields = ["context", "appropriateness", "norm_source",
-                   "confidence_qual", "confidence_quant"]
+    tuple_fields = [
+        "sender",
+        "recipient",
+        "information_type",
+        "transmission_principle",
+        "subject",
+    ]
+    meta_fields = [
+        "context",
+        "appropriateness",
+        "norm_source",
+        "confidence_qual",
+        "confidence_quant",
+    ]
     all_fields = tuple_fields + meta_fields
 
     total_score = 0.0
@@ -319,7 +341,8 @@ def r_complete(
             flat = extraction
 
         filled = sum(
-            1 for f in all_fields
+            1
+            for f in all_fields
             if flat.get(f) is not None and str(flat.get(f, "")).strip() != ""
         )
         total_score += filled / len(all_fields)
@@ -329,7 +352,7 @@ def r_complete(
 
 def r_consist(
     completion: str,
-    gold_has_exchange: Optional[bool] = None,
+    gold_has_exchange: bool | None = None,
     is_no_flow: bool = False,
 ) -> float:
     """R_consist: Internal consistency.
@@ -399,9 +422,9 @@ def r_consist(
 def r_context(
     completion: str,
     source_context_embeddings: Any,
-    source_context_strings: List[str],
+    source_context_strings: list[str],
     embedding_model: Any = None,
-    gold_has_exchange: Optional[bool] = None,
+    gold_has_exchange: bool | None = None,
     is_no_flow: bool = False,
 ) -> float:
     """R_context: Context identification accuracy.
@@ -433,14 +456,18 @@ def r_context(
     extractions = parsed.get("extraction", [])
     if not isinstance(extractions, list) or len(extractions) == 0:
         reasoning = parsed.get("reasoning", {})
-        has_exchange = reasoning.get("has_information_exchange") if isinstance(reasoning, dict) else None
+        has_exchange = (
+            reasoning.get("has_information_exchange")
+            if isinstance(reasoning, dict)
+            else None
+        )
         if is_no_flow or has_exchange is False:
             if gold_has_exchange is True:
-                return 0.0   # Missed all flows — missed their contexts too
+                return 0.0  # Missed all flows — missed their contexts too
             elif gold_has_exchange is False:
-                return 0.9   # Nothing to identify — near-perfect
+                return 0.9  # Nothing to identify — near-perfect
             else:
-                return 0.4   # Unknown
+                return 0.4  # Unknown
         return 0.0
 
     model_contexts = []
@@ -450,16 +477,20 @@ def r_context(
             if ctx:
                 model_contexts.append(str(ctx))
 
-    if not model_contexts or (source_context_embeddings is None and not source_context_strings):
+    if not model_contexts or (
+        source_context_embeddings is None and not source_context_strings
+    ):
         return 0.0
 
     # Embedding path: per-flow max similarity against source norm contexts
     if embedding_model is not None and source_context_embeddings is not None:
         try:
             import numpy as np
+
             # (M, D) — one row per model-stated context
             model_embs = embedding_model.encode(
-                model_contexts, normalize_embeddings=True,
+                model_contexts,
+                normalize_embeddings=True,
             )
             # (M, N) — cosine similarities against all source norm contexts
             sim_matrix = np.dot(model_embs, source_context_embeddings.T)
@@ -488,7 +519,7 @@ def r_context(
 
 def r_cohere(
     completion: str,
-    gold_has_exchange: Optional[bool] = None,
+    gold_has_exchange: bool | None = None,
     is_no_flow: bool = False,
 ) -> float:
     """R_cohere: Reasoning-to-extraction coherence.
@@ -523,8 +554,10 @@ def r_cohere(
         reasoning_text = reasoning
 
     if not extractions:
-        if is_no_flow or (isinstance(reasoning, dict) and
-                          reasoning.get("has_information_exchange") is False):
+        if is_no_flow or (
+            isinstance(reasoning, dict)
+            and reasoning.get("has_information_exchange") is False
+        ):
             # Score reasoning quality for no-flow declarations.
             # The flat→nested normalizer drops the reasoning string for
             # no-flow completions (no flows to attach it to), so also
@@ -532,7 +565,9 @@ def r_cohere(
             if not reasoning_text.strip():
                 try:
                     raw_obj = json.loads(completion)
-                    if isinstance(raw_obj, dict) and isinstance(raw_obj.get("reasoning"), str):
+                    if isinstance(raw_obj, dict) and isinstance(
+                        raw_obj.get("reasoning"), str
+                    ):
                         reasoning_text = raw_obj["reasoning"]
                 except (json.JSONDecodeError, TypeError):
                     pass
@@ -541,10 +576,20 @@ def r_cohere(
                 return 0.0
             # Reward reasoning that explicitly discusses information exchange
             _nf_keywords = [
-                "no information", "no exchange", "no flow", "does not contain",
-                "does not describe", "no transfer", "no sharing", "not share",
-                "no personal", "no private", "no sensitive", "privacy",
-                "information flow", "contextual integrity",
+                "no information",
+                "no exchange",
+                "no flow",
+                "does not contain",
+                "does not describe",
+                "no transfer",
+                "no sharing",
+                "not share",
+                "no personal",
+                "no private",
+                "no sensitive",
+                "privacy",
+                "information flow",
+                "contextual integrity",
             ]
             keyword_hits = sum(1 for kw in _nf_keywords if kw in text)
             # 0.0 to 0.5 based on reasoning engagement
@@ -611,7 +656,8 @@ def r_ground_cached(
 # Judgment vignette reward components
 # ---------------------------------------------------------------------------
 
-def _parse_judgment_completion(text: str) -> Optional[Dict[str, Any]]:
+
+def _parse_judgment_completion(text: str) -> dict[str, Any] | None:
     """Extract JSON from a norm judgment vignette completion.
 
     Simpler than _parse_completion — no flat→nested normalization.
@@ -623,7 +669,7 @@ def _parse_judgment_completion(text: str) -> Optional[Dict[str, Any]]:
     try:
         obj = json.loads(text)
     except json.JSONDecodeError:
-        match = re.search(r'\{[\s\S]*\}', text)
+        match = re.search(r"\{[\s\S]*\}", text)
         if match:
             try:
                 obj = json.loads(match.group())
@@ -656,10 +702,26 @@ def r_judgment_reasoning(completion: str) -> float:
     if len(reasoning) < 20:
         return 0.0
     _keywords = [
-        "norm", "appropriate", "inappropriate", "privacy", "information",
-        "sharing", "context", "expectation", "principle", "obligation",
-        "prohibited", "consent", "confidential", "disclose", "trust",
-        "duty", "permission", "sensitive", "transmission", "social",
+        "norm",
+        "appropriate",
+        "inappropriate",
+        "privacy",
+        "information",
+        "sharing",
+        "context",
+        "expectation",
+        "principle",
+        "obligation",
+        "prohibited",
+        "consent",
+        "confidential",
+        "disclose",
+        "trust",
+        "duty",
+        "permission",
+        "sensitive",
+        "transmission",
+        "social",
     ]
     hits = sum(1 for kw in _keywords if kw in reasoning)
     return min(1.0, hits / 5.0)
@@ -693,6 +755,7 @@ def r_norm_cite(completion: str, source_norm_articulation: str) -> float:
 # Composite reward function
 # ---------------------------------------------------------------------------
 
+
 class CompositeRewardFunction:
     """Composite reward R = sum(w_i * R_i) for GRPO training.
 
@@ -704,17 +767,17 @@ class CompositeRewardFunction:
     def __init__(
         self,
         weights: Sequence[float],
-        norm_universes: Optional[Dict[str, list]] = None,
-        reward_cache: Optional[pd.DataFrame] = None,
+        norm_universes: dict[str, list] | None = None,
+        reward_cache: pd.DataFrame | None = None,
         context_embedding_model: Any = None,
-        source_contexts: Optional[Dict[str, List[str]]] = None,
-        prompt_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
-        trace_log_path: Optional[str] = None,
+        source_contexts: dict[str, list[str]] | None = None,
+        prompt_metadata: dict[str, dict[str, Any]] | None = None,
+        trace_log_path: str | None = None,
         trace_every_n_calls: int = 50,
         trace_max_bytes: int = 256 * 1024 * 1024,
-        online_rground: Optional[Any] = None,
+        online_rground: Any | None = None,
         no_flow_scoring: str = "independent",
-        judgment_weights: Optional[Sequence[float]] = None,
+        judgment_weights: Sequence[float] | None = None,
         composition: str = "additive",
         abstention_penalty: float = 0.0,
         confidence_fallthrough: bool = False,
@@ -725,7 +788,8 @@ class CompositeRewardFunction:
             raise ValueError(f"Unknown reward composition: {composition!r}")
         if abstention_penalty < 0.0:
             raise ValueError(
-                f"abstention_penalty must be >= 0, got {abstention_penalty}")
+                f"abstention_penalty must be >= 0, got {abstention_penalty}"
+            )
         self.weights = list(weights)
         self.composition = composition
         # Flat post-composition penalty subtracted from a completion that
@@ -742,7 +806,9 @@ class CompositeRewardFunction:
         # False/None). Default 0.0 = disabled (legacy behavior).
         self.abstention_penalty = float(abstention_penalty)
         self.no_flow_scoring = no_flow_scoring
-        self.judgment_weights = list(judgment_weights) if judgment_weights else [0.5, 0.25, 0.25]
+        self.judgment_weights = (
+            list(judgment_weights) if judgment_weights else [0.5, 0.25, 0.25]
+        )
         # Facet-3 confidence resolution in r_uncert. False (default) reproduces
         # the v9-ckpt100 keeper checkpoint (buggy: documented default-5 fallback
         # unreachable); True enables the corrected fall-through. See r_uncert.
@@ -763,37 +829,42 @@ class CompositeRewardFunction:
         self._trace_max_bytes = trace_max_bytes
         self._trace_writes = 0
         self._component_names = [
-            "r_uncert", "r_complete", "r_consist",
-            "r_context", "r_cohere", "r_ground",
+            "r_uncert",
+            "r_complete",
+            "r_consist",
+            "r_context",
+            "r_cohere",
+            "r_ground",
         ]
         # Set by grpo_training.py for trace logging
         self.enable_thinking_grpo = None
         # Per-call judgment-vignette verdict stats (see _push_vignette_health)
-        self.last_vignette_health: Dict[str, float] = {}
+        self.last_vignette_health: dict[str, float] = {}
 
         # Pre-compute source context embeddings so r_context doesn't
         # re-encode the same reference set on every call.
-        self._source_context_embeddings: Dict[str, Any] = {}
+        self._source_context_embeddings: dict[str, Any] = {}
         if context_embedding_model is not None and self.source_contexts:
             for sid, ctx_list in self.source_contexts.items():
                 if ctx_list:
                     try:
                         self._source_context_embeddings[sid] = (
                             context_embedding_model.encode(
-                                ctx_list, normalize_embeddings=True,
+                                ctx_list,
+                                normalize_embeddings=True,
                             )
                         )
                     except Exception:
                         pass
-            n_cached = sum(
-                e.shape[0] for e in self._source_context_embeddings.values()
+            n_cached = sum(e.shape[0] for e in self._source_context_embeddings.values())
+            print(
+                f"[rewards] Pre-computed context embeddings: "
+                f"{len(self._source_context_embeddings)} sources, "
+                f"{n_cached} total contexts"
             )
-            print(f"[rewards] Pre-computed context embeddings: "
-                  f"{len(self._source_context_embeddings)} sources, "
-                  f"{n_cached} total contexts")
 
     def _is_unjustified_abstention(
-        self, is_no_flow: bool, gold_has_exchange: Optional[bool]
+        self, is_no_flow: bool, gold_has_exchange: bool | None
     ) -> bool:
         """Whether the abstention penalty applies to this completion.
 
@@ -807,7 +878,7 @@ class CompositeRewardFunction:
             and gold_has_exchange is True
         )
 
-    def _combine(self, components: List[float]) -> float:
+    def _combine(self, components: list[float]) -> float:
         """Combine the 6 component scores into the composite reward.
 
         "additive": R = sum(w_i * R_i) — the original formulation. The
@@ -836,16 +907,22 @@ class CompositeRewardFunction:
         if self.composition == "gated":
             gate_w = self.weights[:3]
             disc_w = self.weights[3:]
-            gate = sum(w * c for w, c in zip(gate_w, components[:3])) / (sum(gate_w) or 1.0)
-            disc = sum(w * c for w, c in zip(disc_w, components[3:])) / (sum(disc_w) or 1.0)
+            gate = sum(w * c for w, c in zip(gate_w, components[:3])) / (
+                sum(gate_w) or 1.0
+            )
+            disc = sum(w * c for w, c in zip(disc_w, components[3:])) / (
+                sum(disc_w) or 1.0
+            )
             return gate * disc
         if self.composition == "directional":
-            gate_idx = (0, 1, 2, 4)   # r_uncert, r_complete, r_consist, r_cohere
-            content_idx = (3, 5)      # r_context (light), r_ground (dominant)
+            gate_idx = (0, 1, 2, 4)  # r_uncert, r_complete, r_consist, r_cohere
+            content_idx = (3, 5)  # r_context (light), r_ground (dominant)
             gate_w = sum(self.weights[k] for k in gate_idx) or 1.0
             content_w = sum(self.weights[k] for k in content_idx) or 1.0
             gate = sum(self.weights[k] * components[k] for k in gate_idx) / gate_w
-            content = sum(self.weights[k] * components[k] for k in content_idx) / content_w
+            content = (
+                sum(self.weights[k] * components[k] for k in content_idx) / content_w
+            )
             return gate * content
         return sum(w * c for w, c in zip(self.weights, components))
 
@@ -868,13 +945,15 @@ class CompositeRewardFunction:
                     break
             if not text:
                 text = " ".join(
-                    msg.get("content", "") for msg in completion if isinstance(msg, dict)
+                    msg.get("content", "")
+                    for msg in completion
+                    if isinstance(msg, dict)
                 )
         else:
             text = str(completion)
         return _strip_think_blocks(text)
 
-    def _push_vignette_health(self, stats: Dict[str, int]) -> None:
+    def _push_vignette_health(self, stats: dict[str, int]) -> None:
         """Surface per-call judgment-vignette verdict stats under ``vignette/*``.
 
         The v10→v11 iterations steer on the vignette verdict mix — per-gold-class
@@ -890,7 +969,7 @@ class CompositeRewardFunction:
         n_yes, n_no = stats["n_yes"], stats["n_no"]
         if n_yes + n_no == 0:
             return
-        out: Dict[str, float] = {
+        out: dict[str, float] = {
             "vignette/n_yes": float(n_yes),
             "vignette/n_no": float(n_no),
             "vignette/unparsed_frac": stats["unparsed"] / (n_yes + n_no),
@@ -905,6 +984,7 @@ class CompositeRewardFunction:
         self.last_vignette_health = out
         try:
             import wandb
+
             if wandb.run is not None:
                 wandb.log(out, commit=False)
         except Exception:
@@ -916,12 +996,13 @@ class CompositeRewardFunction:
             return False
         return (self._call_count == 0) or (self._call_count % self._trace_every == 0)
 
-    def _log_trace(self, entries: List[Dict[str, Any]]) -> None:
+    def _log_trace(self, entries: list[dict[str, Any]]) -> None:
         """Append trace entries to the JSONL log file."""
         if not self._trace_path:
             return
         try:
             import json as _json
+
             os.makedirs(os.path.dirname(self._trace_path), exist_ok=True)
             with open(self._trace_path, "a", encoding="utf-8") as f:
                 for entry in entries:
@@ -949,11 +1030,13 @@ class CompositeRewardFunction:
             with open(self._trace_path, "rb") as f:
                 f.seek(-keep, os.SEEK_END)
                 tail = f.read()
-            tail = tail[tail.index(b"\n") + 1:]  # drop the partial first line
+            tail = tail[tail.index(b"\n") + 1 :]  # drop the partial first line
             with open(self._trace_path, "wb") as f:
                 f.write(tail)
-            print(f"[rewards] reward_traces.jsonl exceeded "
-                  f"{self._trace_max_bytes} bytes — truncated to newest half")
+            print(
+                f"[rewards] reward_traces.jsonl exceeded "
+                f"{self._trace_max_bytes} bytes — truncated to newest half"
+            )
         except Exception:
             pass
 
@@ -963,7 +1046,7 @@ class CompositeRewardFunction:
         prompts=None,
         completions,
         **kwargs,
-    ) -> List[float]:
+    ) -> list[float]:
         """Score completions with the composite reward.
 
         When ``online_rground`` is set, R_ground is evaluated by batching
@@ -984,7 +1067,8 @@ class CompositeRewardFunction:
             prompt = prompts[i] if prompts else ""
             if isinstance(prompt, list):
                 prompt = " ".join(
-                    m.get("content", "") for m in prompt
+                    m.get("content", "")
+                    for m in prompt
                     if isinstance(m, dict) and m.get("role") == "user"
                 )
             prompt_texts.append(prompt)
@@ -995,10 +1079,17 @@ class CompositeRewardFunction:
         # Judgment vignettes get a pre-computed score (sentinel None in
         # partial_components) and bypass Phases 3-4.
         partial_components = []  # list of [r0..r4] or None (judgment sentinel)
-        is_no_flow = []          # True if CI completion declares no exchange
-        judgment_scores: Dict[int, float] = {}  # idx → pre-computed reward
-        vig_stats = {"n_yes": 0, "n_no": 0, "correct_yes": 0, "correct_no": 0,
-                     "says_yes_gold_no": 0, "says_no_gold_yes": 0, "unparsed": 0}
+        is_no_flow = []  # True if CI completion declares no exchange
+        judgment_scores: dict[int, float] = {}  # idx → pre-computed reward
+        vig_stats = {
+            "n_yes": 0,
+            "n_no": 0,
+            "correct_yes": 0,
+            "correct_no": 0,
+            "says_yes_gold_no": 0,
+            "says_no_gold_yes": 0,
+            "unparsed": 0,
+        }
 
         for i, completion in enumerate(extracted_texts):
             meta = meta_list[i]
@@ -1017,8 +1108,11 @@ class CompositeRewardFunction:
                 # yields correctness; the drift metrics need what the model SAID).
                 if gold_j in ("yes", "no"):
                     parsed_j = _parse_judgment_completion(completion)
-                    model_j = (str(parsed_j.get("judgment", "")).lower().strip()
-                               if parsed_j else "")
+                    model_j = (
+                        str(parsed_j.get("judgment", "")).lower().strip()
+                        if parsed_j
+                        else ""
+                    )
                     vig_stats[f"n_{gold_j}"] += 1
                     if j_acc >= 1.0:
                         vig_stats[f"correct_{gold_j}"] += 1
@@ -1056,15 +1150,39 @@ class CompositeRewardFunction:
             else:
                 src_ctx_embs = self._source_context_embeddings.get(source_id)
                 src_ctx_strs = self.source_contexts.get(source_id, [])
-                partial_components.append([
-                    r_uncert(completion, gold_has_exchange=gold_has_exchange, is_no_flow=_is_nf,
-                             confidence_fallthrough=self.confidence_fallthrough),
-                    r_complete(completion, gold_has_exchange=gold_has_exchange, is_no_flow=_is_nf),
-                    r_consist(completion, gold_has_exchange=gold_has_exchange, is_no_flow=_is_nf),
-                    r_context(completion, src_ctx_embs, src_ctx_strs, self.context_embedding_model,
-                              gold_has_exchange=gold_has_exchange, is_no_flow=_is_nf),
-                    r_cohere(completion, gold_has_exchange=gold_has_exchange, is_no_flow=_is_nf),
-                ])
+                partial_components.append(
+                    [
+                        r_uncert(
+                            completion,
+                            gold_has_exchange=gold_has_exchange,
+                            is_no_flow=_is_nf,
+                            confidence_fallthrough=self.confidence_fallthrough,
+                        ),
+                        r_complete(
+                            completion,
+                            gold_has_exchange=gold_has_exchange,
+                            is_no_flow=_is_nf,
+                        ),
+                        r_consist(
+                            completion,
+                            gold_has_exchange=gold_has_exchange,
+                            is_no_flow=_is_nf,
+                        ),
+                        r_context(
+                            completion,
+                            src_ctx_embs,
+                            src_ctx_strs,
+                            self.context_embedding_model,
+                            gold_has_exchange=gold_has_exchange,
+                            is_no_flow=_is_nf,
+                        ),
+                        r_cohere(
+                            completion,
+                            gold_has_exchange=gold_has_exchange,
+                            is_no_flow=_is_nf,
+                        ),
+                    ]
+                )
 
         # ----- Phase 3: Compute R_ground (online or cached) -----
         # Filter to CI extraction completions only — judgment vignettes
@@ -1124,22 +1242,24 @@ class CompositeRewardFunction:
                     j_acc = r_judgment(extracted_texts[i], gold_j)
                     j_reas = r_judgment_reasoning(extracted_texts[i])
                     j_cite = r_norm_cite(extracted_texts[i], norm_art)
-                    trace_entries.append({
-                        "call": self._call_count - 1,
-                        "idx": i,
-                        "task_type": "norm_judgment",
-                        "source_id": meta.get("source_id", ""),
-                        "gold_judgment": gold_j,
-                        "prompt": prompt_texts[i][:4000] if prompt_texts[i] else "",
-                        "completion_len": len(extracted_texts[i]),
-                        "completion": extracted_texts[i],
-                        "components": {
-                            "r_judgment": round(j_acc, 4),
-                            "r_reasoning": round(j_reas, 4),
-                            "r_norm_cite": round(j_cite, 4),
-                        },
-                        "composite": round(r, 4),
-                    })
+                    trace_entries.append(
+                        {
+                            "call": self._call_count - 1,
+                            "idx": i,
+                            "task_type": "norm_judgment",
+                            "source_id": meta.get("source_id", ""),
+                            "gold_judgment": gold_j,
+                            "prompt": prompt_texts[i][:4000] if prompt_texts[i] else "",
+                            "completion_len": len(extracted_texts[i]),
+                            "completion": extracted_texts[i],
+                            "components": {
+                                "r_judgment": round(j_acc, 4),
+                                "r_reasoning": round(j_reas, 4),
+                                "r_norm_cite": round(j_cite, 4),
+                            },
+                            "composite": round(r, 4),
+                        }
+                    )
                 continue
 
             components = partial_components[i] + [rground_scores[i]]
@@ -1157,7 +1277,8 @@ class CompositeRewardFunction:
                 # amount post-composition so the advantage gap toward extraction
                 # deepens (see __init__ note). Not reached in directional mode.
                 _abstained_wrongly = self._is_unjustified_abstention(
-                    is_no_flow[i], meta.get("gold_has_exchange"))
+                    is_no_flow[i], meta.get("gold_has_exchange")
+                )
                 if _abstained_wrongly:
                     r -= self.abstention_penalty
             scores.append(r)
@@ -1182,13 +1303,17 @@ class CompositeRewardFunction:
                     },
                     "weighted": {
                         name: round(w * val, 4)
-                        for name, w, val in zip(self._component_names, self.weights, components)
+                        for name, w, val in zip(
+                            self._component_names, self.weights, components
+                        )
                     },
                     "composite": round(r, 4),
                     "abstention_penalized": bool(_abstained_wrongly),
                     "composition": self.composition,
                     "enable_thinking_grpo": self.enable_thinking_grpo,
-                    "rground_mode": "online" if self.online_rground is not None else "cached",
+                    "rground_mode": "online"
+                    if self.online_rground is not None
+                    else "cached",
                 }
                 # Attach per-flow R_ground diagnostics when available.
                 # last_diagnostics is indexed by CI-only position, not
@@ -1199,7 +1324,9 @@ class CompositeRewardFunction:
                     and i in _ci_pos
                     and _ci_pos[i] < len(self.online_rground.last_diagnostics)
                 ):
-                    entry["rground_flows"] = self.online_rground.last_diagnostics[_ci_pos[i]]
+                    entry["rground_flows"] = self.online_rground.last_diagnostics[
+                        _ci_pos[i]
+                    ]
                 trace_entries.append(entry)
 
         if trace_entries:

@@ -11,20 +11,21 @@ from __future__ import annotations
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import requests
 
 from dagspaces.common.stage_utils import extract_last_json
-from .norm_universe import EMBED_INSTRUCTION
+
 from .deontic import (
     candidate_appropriateness_consistency,
     governing_norm_force,
 )
+from .norm_universe import EMBED_INSTRUCTION
 
 
-def _json_schema_response_format(json_schema: Dict[str, Any]) -> Dict[str, Any]:
+def _json_schema_response_format(json_schema: dict[str, Any]) -> dict[str, Any]:
     """Wrap a JSON schema in the OpenAI ``response_format`` envelope.
 
     vLLM >= 0.19 silently ignores the legacy ``guided_json`` extra-body
@@ -37,7 +38,7 @@ def _json_schema_response_format(json_schema: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _build_norm_embed_text(norm: Dict[str, Any]) -> str:
+def _build_norm_embed_text(norm: dict[str, Any]) -> str:
     """Build embedding-friendly text from a norm dict.
 
     Mirrors norm_universe._build_norm_text but operates on the cleaned
@@ -100,7 +101,7 @@ class EmbeddingClient:
         self._session = requests.Session()
         self._embed_dim: int = 0  # cached from first successful call
 
-    def encode_batch(self, texts: List[str]) -> np.ndarray:
+    def encode_batch(self, texts: list[str]) -> np.ndarray:
         """Encode texts into normalized embeddings.
 
         Prepends the instruction prefix used during norm universe
@@ -131,7 +132,7 @@ class EmbeddingClient:
         ]
         return np.vstack(outs)
 
-    def _encode_chunk(self, prefixed: List[str]) -> np.ndarray:
+    def _encode_chunk(self, prefixed: list[str]) -> np.ndarray:
         """Encode one already-prefixed chunk with retries."""
         for attempt in range(self.max_retries):
             try:
@@ -195,7 +196,7 @@ class JudgeClient:
         model_name: str = "default",
         system_prompt: str = "",
         prompt_template: str = "",
-        json_schema: Optional[Dict[str, Any]] = None,
+        json_schema: dict[str, Any] | None = None,
         timeout: float = 600.0,
         max_workers: int = 4,
         max_retries: int = 4,
@@ -210,7 +211,7 @@ class JudgeClient:
         self.max_retries = max_retries
         self._session = requests.Session()
 
-    def _build_messages(self, item: Dict[str, Any]) -> List[Dict[str, str]]:
+    def _build_messages(self, item: dict[str, Any]) -> list[dict[str, str]]:
         """Build chat messages from the judge prompt template."""
         user_prompt = (
             self.prompt_template
@@ -223,11 +224,11 @@ class JudgeClient:
             {"role": "user", "content": user_prompt},
         ]
 
-    def _judge_single(self, item: Dict[str, Any]) -> Dict[str, Any]:
+    def _judge_single(self, item: dict[str, Any]) -> dict[str, Any]:
         """Send a single judge request with retries."""
         messages = self._build_messages(item)
 
-        request_body: Dict[str, Any] = {
+        request_body: dict[str, Any] = {
             "model": self.model_name,
             "messages": messages,
             "temperature": 0.0,
@@ -278,7 +279,7 @@ class JudgeClient:
 
         return {"norm_match_score": 0.0, "governance_score": 0.0, "appropriateness_consistent": False}
 
-    def judge_batch(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def judge_batch(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Evaluate a batch of flows concurrently.
 
         Each item should have keys: chunk_text, flow_json, norm_universe_json.
@@ -312,11 +313,11 @@ class JudgeClient:
 
     def _coverage_single(
         self,
-        item: Dict[str, Any],
+        item: dict[str, Any],
         system_prompt: str,
         prompt_template: str,
-        json_schema: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        json_schema: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         """Send a single no-flow coverage judge request with retries."""
         user_prompt = (
             prompt_template
@@ -328,7 +329,7 @@ class JudgeClient:
             {"role": "user", "content": user_prompt},
         ]
 
-        request_body: Dict[str, Any] = {
+        request_body: dict[str, Any] = {
             "model": self.model_name,
             "messages": messages,
             "temperature": 0.0,
@@ -377,11 +378,11 @@ class JudgeClient:
 
     def judge_coverage_batch(
         self,
-        items: List[Dict[str, Any]],
+        items: list[dict[str, Any]],
         system_prompt: str,
         prompt_template: str,
-        json_schema: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        json_schema: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Evaluate no-flow coverage for a batch of chunks concurrently.
 
         Each item should have keys: chunk_text, norm_universe_json.
@@ -418,11 +419,11 @@ class JudgeClient:
 
     def _ranking_single(
         self,
-        item: Dict[str, Any],
+        item: dict[str, Any],
         system_prompt: str,
         prompt_template: str,
-        json_schema: Optional[Dict[str, Any]],
-    ) -> Optional[List[Dict[str, Any]]]:
+        json_schema: dict[str, Any] | None,
+    ) -> list[dict[str, Any]] | None:
         """Send a single listwise ranking request with retries.
 
         Returns the validated rankings list (one entry per candidate, with
@@ -442,7 +443,7 @@ class JudgeClient:
             {"role": "user", "content": user_prompt},
         ]
 
-        request_body: Dict[str, Any] = {
+        request_body: dict[str, Any] = {
             "model": self.model_name,
             "messages": messages,
             "temperature": 0.0,
@@ -512,11 +513,11 @@ class JudgeClient:
 
     def judge_ranking_batch(
         self,
-        items: List[Dict[str, Any]],
+        items: list[dict[str, Any]],
         system_prompt: str,
         prompt_template: str,
-        json_schema: Optional[Dict[str, Any]] = None,
-    ) -> List[Optional[List[Dict[str, Any]]]]:
+        json_schema: dict[str, Any] | None = None,
+    ) -> list[list[dict[str, Any]] | None]:
         """Rank candidate completions listwise, one request per group.
 
         Each item should have keys: chunk_text, norm_universe_json,
@@ -531,7 +532,7 @@ class JudgeClient:
         print(f"[JudgeClient] Ranking batch: {len(items)} groups, "
               f"max_workers={min(self.max_workers, len(items))}")
 
-        results: List[Optional[List[Dict[str, Any]]]] = [None] * len(items)
+        results: list[list[dict[str, Any]] | None] = [None] * len(items)
         with ThreadPoolExecutor(max_workers=min(self.max_workers, len(items))) as pool:
             future_to_idx = {
                 pool.submit(
@@ -637,7 +638,7 @@ class RerankerJudgeClient:
         parts.append(f"Governing norms: {norm_universe_json}")
         return "\n".join(parts)
 
-    def _rerank(self, query: str, documents: List[str]) -> Optional[List[float]]:
+    def _rerank(self, query: str, documents: list[str]) -> list[float] | None:
         """Score ``documents`` against ``query`` via vLLM ``/rerank``.
 
         Returns one relevance score per document (aligned to input order),
@@ -696,7 +697,7 @@ class RerankerJudgeClient:
     # JudgeClient-compatible API
     # ------------------------------------------------------------------
 
-    def _ranking_single(self, item: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    def _ranking_single(self, item: dict[str, Any]) -> list[dict[str, Any]] | None:
         """Score one group's candidates and emit a JudgeClient-style ranking.
 
         Expects ``item['candidates']`` (per-candidate document text, injected
@@ -750,11 +751,11 @@ class RerankerJudgeClient:
 
     def judge_ranking_batch(
         self,
-        items: List[Dict[str, Any]],
+        items: list[dict[str, Any]],
         system_prompt: str = "",
         prompt_template: str = "",
-        json_schema: Optional[Dict[str, Any]] = None,
-    ) -> List[Optional[List[Dict[str, Any]]]]:
+        json_schema: dict[str, Any] | None = None,
+    ) -> list[list[dict[str, Any]] | None]:
         """Rank candidates per group via reranker. Signature mirrors
         ``JudgeClient.judge_ranking_batch``; the prompt/schema args are
         accepted for interface compatibility and ignored (the reranker has
@@ -763,7 +764,7 @@ class RerankerJudgeClient:
             return []
         print(f"[RerankerJudgeClient] Ranking batch: {len(items)} groups, "
               f"max_workers={min(self.max_workers, len(items))}")
-        results: List[Optional[List[Dict[str, Any]]]] = [None] * len(items)
+        results: list[list[dict[str, Any]] | None] = [None] * len(items)
         with ThreadPoolExecutor(max_workers=min(self.max_workers, len(items))) as pool:
             future_to_idx = {
                 pool.submit(self._ranking_single, item): i
@@ -777,7 +778,7 @@ class RerankerJudgeClient:
                     results[idx] = None
         return results
 
-    def judge_batch(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def judge_batch(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Per-flow absolute scoring (legacy ``rground_scoring=absolute``).
 
         Maps the reranker relevance to norm_match_score = governance_score =
@@ -791,7 +792,7 @@ class RerankerJudgeClient:
         if not items:
             return []
 
-        def _one(item: Dict[str, Any]) -> Dict[str, Any]:
+        def _one(item: dict[str, Any]) -> dict[str, Any]:
             query = self._build_query(
                 str(item.get("norm_universe_json", "[]")),
                 str(item.get("chunk_text", "")),
@@ -810,7 +811,7 @@ class RerankerJudgeClient:
                 "appropriateness_consistent": consistency >= 0.5,
             }
 
-        results: List[Dict[str, Any]] = [None] * len(items)
+        results: list[dict[str, Any]] = [None] * len(items)
         with ThreadPoolExecutor(max_workers=min(self.max_workers, len(items))) as pool:
             future_to_idx = {pool.submit(_one, it): i for i, it in enumerate(items)}
             for future in as_completed(future_to_idx):
@@ -824,11 +825,11 @@ class RerankerJudgeClient:
 
     def judge_coverage_batch(
         self,
-        items: List[Dict[str, Any]],
+        items: list[dict[str, Any]],
         system_prompt: str = "",
         prompt_template: str = "",
-        json_schema: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        json_schema: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """No-flow coverage via reranker: score the chunk against its norms.
 
         High relevance ⇒ the passage contains norm-governed flows (so a
@@ -838,7 +839,7 @@ class RerankerJudgeClient:
         if not items:
             return []
 
-        def _one(item: Dict[str, Any]) -> Dict[str, Any]:
+        def _one(item: dict[str, Any]) -> dict[str, Any]:
             query = self._build_query(str(item.get("norm_universe_json", "[]")))
             scores = self._rerank(query, [str(item.get("chunk_text", ""))])
             if not scores:
@@ -850,7 +851,7 @@ class RerankerJudgeClient:
                 "passage_contains_governed_flows": s >= 0.5,
             }
 
-        results: List[Dict[str, Any]] = [None] * len(items)
+        results: list[dict[str, Any]] = [None] * len(items)
         with ThreadPoolExecutor(max_workers=min(self.max_workers, len(items))) as pool:
             future_to_idx = {pool.submit(_one, it): i for i, it in enumerate(items)}
             for future in as_completed(future_to_idx):
@@ -866,7 +867,7 @@ class RerankerJudgeClient:
         self._session.close()
 
 
-def _split_candidates_block(block: str, n_candidates: int) -> List[str]:
+def _split_candidates_block(block: str, n_candidates: int) -> list[str]:
     """Recover per-candidate texts from a joined ``candidates_block``.
 
     OnlineRGround builds the block as ``### Candidate {i}\\n{text}`` joined by
@@ -876,7 +877,7 @@ def _split_candidates_block(block: str, n_candidates: int) -> List[str]:
     if not block:
         return []
     parts = block.split("### Candidate ")
-    out: List[str] = []
+    out: list[str] = []
     for p in parts:
         p = p.strip()
         if not p:
@@ -901,16 +902,16 @@ class NormRetriever:
 
     def __init__(
         self,
-        norm_universes: Dict[str, list],
+        norm_universes: dict[str, list],
         embeddings_dir: str,
-        embedding_client: Optional["EmbeddingClient"] = None,
+        embedding_client: EmbeddingClient | None = None,
         top_k: int = 3,
     ):
         import os
 
         self.norm_universes = norm_universes
         self.top_k = top_k
-        self._embeddings: Dict[str, np.ndarray] = {}
+        self._embeddings: dict[str, np.ndarray] = {}
 
         # First, load any pre-computed .npy embeddings from disk.
         if embeddings_dir and os.path.isdir(embeddings_dir):
@@ -948,9 +949,9 @@ class NormRetriever:
         self,
         query_embedding: np.ndarray,
         source_id: str,
-        contrastive_source: Optional[str] = None,
+        contrastive_source: str | None = None,
         return_scores: bool = False,
-        top_k: Optional[int] = None,
+        top_k: int | None = None,
     ):
         """Retrieve top-k norms most relevant to a query embedding.
 
@@ -997,8 +998,8 @@ class NormRetriever:
     def retrieve_batch(
         self,
         query_embeddings: np.ndarray,
-        source_ids: List[str],
-        contrastive_sources: List[Optional[str]],
+        source_ids: list[str],
+        contrastive_sources: list[str | None],
         return_scores: bool = False,
     ):
         """Vectorized top-k retrieval for multiple queries."""

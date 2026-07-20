@@ -7,13 +7,13 @@ This module contains shared code used across all dagspaces:
 
 from .config_schema import (
     ArtifactSpec,
-    SourceSpec,
     OutputSpec,
-    PipelineNodeSpec,
     PipelineGraphSpec,
+    PipelineNodeSpec,
+    SourceSpec,
+    iter_topologically,
     load_pipeline_graph,
     resolve_output_root,
-    iter_topologically,
 )
 
 __all__ = [

@@ -4,16 +4,16 @@ diversity for ensemble outputs."""
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Any, Dict, List
+from typing import Any
 
 from .matchers import alias_match, jaccard, normalize
 
 
-def _factor_key(f: Dict[str, Any]) -> str:
+def _factor_key(f: dict[str, Any]) -> str:
     return f"{f.get('kind', '')}: {f.get('factor', '')}"
 
 
-def score_factor_coverage(gold_factors: List[Dict[str, Any]], pred_factors: List[Dict[str, Any]]) -> Dict[str, Any]:
+def score_factor_coverage(gold_factors: list[dict[str, Any]], pred_factors: list[dict[str, Any]]) -> dict[str, Any]:
     """Recall of expert-raised factors; kind-level recall as a coarser signal.
 
     A gold factor counts as covered if any predicted factor alias-matches its
@@ -54,7 +54,7 @@ def score_factor_coverage(gold_factors: List[Dict[str, Any]], pred_factors: List
     }
 
 
-def viewpoint_diversity(texts: List[str]) -> Dict[str, Any]:
+def viewpoint_diversity(texts: list[str]) -> dict[str, Any]:
     """Mean pairwise token-Jaccard *distance* across ensemble member outputs.
 
     1.0 = every member said something lexically disjoint; 0.0 = clones.

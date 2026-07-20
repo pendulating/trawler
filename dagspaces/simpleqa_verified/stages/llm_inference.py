@@ -7,12 +7,13 @@ shape of the answer would change what the grader sees.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 
 from dagspaces.common.vllm_inference import run_vllm_inference
+
 from ..prompts import build_answer_prompt
 
 
@@ -40,12 +41,12 @@ def run_llm_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     if _strips_thinking:
         sp_dict["max_tokens"] = max(sp_dict.get("max_tokens", 256), 4096)
 
-    def preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def preprocess(row: dict[str, Any]) -> dict[str, Any]:
         row["messages"] = [{"role": "user", "content": build_answer_prompt(row["question"])}]
         row["sampling_params"] = dict(sp_dict)
         return row
 
-    def postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+    def postprocess(row: dict[str, Any]) -> dict[str, Any]:
         return row
 
     return run_vllm_inference(

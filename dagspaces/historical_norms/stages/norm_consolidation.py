@@ -12,13 +12,13 @@
 #      definitionally distinct and must never be merged
 
 import json
-import pandas as pd
+from typing import Any
+
 import numpy as np
-from typing import Any, Dict, List, Optional
+import pandas as pd
 from omegaconf import OmegaConf
 
 from dagspaces.common.vllm_inference import run_vllm_inference
-
 
 # ---------------------------------------------------------------------------
 # Column definitions for consolidated output
@@ -49,7 +49,7 @@ _CONSOLIDATED_COLUMNS = [
 # Phase A: Embedding + Clustering
 # ---------------------------------------------------------------------------
 
-def _build_norm_text(row: Dict[str, Any]) -> str:
+def _build_norm_text(row: dict[str, Any]) -> str:
     """Build a text representation of a norm for embedding.
 
     Concatenates the Raz tuple components and articulation into a single
@@ -83,7 +83,7 @@ def _build_norm_text(row: Dict[str, Any]) -> str:
     return " | ".join(parts)
 
 
-def _embed_norms(texts: List[str], model_name: str = "all-MiniLM-L6-v2",
+def _embed_norms(texts: list[str], model_name: str = "all-MiniLM-L6-v2",
                  batch_size: int = 256) -> np.ndarray:
     """Embed norm texts using sentence-transformers.
 
@@ -252,7 +252,7 @@ def _singleton_result(
     crow: Any,
     orig: Any,
     group_key: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a result dict for a singleton (no LLM merge needed)."""
     idx = crow["member_indices"][0]
     return {
@@ -281,9 +281,9 @@ def _singleton_result(
 
 def _merged_result(
     mrow: Any,
-    merged: Dict[str, Any],
+    merged: dict[str, Any],
     group_key: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a result dict from a successful LLM merge."""
     norm = merged.get("canonical_norm", {})
     return {
@@ -318,7 +318,7 @@ def _fallback_result(
     mrow: Any,
     orig: Any,
     group_key: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a result dict when LLM merge failed (use best member)."""
     return {
         "group_key": group_key,
@@ -487,7 +487,7 @@ def run_norm_consolidation_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
     print(f"[norm_consolidation] {len(singletons)} singleton clusters "
           f"(pass-through), {len(multi)} multi-norm clusters (LLM merge)")
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
 
     # Pass-through singletons
     for _, crow in singletons.iterrows():
@@ -528,7 +528,7 @@ def run_norm_consolidation_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
         # to stay within the model's context window (32768 tokens).
         _MAX_MEMBERS_PER_PROMPT = 25
 
-        def _preprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+        def _preprocess(row: dict[str, Any]) -> dict[str, Any]:
             result_row = dict(row)
             member_norms_json = row["member_norms_json"]
             cluster_size = row["cluster_size"]
@@ -558,7 +558,7 @@ def run_norm_consolidation_stage(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
             result_row["sampling_params"] = sampling_params
             return result_row
 
-        def _postprocess(row: Dict[str, Any]) -> Dict[str, Any]:
+        def _postprocess(row: dict[str, Any]) -> dict[str, Any]:
             result_row = dict(row)
             result_row.pop("messages", None)
             result_row.pop("sampling_params", None)

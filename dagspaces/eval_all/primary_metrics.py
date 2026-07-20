@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ class PrimaryMetric:
 #: one-line append: e.g. for cirl_trajectory's eventual return to the
 #: default eval set, append a (judge_leakage_rate, helpfulness) pair
 #: under the "cirl_trajectory" key.
-PRIMARY_METRICS: Dict[str, List[PrimaryMetric]] = {
+PRIMARY_METRICS: dict[str, list[PrimaryMetric]] = {
     "privacylens": [
         # Lower leakage = better; higher helpfulness = better. Both
         # surface separately; the summary table shows both columns.
@@ -185,7 +185,7 @@ PRIMARY_METRICS: Dict[str, List[PrimaryMetric]] = {
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _dotted_get(d: Any, path: str) -> Optional[Any]:
+def _dotted_get(d: Any, path: str) -> Any | None:
     """Walk ``path`` (``"a.b.c"``) through nested dicts. Returns None on miss."""
     cur: Any = d
     for part in path.split("."):
@@ -200,7 +200,7 @@ def _dotted_get(d: Any, path: str) -> Optional[Any]:
 def extract_primary_metrics(
     benchmark_root: str,
     dagspace: str,
-) -> Dict[str, Optional[float]]:
+) -> dict[str, float | None]:
     """Pull every registered primary metric for one benchmark run.
 
     Args:
@@ -216,13 +216,13 @@ def extract_primary_metrics(
     metrics.json is missing or the dotted path doesn't resolve, so the
     summary table can render a dash without raising).
     """
-    out: Dict[str, Optional[float]] = {}
+    out: dict[str, float | None] = {}
     entries = PRIMARY_METRICS.get(dagspace, [])
     for m in entries:
         metrics_path = os.path.join(
             benchmark_root, "outputs", m.subdir, "metrics.json"
         )
-        value: Optional[float] = None
+        value: float | None = None
         if os.path.exists(metrics_path):
             try:
                 with open(metrics_path) as f:
@@ -237,12 +237,12 @@ def extract_primary_metrics(
 
 
 def format_primary_metrics(
-    values: Dict[str, Optional[float]],
+    values: dict[str, float | None],
     dagspace: str,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """Render a primary-metric dict for a human-readable summary cell."""
     entries = {m.name: m for m in PRIMARY_METRICS.get(dagspace, [])}
-    out: Dict[str, str] = {}
+    out: dict[str, str] = {}
     for name, val in values.items():
         spec = entries[name].format_spec if name in entries else ".4f"
         if val is None:

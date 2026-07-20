@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from typing import List, Optional, Literal, Union, Dict, Any
+from typing import Any, Literal, Union
+
 from pydantic import BaseModel, Field
+
 
 class RegulativeNorm(BaseModel):
     """
@@ -11,7 +13,7 @@ class RegulativeNorm(BaseModel):
     statement_type: Literal["regulative"] = "regulative"
     
     # A - Attributes
-    attributes: Optional[str] = Field(None, description="Core identifiers of the actor (e.g., age, role, status)")
+    attributes: str | None = Field(None, description="Core identifiers of the actor (e.g., age, role, status)")
     
     # D - Deontic
     deontic: str = Field(..., description="Prescriptive operator (e.g., must, shall, may, is forbidden, is expected to)")
@@ -20,15 +22,15 @@ class RegulativeNorm(BaseModel):
     aim: str = Field(..., description="The activity, goal, or outcome being regulated")
     
     # B/C - Object
-    direct_object: Optional[str] = Field(None, description="The inanimate or animate target of the action")
-    indirect_object: Optional[str] = Field(None, description="The recipient of the action or affected party")
+    direct_object: str | None = Field(None, description="The inanimate or animate target of the action")
+    indirect_object: str | None = Field(None, description="The recipient of the action or affected party")
     
     # C - Context
-    activation_conditions: List[str] = Field(default_factory=list, description="Settings where the focal action applies (When/Where)")
-    execution_constraints: List[str] = Field(default_factory=list, description="Qualifications on how the action is performed")
+    activation_conditions: list[str] = Field(default_factory=list, description="Settings where the focal action applies (When/Where)")
+    execution_constraints: list[str] = Field(default_factory=list, description="Qualifications on how the action is performed")
     
     # O - Or else (Vertical Nesting)
-    or_else: Optional[Union[str, InstitutionalStatement]] = Field(None, description="Sanctions or consequences for violation. Can be a nested statement.")
+    or_else: Union[str, InstitutionalStatement] | None = Field(None, description="Sanctions or consequences for violation. Can be a nested statement.")
     
     reasoning_trace: str = Field(..., description="The full reasoning chain produced by the model for this specific norm")
     source_snippet: str = Field(..., description="The original text passage containing the norm")
@@ -44,20 +46,20 @@ class ConstitutiveNorm(BaseModel):
     constituted_entity: str = Field(..., description="What is being constituted or defined")
     
     # M - Modal
-    modal: Optional[str] = Field(None, description="Operator signaling necessity or possibility (e.g., is, is not, can, cannot)")
+    modal: str | None = Field(None, description="Operator signaling necessity or possibility (e.g., is, is not, can, cannot)")
     
     # F - Constitutive Function
     constitutive_function: str = Field(..., description="Expression linking the entity to the institutional setting (e.g., 'counts as', 'represents')")
     
     # P - Constituting Properties
-    constituting_properties: List[str] = Field(default_factory=list, description="Properties linked to the entity")
+    constituting_properties: list[str] = Field(default_factory=list, description="Properties linked to the entity")
     
     # C - Context (IG 2.0 split)
-    activation_conditions: List[str] = Field(default_factory=list, description="Settings where the definition applies (Triggers)")
-    execution_constraints: List[str] = Field(default_factory=list, description="Qualifications on the definition")
+    activation_conditions: list[str] = Field(default_factory=list, description="Settings where the definition applies (Triggers)")
+    execution_constraints: list[str] = Field(default_factory=list, description="Qualifications on the definition")
     
     # O - Or else (Vertical Nesting)
-    or_else: Optional[Union[str, InstitutionalStatement]] = Field(None, description="Consequences of violation/invalidity. Can be a nested statement.")
+    or_else: Union[str, InstitutionalStatement] | None = Field(None, description="Consequences of violation/invalidity. Can be a nested statement.")
     
     reasoning_trace: str = Field(..., description="The full reasoning chain produced by the model for this specific norm")
     source_snippet: str = Field(..., description="The original text passage containing the norm")
@@ -67,15 +69,15 @@ class InstitutionalStatement(BaseModel):
     statement: Union[RegulativeNorm, ConstitutiveNorm] = Field(..., discriminator="statement_type")
     
     # Horizontal Nesting support
-    combination_operator: Optional[Literal["AND", "OR", "XOR"]] = Field(None, description="Logical operator if combined with other statements")
-    combined_with: List[InstitutionalStatement] = Field(default_factory=list, description="Other statements linked via the combination_operator")
+    combination_operator: Literal["AND", "OR", "XOR"] | None = Field(None, description="Logical operator if combined with other statements")
+    combined_with: list[InstitutionalStatement] = Field(default_factory=list, description="Other statements linked via the combination_operator")
     
     confidence: float = Field(..., ge=0, le=1)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 class ExtractionResult(BaseModel):
     """Top-level result for the extraction stage."""
-    statements: List[InstitutionalStatement] = Field(..., description="All extracted institutional statements")
+    statements: list[InstitutionalStatement] = Field(..., description="All extracted institutional statements")
 
 class NormReasoning(BaseModel):
     """Reasoning trace for a single institutional statement."""
@@ -85,7 +87,7 @@ class NormReasoning(BaseModel):
 
 class NormReasoningList(BaseModel):
     """List of reasoning traces found in a single text chunk."""
-    norms: List[NormReasoning] = Field(
+    norms: list[NormReasoning] = Field(
         ...,  # Required - model MUST output this array (can be empty [])
         description="Institutional statements identified in the text. Output an empty array [] if no norms found. Limit to 1-5 most significant norms per chunk.",
         max_length=10  # Hard cap to prevent excessive extraction

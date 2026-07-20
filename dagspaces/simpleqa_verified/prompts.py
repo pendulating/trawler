@@ -18,11 +18,9 @@ numbers if the prompt drifts.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from typing import Literal
-
 
 # ---------------------------------------------------------------------------
 # Grader schema (guided-decoded into the judge's response)
@@ -36,7 +34,7 @@ class SimpleQAGrade(BaseModel):
     )
 
 
-SIMPLEQA_GRADE_SCHEMA: Dict[str, Any] = SimpleQAGrade.model_json_schema()
+SIMPLEQA_GRADE_SCHEMA: dict[str, Any] = SimpleQAGrade.model_json_schema()
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +141,7 @@ def build_grader_messages(
     question: str,
     gold_target: str,
     predicted_answer: str,
-) -> List[Dict[str, str]]:
+) -> list[dict[str, str]]:
     """Build the OpenAI-chat messages list shown to the judge LLM."""
     prompt = _GRADER_TEMPLATE.format(
         question=str(question or ""),

@@ -4,46 +4,36 @@ import json
 import os
 import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
-import pandas as pd
-from omegaconf import DictConfig, OmegaConf
 from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig
 
 from dagspaces.common.config_schema import (
+    OutputSpec,
     PipelineGraphSpec,
     PipelineNodeSpec,
-    OutputSpec,
     load_pipeline_graph,
     resolve_output_root,
 )
 from dagspaces.common.orchestrator import (
+    ArtifactRegistry,
     StageExecutionContext,
     StageResult,
-    ArtifactRegistry,
+    _create_submitit_executor,
+    _node_inputs,
+    _node_output_paths,
     _NoOpLogger,
-    clone_config,
-    merge_overrides,
-    ensure_section,
+    _print_status,
+    _sanitize_cuda_visible_devices,
+    _submit_slurm_job,
+    build_run_config,
     common_parent,
     prepare_node_config,
-    prepare_stage_input,
-    _collect_outputs,
-    _ensure_output_dirs,
-    _node_optional_outputs,
-    _node_output_paths,
-    _node_inputs,
-    _save_stage_outputs,
-    _safe_log_table,
-    _print_status,
-    build_run_config,
-    _sanitize_cuda_visible_devices,
-    _clean_slurm_env,
-    _create_submitit_executor,
-    _submit_slurm_job,
 )
+
 from .runners import get_stage_registry
-from .wandb_logger import WandbLogger, WandbConfig
+from .wandb_logger import WandbConfig, WandbLogger
 
 try:
     import submitit  # type: ignore
@@ -62,13 +52,13 @@ def _inject_prompt_from_file(cfg: DictConfig, prompt_filename: str) -> None:
     _common_inject(cfg, prompt_filename, config_dir=_CONF_DIR)
 
 
-def _load_launcher_config(cfg: DictConfig, launcher_name: str) -> Optional[DictConfig]:
+def _load_launcher_config(cfg: DictConfig, launcher_name: str) -> DictConfig | None:
     """Load a launcher configuration using this dagspace's conf/ directory."""
     from dagspaces.common.orchestrator import _load_launcher_config as _common_load
     return _common_load(cfg, launcher_name, config_dir=_CONF_DIR)
 
 
-def _get_wandb_logger(cfg: DictConfig, stage: str, run_id: Optional[str] = None, run_config: Optional[Dict[str, Any]] = None):
+def _get_wandb_logger(cfg: DictConfig, stage: str, run_id: str | None = None, run_config: dict[str, Any] | None = None):
     """Get WandbLogger if enabled, otherwise return a no-op logger."""
     wb_config = WandbConfig.from_hydra_config(cfg)
     if wb_config.enabled:
@@ -79,10 +69,10 @@ def _get_wandb_logger(cfg: DictConfig, stage: str, run_id: Optional[str] = None,
 
 from .runners.base import StageRunner
 
-_STAGE_REGISTRY: Dict[str, StageRunner] = get_stage_registry()
+_STAGE_REGISTRY: dict[str, StageRunner] = get_stage_registry()
 
 
-def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
+def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
     """Execute a single stage - designed to be submitted as a SLURM job."""
     from dagspaces.common.stage_utils import ensure_dotenv
     ensure_dotenv()
@@ -147,6 +137,7 @@ def execute_stage_job(context_data: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(_ds, str) and _ds.endswith(".parquet"):
                 try:
                     import pandas as pd
+
                     from dagspaces.common.orchestrator import _safe_log_table
                     _safe_log_table(logger, pd.read_parquet(_ds), f"{node.stage}/results")
                 except Exception as te:
@@ -205,7 +196,7 @@ def run_experiment(cfg: DictConfig) -> None:
                     path = os.path.abspath(os.path.expanduser(path))
                 registry.register_source(source_key, path)
 
-            manifest: Dict[str, Any] = {
+            manifest: dict[str, Any] = {
                 "output_root": output_root,
                 "nodes": {},
             }
@@ -323,8 +314,8 @@ def run_experiment(cfg: DictConfig) -> None:
                     try:
                         job_result = job.result()
                     except Exception as exc:
-                        import subprocess as _sp
                         import pickle as _pkl
+                        import subprocess as _sp
                         # NFS latency: result pickle may not be visible yet.
                         # Wait for SLURM job to finish, then retry reading result.
                         _resolved = False

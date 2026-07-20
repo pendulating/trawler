@@ -11,8 +11,7 @@ Reference: https://github.com/skywalker023/confaide
 
 from __future__ import annotations
 
-from typing import Any, Dict
-
+from typing import Any
 
 # Tier-2 format directive for verbose instruct models (opt-in via the model's
 # ``force_answer_format`` flag — see dagspaces/confaide/stages/llm_inference.py).
@@ -27,7 +26,7 @@ _TIER2_FORMAT_DIRECTIVE = (
 )
 
 
-def build_prompt_for_row(row: Dict[str, Any], force_answer_format: bool = False) -> str:
+def build_prompt_for_row(row: dict[str, Any], force_answer_format: bool = False) -> str:
     """Build the prompt for a row based on its tier.
 
     Tier 2a/2b: The text file already contains the full prompt

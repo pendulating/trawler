@@ -46,8 +46,7 @@ import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
-from typing import Any, Dict, FrozenSet, List, Optional, Set
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Tmpdir helpers
@@ -138,8 +137,6 @@ _apply_wandb_settings_defaults()
 # Import wandb after environment is configured
 import wandb as wandb_module  # noqa: E402
 
-
-
 # ---------------------------------------------------------------------------
 # WandbConfig dataclass
 # ---------------------------------------------------------------------------
@@ -177,30 +174,30 @@ class WandbConfig:
 
     enabled: bool = False
     project: str = "wandb-project"
-    entity: Optional[str] = None
-    group: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
+    entity: str | None = None
+    group: str | None = None
+    tags: list[str] = field(default_factory=list)
     table_sample_rows: int = 1000
     table_sample_seed: int = 777
 
     # Dagspace-specific knobs
     default_experiment_name: str = "experiment"
     env_var_prefix: str = ""
-    full_column_stages: FrozenSet[str] = field(
+    full_column_stages: frozenset[str] = field(
         default_factory=lambda: frozenset()
     )
-    full_column_key_prefixes: FrozenSet[str] = field(
+    full_column_key_prefixes: frozenset[str] = field(
         default_factory=lambda: frozenset()
     )
-    extra_internal_columns: FrozenSet[str] = field(
+    extra_internal_columns: frozenset[str] = field(
         default_factory=lambda: frozenset()
     )
-    extra_pattern_prefixes: List[str] = field(default_factory=list)
-    extra_pattern_names: FrozenSet[str] = field(
+    extra_pattern_prefixes: list[str] = field(default_factory=list)
+    extra_pattern_names: frozenset[str] = field(
         default_factory=lambda: frozenset()
     )
-    extra_runtime_keys: List[str] = field(default_factory=list)
-    classify_variant_field: Optional[str] = None
+    extra_runtime_keys: list[str] = field(default_factory=list)
+    classify_variant_field: str | None = None
     dagspace_name: str = ""
 
     @classmethod
@@ -211,15 +208,15 @@ class WandbConfig:
         default_project: str = "wandb-project",
         default_experiment_name: str = "experiment",
         env_var_prefix: str = "",
-        full_column_stages: Optional[FrozenSet[str]] = None,
-        full_column_key_prefixes: Optional[FrozenSet[str]] = None,
-        extra_internal_columns: Optional[FrozenSet[str]] = None,
-        extra_pattern_prefixes: Optional[List[str]] = None,
-        extra_pattern_names: Optional[FrozenSet[str]] = None,
-        extra_runtime_keys: Optional[List[str]] = None,
-        classify_variant_field: Optional[str] = None,
+        full_column_stages: frozenset[str] | None = None,
+        full_column_key_prefixes: frozenset[str] | None = None,
+        extra_internal_columns: frozenset[str] | None = None,
+        extra_pattern_prefixes: list[str] | None = None,
+        extra_pattern_names: frozenset[str] | None = None,
+        extra_runtime_keys: list[str] | None = None,
+        classify_variant_field: str | None = None,
         dagspace_name: str = "",
-    ) -> "WandbConfig":
+    ) -> WandbConfig:
         """Extract W&B config from Hydra config.
 
         All dagspace-specific keyword arguments have sensible defaults so
@@ -247,7 +244,7 @@ class WandbConfig:
             env_project = os.environ.get("WANDB_PROJECT")
             # phase=cfg.wandb.phase if set; the pipeline yaml uses this to
             # discriminate export-vs-finalize runs in the async-judge flow.
-            phase: Optional[str] = None
+            phase: str | None = None
             if wandb_cfg is not None:
                 phase_attr = getattr(wandb_cfg, "phase", None)
                 if phase_attr:
@@ -330,7 +327,7 @@ class WandbConfig:
 # Config helpers
 # ---------------------------------------------------------------------------
 
-def _get_optional_str(obj, attr: str) -> Optional[str]:
+def _get_optional_str(obj, attr: str) -> str | None:
     """Return attribute as non-empty string or None."""
     try:
         val = getattr(obj, attr, None)
@@ -341,7 +338,7 @@ def _get_optional_str(obj, attr: str) -> Optional[str]:
     return None
 
 
-def _get_list(obj, attr: str) -> List[str]:
+def _get_list(obj, attr: str) -> list[str]:
     """Return list attribute safely."""
     try:
         val = getattr(obj, attr, None)
@@ -354,7 +351,7 @@ def _get_list(obj, attr: str) -> List[str]:
         return []
 
 
-def _get_group_from_config(cfg) -> Optional[str]:
+def _get_group_from_config(cfg) -> str | None:
     """Extract group from config with fallback to environment variables.
 
     Priority order:
@@ -390,7 +387,7 @@ def _get_group_from_config(cfg) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 @lru_cache(maxsize=1)
-def _query_nvidia_smi_inventory() -> List[Dict[str, Any]]:
+def _query_nvidia_smi_inventory() -> list[dict[str, Any]]:
     """Query GPU inventory via nvidia-smi without touching torch.cuda.
 
     Best practice for pre-fork multiprocessing is to avoid initialising CUDA
@@ -406,7 +403,7 @@ def _query_nvidia_smi_inventory() -> List[Dict[str, Any]]:
     ]
     try:
         proc = None
-        fields: List[str] = []
+        fields: list[str] = []
         for candidate_fields in field_sets:
             proc = subprocess.run(
                 [
@@ -425,12 +422,12 @@ def _query_nvidia_smi_inventory() -> List[Dict[str, Any]]:
         if proc is None or proc.returncode != 0:
             return []
 
-        gpus: List[Dict[str, Any]] = []
+        gpus: list[dict[str, Any]] = []
         for line in proc.stdout.splitlines():
             parts = [p.strip() for p in line.split(",")]
             if len(parts) != len(fields):
                 continue
-            gpu_info: Dict[str, Any] = {
+            gpu_info: dict[str, Any] = {
                 "index": int(parts[0]),
                 "uuid": parts[1],
                 "name": parts[2],
@@ -453,7 +450,7 @@ def _query_nvidia_smi_inventory() -> List[Dict[str, Any]]:
         return []
 
 
-def _collect_gpu_details() -> List[Dict[str, Any]]:
+def _collect_gpu_details() -> list[dict[str, Any]]:
     """Return a copy of the cached GPU inventory."""
     return _query_nvidia_smi_inventory().copy()
 
@@ -502,7 +499,7 @@ def _detect_num_gpus() -> int:
     return 0
 
 
-def _detect_gpu_type() -> Optional[str]:
+def _detect_gpu_type() -> str | None:
     """Detect the GPU type/model name via nvidia-smi (no torch import).
 
     Returns a normalised GPU type string (e.g. 'NVIDIA RTX A6000').
@@ -547,7 +544,7 @@ def _parse_cpus_on_node(val: str) -> int:
         return -1
 
 
-def _detect_num_cpus() -> Optional[int]:
+def _detect_num_cpus() -> int | None:
     """Detect the number of CPUs allocated to this job.
 
     Priority order:
@@ -644,7 +641,7 @@ def _detect_slurm_job_mem_bytes() -> int:
     return -1
 
 
-def _detect_memory_gb() -> Optional[float]:
+def _detect_memory_gb() -> float | None:
     """Detect available memory in GB.
 
     Priority order:
@@ -684,7 +681,7 @@ def _detect_memory_gb() -> Optional[float]:
 # ---------------------------------------------------------------------------
 
 #: Runtime config keys that all dagspaces always extract.
-_BASE_RUNTIME_KEYS: List[str] = [
+_BASE_RUNTIME_KEYS: list[str] = [
     "debug",
     "sample_n",
     "job_memory_gb",
@@ -725,15 +722,15 @@ def build_wandb_tags(
     cfg,
     *,
     dagspace_name: str = "",
-    phase: Optional[str] = None,
-) -> List[str]:
+    phase: str | None = None,
+) -> list[str]:
     """Build standardized W&B tags from config for cross-run filtering.
 
     Auto-generates tags for benchmark/dagspace name, model family,
     finetuned vs. base, eval task type, and (when applicable) the
     async-judge ``judge_mode`` and pipeline ``phase``.
     """
-    tags: List[str] = []
+    tags: list[str] = []
 
     if dagspace_name:
         tags.append(f"bench:{dagspace_name}")
@@ -883,8 +880,8 @@ def pipeline_run_id(
     cfg,
     dagspace: str,
     *,
-    model_name: Optional[str] = None,
-) -> Optional[str]:
+    model_name: str | None = None,
+) -> str | None:
     """Stable W&B run id for cross-stage resume within a pipeline.
 
     Returns a 16-hex sha256 id derived from
@@ -931,12 +928,12 @@ def pipeline_run_id(
 
 
 def derive_resumable_run_id(
-    group: Optional[str],
+    group: str | None,
     dagspace: str,
-    model: Optional[str],
+    model: str | None,
     *,
     role: str = "child",
-) -> Optional[str]:
+) -> str | None:
     """Compute a stable W&B run id for resume-across-stages.
 
     Used by the async-judge flow to keep the export-phase run and the
@@ -975,8 +972,8 @@ def collect_compute_metadata(
     cfg=None,
     *,
     env_var_prefix: str = "",
-    extra_runtime_keys: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    extra_runtime_keys: list[str] | None = None,
+) -> dict[str, Any]:
     """Collect comprehensive compute metadata for wandb logging.
 
     Captures system configuration including CPU count and architecture, GPU
@@ -994,7 +991,7 @@ def collect_compute_metadata(
     Returns:
         Dictionary with compute metadata suitable for wandb.config.
     """
-    metadata: Dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
 
     # System info
     try:
@@ -1046,7 +1043,7 @@ def collect_compute_metadata(
         ts = os.environ.get(f"{pfx}GPU_SANITIZE_TS")
         tp_raw = os.environ.get(f"{pfx}TENSOR_PARALLEL_SIZE")
 
-        sanitize_meta: Dict[str, Any] = {}
+        sanitize_meta: dict[str, Any] = {}
         if original:
             sanitize_meta["original"] = [
                 d.strip() for d in original.split(",") if d.strip()
@@ -1076,7 +1073,7 @@ def collect_compute_metadata(
         metadata["compute.memory_gb"] = round(mem_gb, 2)
 
     # SLURM job info
-    slurm_info: Dict[str, Any] = {}
+    slurm_info: dict[str, Any] = {}
     for key in [
         "SLURM_JOB_ID",
         "SLURM_JOB_NAME",
@@ -1104,7 +1101,7 @@ def collect_compute_metadata(
         try:
             model_cfg = getattr(cfg, "model", None)
             if model_cfg:
-                model_info: Dict[str, Any] = {}
+                model_info: dict[str, Any] = {}
 
                 model_source = getattr(model_cfg, "model_source", None)
                 if model_source:
@@ -1112,7 +1109,7 @@ def collect_compute_metadata(
 
                 engine_kwargs = getattr(model_cfg, "engine_kwargs", None)
                 if engine_kwargs:
-                    ek: Dict[str, Any] = {}
+                    ek: dict[str, Any] = {}
                     for key in [
                         "max_model_len",
                         "max_num_seqs",
@@ -1195,7 +1192,7 @@ def collect_compute_metadata(
         try:
             runtime_cfg = getattr(cfg, "runtime", None)
             if runtime_cfg:
-                runtime_info: Dict[str, Any] = {}
+                runtime_info: dict[str, Any] = {}
                 all_runtime_keys = _BASE_RUNTIME_KEYS + (
                     extra_runtime_keys or []
                 )
@@ -1219,7 +1216,7 @@ def collect_compute_metadata(
 # ---------------------------------------------------------------------------
 
 #: Columns that are always dropped before table logging across all dagspaces.
-_UNIVERSAL_EXCLUDE: FrozenSet[str] = frozenset(
+_UNIVERSAL_EXCLUDE: frozenset[str] = frozenset(
     {
         "generated_text",
         "llm_output",
@@ -1263,11 +1260,11 @@ class WandbLogger:
         self,
         cfg,
         stage: str,
-        run_id: Optional[str] = None,
-        run_config: Optional[Dict[str, Any]] = None,
+        run_id: str | None = None,
+        run_config: dict[str, Any] | None = None,
         *,
-        wandb_id: Optional[str] = None,
-        resume: Optional[str] = None,
+        wandb_id: str | None = None,
+        resume: str | None = None,
     ):
         """Initialise wandb logger.
 
@@ -1305,12 +1302,12 @@ class WandbLogger:
         cfg,
         stage: str,
         wb_config: WandbConfig,
-        run_id: Optional[str] = None,
-        run_config: Optional[Dict[str, Any]] = None,
+        run_id: str | None = None,
+        run_config: dict[str, Any] | None = None,
         *,
-        wandb_id: Optional[str] = None,
-        resume: Optional[str] = None,
-    ) -> "WandbLogger":
+        wandb_id: str | None = None,
+        resume: str | None = None,
+    ) -> WandbLogger:
         """Create a WandbLogger with a pre-built WandbConfig.
 
         Preferred factory when callers supply a fully-parameterised
@@ -1429,9 +1426,9 @@ class WandbLogger:
                 return mode_lower
         return "online"
 
-    def _debug_env_snapshot(self, wandb_dir: str) -> Dict[str, Any]:
+    def _debug_env_snapshot(self, wandb_dir: str) -> dict[str, Any]:
         """Collect a safe environment snapshot for debugging wandb init issues."""
-        snapshot: Dict[str, Any] = {}
+        snapshot: dict[str, Any] = {}
         try:
             snapshot.update(
                 {
@@ -1473,8 +1470,8 @@ class WandbLogger:
         except Exception:
             pass
 
-        def _dir_info(path: Optional[str]) -> Dict[str, Any]:
-            info: Dict[str, Any] = {"path": path}
+        def _dir_info(path: str | None) -> dict[str, Any]:
+            info: dict[str, Any] = {"path": path}
             try:
                 if not path:
                     return info
@@ -1551,7 +1548,7 @@ class WandbLogger:
             flush=True,
         )
 
-        init_kwargs: Dict[str, Any] = {
+        init_kwargs: dict[str, Any] = {
             "project": self.wb_config.project,
             "entity": self.wb_config.entity,
             "group": self.wb_config.group,
@@ -1665,8 +1662,8 @@ class WandbLogger:
 
     def log_metrics(
         self,
-        metrics: Dict[str, Any],
-        step: Optional[int] = None,
+        metrics: dict[str, Any],
+        step: int | None = None,
         commit: bool = True,
     ) -> None:
         """Log metrics to wandb.
@@ -1691,9 +1688,9 @@ class WandbLogger:
         self,
         df,
         key: str,
-        prefer_cols: Optional[List[str]] = None,
-        max_rows: Optional[int] = None,
-        panel_group: Optional[str] = None,
+        prefer_cols: list[str] | None = None,
+        max_rows: int | None = None,
+        panel_group: str | None = None,
     ) -> None:
         """Log pandas DataFrame as wandb table with random sampling when needed.
 
@@ -1722,11 +1719,11 @@ class WandbLogger:
             # --- Drop internal LLM/mechanics columns ---
             def _drop_internal_llm_columns(df_in):
                 try:
-                    internal_cols: Set[str] = set(_UNIVERSAL_EXCLUDE)
+                    internal_cols: set[str] = set(_UNIVERSAL_EXCLUDE)
                     internal_cols.update(self.wb_config.extra_internal_columns)
 
                     pattern_prefixes = list(self.wb_config.extra_pattern_prefixes)
-                    pattern_names: Set[str] = set(self.wb_config.extra_pattern_names)
+                    pattern_names: set[str] = set(self.wb_config.extra_pattern_names)
 
                     cols_present = [c for c in internal_cols if c in df_in.columns]
                     for c in list(df_in.columns):
@@ -1749,7 +1746,7 @@ class WandbLogger:
             df_local = _drop_internal_llm_columns(df_local)
 
             # --- Filter heavy ndarray columns ---
-            def _filter_heavy_columns(df_in, candidate_cols: List[str]) -> List[str]:
+            def _filter_heavy_columns(df_in, candidate_cols: list[str]) -> list[str]:
                 keep = []
                 for c in candidate_cols:
                     try:
@@ -1795,8 +1792,8 @@ class WandbLogger:
                 pass
 
             # --- Final safeguard: strip any remaining excluded columns ---
-            extra_excluded_names: Set[str] = set(self.wb_config.extra_pattern_names)
-            extra_excluded_prefixes: List[str] = list(
+            extra_excluded_names: set[str] = set(self.wb_config.extra_pattern_names)
+            extra_excluded_prefixes: list[str] = list(
                 self.wb_config.extra_pattern_prefixes
             )
 
@@ -1833,7 +1830,7 @@ class WandbLogger:
 
             table = self.wandb.Table(dataframe=df_sample[cols])
 
-            log_data: Dict[str, Any] = {
+            log_data: dict[str, Any] = {
                 table_key: table,
                 f"{key}/rows": len(df_sample),
                 f"{key}/total_rows": total_rows,
@@ -1943,16 +1940,16 @@ class WandbLogger:
 
     def log_artifact(
         self,
-        artifact_path: Optional[str] = None,
-        name: Optional[str] = None,
+        artifact_path: str | None = None,
+        name: str | None = None,
         type: str = "dataset",
         *,
-        paths: Optional[List[str]] = None,
-        dir: Optional[str] = None,
-        aliases: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        description: Optional[str] = None,
-        use_artifacts: Optional[List[str]] = None,
+        paths: list[str] | None = None,
+        dir: str | None = None,
+        aliases: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        description: str | None = None,
+        use_artifacts: list[str] | None = None,
     ) -> Any:
         """Log a versioned W&B artifact.
 
@@ -2084,7 +2081,7 @@ class WandbLogger:
             )
 
     def set_config(
-        self, data: Dict[str, Any], allow_val_change: bool = True
+        self, data: dict[str, Any], allow_val_change: bool = True
     ) -> None:
         """Update run config for stable non-time-series metadata."""
         if not self.enabled or self._run is None or not data:

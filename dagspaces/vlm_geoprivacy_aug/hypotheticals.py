@@ -16,8 +16,9 @@ imports (no pandas/omegaconf) so prompt-construction tests run anywhere.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Sequence
+from typing import Any
 
 BASELINE_ID = "baseline"
 
@@ -53,7 +54,7 @@ class HypotheticalVariant:
     dimension: str
     frame: str = ""
     position: str = "user_prefix"
-    ci_params: Dict[str, str] = field(default_factory=dict)
+    ci_params: dict[str, str] = field(default_factory=dict)
 
     @property
     def is_baseline(self) -> bool:
@@ -64,9 +65,9 @@ BASELINE_VARIANT = HypotheticalVariant(id=BASELINE_ID, dimension="control", fram
 
 
 def load_variants(
-    raw_variants: Sequence[Dict[str, Any]] | None,
+    raw_variants: Sequence[dict[str, Any]] | None,
     include_bridges: bool = True,
-) -> List[HypotheticalVariant]:
+) -> list[HypotheticalVariant]:
     """Build validated variants from config dicts, ensuring a baseline control.
 
     Args:
@@ -90,7 +91,7 @@ def load_variants(
             variant, a non-empty frame or bridge on the baseline, or a bad
             position.
     """
-    variants: List[HypotheticalVariant] = []
+    variants: list[HypotheticalVariant] = []
     seen: set[str] = set()
 
     for entry in raw_variants or []:

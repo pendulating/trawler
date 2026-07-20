@@ -25,7 +25,7 @@ import os
 import signal
 import subprocess
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from omegaconf import OmegaConf
 
@@ -33,6 +33,7 @@ from dagspaces.common.orchestrator import (
     StageExecutionContext,
     StageResult,
 )
+
 from .base import StageRunner
 
 
@@ -105,7 +106,7 @@ def _launch_vllm_server(
     )
 
 
-def _shutdown_server(proc: Optional[subprocess.Popen]) -> None:
+def _shutdown_server(proc: subprocess.Popen | None) -> None:
     """Gracefully shut down a server subprocess."""
     if proc is None or proc.poll() is not None:
         return
@@ -160,7 +161,7 @@ def _launch_auxiliary_server(
     tp: int = 1,
     startup_timeout: int = 300,
     label: str = "auxiliary",
-    max_model_len: Optional[int] = None,
+    max_model_len: int | None = None,
 ) -> subprocess.Popen:
     """Launch a vLLM server for auxiliary models (embedding or judge).
 
@@ -492,7 +493,7 @@ class GRPOTrainingRunner(StageRunner):
             _shutdown_server(embedding_server_proc)
             _shutdown_server(judge_server_proc)
 
-        metadata: Dict[str, Any] = {
+        metadata: dict[str, Any] = {
             "sft_checkpoint": sft_checkpoint,
             "checkpoint_dir": checkpoint_dir,
             "vllm_mode": vllm_mode,
