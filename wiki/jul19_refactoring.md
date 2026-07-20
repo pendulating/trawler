@@ -19,12 +19,17 @@ Effort: S (<1 day) · M (1–3 days) · L (>3 days)
 ## Summary of top findings
 
 | # | Finding | Severity | Effort |
-|---|---------|----------|--------|
+| --- | --------- | ---------- | -------- |
 | 1 | 9 eval dagspaces each re-implemented the same run loop (~95% copy-paste; ~3000 duplicated lines) — **DONE 2026-07-19**, see plan | ✅ | M |
 | 2 | The SLURM/NFS result-waiting block (~120 lines) duplicated verbatim across the eval orchestrators — **DONE 2026-07-19** (folded into Finding 1 as `await_slurm_result`) | ✅ | S |
-| 3 | Runner boilerplate: every runner is "read parquet → call fn → write parquet → StageResult" | 🟡 | M |
-| 4 | Deprecated dagspaces (`.uair`, `.rule_tuples`) still in tree, ~12k lines — but `common/` still imports one symbol from `.uair` | 🟡 | S |
-| 5 | Pervasive bare `except Exception: pass` swallows errors silently (anti-pattern for science code) | 🔴 | M |
+| 3 | Runner boilerplate: every runner is "read parquet → call fn → write parquet → StageResult" — **DONE 2026-07-19** (`DataFrameStageRunner` base; 7 historical_norms runners migrated, -251 lines) | ✅ | M |
+| 4 | Deprecated dagspaces (`.uair`, `.rule_tuples`) still in tree, ~12k lines — **DONE 2026-07-19** (deleted ~19.7k lines; `PatternModuloFilter` relocated to `common/logging_filters.py`) | ✅ | S |
+| 5 | Pervasive bare `except Exception: pass` swallows errors silently — **PARTIAL 2026-07-19** (orchestrator.py: 21→6 bare passes; ruff BLE001/S110 added; remaining audit in vllm_inference.py + eval dagspaces deferred) | 🟡 | M |
+| 6 | `CompositeRewardFunction`: nested, not composed — tracked via `grpo_redesign/`, keeper frozen | 🟡 | L |
+| 7 | `vllm_inference.py` is a 2098-line god module — **PARTIAL 2026-07-19** (reasoning/harmony extracted to `common/reasoning.py`, -259 lines, 27 tests; remaining splits deferred) | 🟡 | M |
+| 8 | JSON-from-LLM extraction re-implemented ≥3 ways — **DONE 2026-07-19** (canonical `common/json_extraction.py`; 7 callers migrated; 27 tests) | ✅ | S–M |
+| 9 | Dead docs / scratch dirs at repo root — **DONE 2026-07-19** (gitignore updated, reference papers moved, tracked HTML removed) | ✅ | S |
+| 10 | The duplicated orchestration is untested — **DONE 2026-07-19** (folded into Finding 1) | ✅ | M |
 
 ---
 
@@ -239,6 +244,7 @@ bugs of exactly this class (λ defaulting wrong, stale quality flags). Silent
 catches hide the next one.
 
 **Proposed fix.**
+
 - Distinguish *expected-absent* (use `OmegaConf.select(..., default=None)` and
   an `if`, no try/except) from *genuinely-can't-fail* (delete the guard).
 - Where a catch must stay, log at `warning` with the exception, never bare
@@ -347,7 +353,6 @@ Re-export `run_vllm_inference` from `common/vllm_inference.py` for
 backward-compat. The reasoning-split functions are the highest-value extraction
 because they are pure and unit-testable.
 
-
 ---
 
 ## Finding 8 — JSON-from-LLM extraction re-implemented ≥3 ways 🔴 (S–M)
@@ -357,7 +362,7 @@ prose / `<think>` blocks" is a common, error-prone task with **at least three
 divergent implementations** in the active tree:
 
 | Location | Strategy |
-|---|---|
+| --- | --- |
 | `common/stage_utils.py:extract_last_json` | regex `findall(r"\{[\s\S]*\}")`, try each **from the last backwards** |
 | `grpo_training/stages/rewards.py:_parse_completion` | `re.search(r"\{[\s\S]*\}")` — **first / greedy** match, then schema-normalise |
 | `historical_norms/stages/_utils.py:extract_json` | **outermost** `{`…`}` via `find`/`rfind`, + `json_repair` fallback |
@@ -454,27 +459,33 @@ Ordered by leverage (lines deleted / correctness risk per unit effort):
    ✅ **DONE (2026-07-19, PRs #4/#6).** Nine eval dagspaces on one shared loop;
    `await_slurm_result` extracted; golden-params + run-loop tests added.
    Phase 2 (training orchestrators) declined — see Finding 1 status.
-2. **Finding 8: consolidate JSON extraction** (🔴, S–M). Small, high
-   correctness value for cross-benchmark comparability.
-3. **Finding 5: retire silent `except Exception: pass`** (🔴, M). Add ruff
-   `BLE001`/`S110` to CI; audit the ~168 swallowing catches in active code,
-   starting with `build_run_config` and the W&B-metadata path (where silent
-   drops corrupt experiment records).
-4. **Finding 4: archive `.uair` / `.rule_tuples`** (🟡, S). Quick ~20%
-   codebase reduction; verify no COLM-path imports first.
-5. **Finding 7: split `vllm_inference.py`** (🟡, M). Start with the pure,
-   testable `reasoning.py` extraction (harmony + `<think>` splitting) since
-   that logic is correctness-critical and currently under-tested.
-6. **Finding 3: declarative `DataFrameStage` base** (🟡, M). Do *after*
-   Finding 1 settles, so the runner contract is stable.
-7. **Finding 9: root cleanup** (🟢, S). Any time.
+2. ~~**Finding 8: consolidate JSON extraction**~~ ✅ **DONE (2026-07-19).**
+   Canonical `common/json_extraction.py` with `extract_json_from_text()`;
+   7 callers migrated; 27 tests; backward-compat `extract_last_json` wrapper.
+3. **Finding 5: retire silent `except Exception: pass`** 🟡 **PARTIAL (2026-07-19).**
+   `common/orchestrator.py` audited: 21→6 bare passes (removed 8 unnecessary
+   guards, converted 7 to warning logs, narrowed 2 exception types). Ruff
+   `BLE001`/`S110` rules added to `pyproject.toml`. **Remaining:** audit
+   `common/vllm_inference.py` (38 catches), `eval_all/` (51), `grpo_training/` (58).
+4. ~~**Finding 4: archive `.uair` / `.rule_tuples`**~~ ✅ **DONE (2026-07-19).**
+   ~19.7k lines deleted; `PatternModuloFilter` relocated to `common/logging_filters.py`;
+   3 byte-identical copies consolidated.
+5. **Finding 7: split `vllm_inference.py`** 🟡 **PARTIAL (2026-07-19).**
+   Reasoning/harmony extraction moved to `common/reasoning.py` (-259 lines, 27 tests).
+   **Remaining:** extract `gpu_env.py`, `engine.py`, `server_client.py`, `dp_worker.py`,
+   `transformers_fb.py` per the original proposal.
+6. ~~**Finding 3: declarative `DataFrameStage` base**~~ ✅ **DONE (2026-07-19).**
+   `DataFrameStageRunner` in `common/runners/base.py`; 7 historical_norms runners
+   migrated (469→218 lines, -53%). Eval dagspace multi-runner files left explicit.
+7. ~~**Finding 9: root cleanup**~~ ✅ **DONE (2026-07-19).**
+   `.bench/`, `.debug/`, `.viz/` gitignored; reference papers moved to `papers/references/`;
+   tracked `norms_inspector.html` (63MB) removed.
 8. **Finding 6: tracked only** — lands via `grpo_redesign/`; keep keeper frozen.
 
 ### Suggested sequencing note
-~~Findings 1, 2, 3, 10 are one coherent program ("make the eval harness a single
-tested thing")~~ — **Findings 1, 2, 10 are done**; Finding 3 (`DataFrameStage`)
-remains and is now safe to attempt since the runner↔orchestrator contract is
-stable. Findings 5 and
-8 are independent and can proceed in parallel. Finding 7 is independent but
-touches hot inference code — do it behind the existing harmony/reasoning tests
-and add new ones first.
+
+**Findings 1, 2, 3, 4, 8, 9, 10 are done.** Finding 5 (silent excepts) and
+Finding 7 (vllm_inference split) are partially done — the highest-value
+extraction (orchestrator.py audit; reasoning.py split) is complete, with
+the remaining work scoped in the items above. Finding 6 is tracked via
+`grpo_redesign/` and deliberately not touched.
