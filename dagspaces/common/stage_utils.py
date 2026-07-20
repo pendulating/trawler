@@ -117,7 +117,7 @@ def maybe_silence_vllm_logs() -> None:
         # Install a modulo filter on the root vllm logger to throttle the
         # high-frequency "Elapsed time for batch" message.
         try:
-            from dagspaces.uair.logging_filters import PatternModuloFilter  # type: ignore
+            from dagspaces.common.logging_filters import PatternModuloFilter
 
             root_vllm = logging.getLogger("vllm")
             try:

@@ -1,20 +1,36 @@
+"""Logging filters for throttling verbose library output.
+
+Canonical location — previously duplicated in ``.uair``, ``historical_norms``,
+and ``privacylens`` (Finding 4, wiki/jul19_refactoring.md).
+"""
+
+from __future__ import annotations
+
 import logging
 
 
 class ModuloFilter(logging.Filter):
+    """Pass every *mod*-th INFO/DEBUG record; always pass WARNING+."""
+
     def __init__(self, name: str = "", mod: int = 10):
         super().__init__(name)
         self.mod = max(1, int(mod))
         self._count = 0
 
     def filter(self, record: logging.LogRecord) -> bool:
-        # Always allow warnings/errors
         if record.levelno >= logging.WARNING:
             return True
         self._count += 1
         return (self._count % self.mod) == 0
 
+
 class PatternModuloFilter(logging.Filter):
+    """Throttle only records whose message contains *pattern*; pass the rest.
+
+    Used to reduce vLLM's per-batch "Elapsed time" spam while keeping
+    all other log lines intact.
+    """
+
     def __init__(self, name: str = "", mod: int = 10, pattern: str = "Elapsed time for batch"):
         super().__init__(name)
         self.mod = max(1, int(mod))
@@ -22,7 +38,6 @@ class PatternModuloFilter(logging.Filter):
         self._count = 0
 
     def filter(self, record: logging.LogRecord) -> bool:
-        # Always allow warnings/errors
         if record.levelno >= logging.WARNING:
             return True
         try:
@@ -33,5 +48,3 @@ class PatternModuloFilter(logging.Filter):
             self._count += 1
             return (self._count % self.mod) == 0
         return True
-
-
