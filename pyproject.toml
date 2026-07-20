@@ -317,3 +317,16 @@ environments = [
 ]
 index-url = "https://pypi.org/simple"
 extra-index-url = ["https://pypi.nvidia.com"]
+
+[tool.ruff.lint]
+# Finding 5 (wiki/jul19_refactoring.md): prevent new silent exception swallowing.
+# BLE001 = blind except Exception; S110 = except Exception: pass (try-except-pass).
+# These are advisory (not auto-fixable) — existing violations are grandfathered
+# until the full audit is complete; new code must not add them.
+select = ["BLE001", "S110"]
+
+[tool.ruff.lint.per-file-ignores]
+# Serialization cascades and null-object loggers legitimately swallow exceptions.
+"dagspaces/common/orchestrator.py" = ["BLE001", "S110"]
+"dagspaces/common/vllm_inference.py" = ["BLE001", "S110"]
+"tests/**" = ["BLE001", "S110"]

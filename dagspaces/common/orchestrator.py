@@ -208,61 +208,56 @@ def build_run_config(
     if checkpoint_name:
         run_config["checkpoint_name"] = checkpoint_name
 
-    try:
-        model_cfg = getattr(cfg, "model", None)
-        if model_cfg:
-            single_book = getattr(model_cfg, "single_book", False)
-            if single_book:
-                run_config["single_book"] = True
-            book_id = getattr(model_cfg, "book_id", None)
-            if book_id:
-                run_config["book_id"] = str(book_id)
-    except Exception:
-        pass
+    model_cfg = getattr(cfg, "model", None)
+    if model_cfg:
+        single_book = getattr(model_cfg, "single_book", False)
+        if single_book:
+            run_config["single_book"] = True
+        book_id = getattr(model_cfg, "book_id", None)
+        if book_id:
+            run_config["book_id"] = str(book_id)
 
     # GRPO training hyperparameters (when running GRPO training stage)
-    try:
-        grpo_cfg = OmegaConf.select(cfg, "training.grpo")
-        if grpo_cfg is not None:
-            run_config["grpo"] = {
-                "contrastive_ratio": grpo_cfg.get("contrastive_ratio"),
-                "reward_weights": list(grpo_cfg.get("reward_weights", [])),
-                "online_rground": grpo_cfg.get("online_rground", False),
-                "enable_thinking_grpo": grpo_cfg.get("enable_thinking_grpo"),
-                "num_generations": grpo_cfg.get("num_generations"),
-                "learning_rate": grpo_cfg.get("learning_rate"),
-                "vllm_mode": grpo_cfg.get("vllm_mode"),
-            }
-    except Exception:
-        pass
+    grpo_cfg = OmegaConf.select(cfg, "training.grpo")
+    if grpo_cfg is not None:
+        run_config["grpo"] = {
+            "contrastive_ratio": grpo_cfg.get("contrastive_ratio"),
+            "reward_weights": list(grpo_cfg.get("reward_weights", [])),
+            "online_rground": grpo_cfg.get("online_rground", False),
+            "enable_thinking_grpo": grpo_cfg.get("enable_thinking_grpo"),
+            "num_generations": grpo_cfg.get("num_generations"),
+            "learning_rate": grpo_cfg.get("learning_rate"),
+            "vllm_mode": grpo_cfg.get("vllm_mode"),
+        }
 
     # SFT pair-format ablation toggles (surfaced for W&B run grouping/filtering).
-    try:
-        sft_cfg = OmegaConf.select(cfg, "training.sft")
-        if sft_cfg is not None:
-            run_config["sft"] = {
-                "loss_type": sft_cfg.get("loss_type") or "trl-default",
-                "flow_context": sft_cfg.get("flow_context", True),
-                "flow_appropriateness": sft_cfg.get("flow_appropriateness", True),
-                "flow_norms_meta": sft_cfg.get("flow_norms_meta", True),
-                "flow_confidence": sft_cfg.get("flow_confidence", True),
-                "include_negative_examples": sft_cfg.get("include_negative_examples", True),
-            }
-    except Exception:
-        pass
+    sft_cfg = OmegaConf.select(cfg, "training.sft")
+    if sft_cfg is not None:
+        run_config["sft"] = {
+            "loss_type": sft_cfg.get("loss_type") or "trl-default",
+            "flow_context": sft_cfg.get("flow_context", True),
+            "flow_appropriateness": sft_cfg.get("flow_appropriateness", True),
+            "flow_norms_meta": sft_cfg.get("flow_norms_meta", True),
+            "flow_confidence": sft_cfg.get("flow_confidence", True),
+            "include_negative_examples": sft_cfg.get("include_negative_examples", True),
+        }
 
     # Training metadata sidecar: when evaluating a GRPO checkpoint,
     # inherit the training hyperparameters that produced it.
-    try:
-        model_cfg = getattr(cfg, "model", None)
-        lora_path = str(getattr(model_cfg, "lora_path", "") or "") if model_cfg else ""
-        if lora_path and "grpo" not in run_config:
-            meta_path = os.path.join(lora_path, "training_metadata.json")
-            if os.path.exists(meta_path):
+    model_cfg = getattr(cfg, "model", None)
+    lora_path = str(getattr(model_cfg, "lora_path", "") or "") if model_cfg else ""
+    if lora_path and "grpo" not in run_config:
+        meta_path = os.path.join(lora_path, "training_metadata.json")
+        if os.path.exists(meta_path):
+            try:
                 with open(meta_path) as _f:
                     run_config["training"] = json.load(_f)
-    except Exception:
-        pass
+            except Exception as exc:
+                print(
+                    f"[orchestrator] WARNING: could not read training metadata "
+                    f"{meta_path}: {exc}",
+                    flush=True,
+                )
 
     return run_config
 
@@ -279,48 +274,39 @@ def _resolve_pipeline_name() -> Optional[str]:
                     p = part.strip()
                     if p.startswith("pipeline="):
                         return p.split("=", 1)[1]
-    except Exception:
-        pass
+    except (ImportError, ValueError):
+        pass  # Hydra not initialized or not installed
     return os.environ.get("WANDB_PIPELINE_NAME") or None
 
 
 def _resolve_eval_task(cfg: DictConfig, node: PipelineNodeSpec) -> Optional[str]:
     """Extract eval task identifier from node overrides or prompt config."""
-    try:
-        task = (node.overrides or {}).get("prompt", {}).get("task")
-        if task:
-            return str(task)
-    except Exception:
-        pass
-    try:
-        task = OmegaConf.select(cfg, "prompt.task")
-        if task:
-            return str(task)
-    except Exception:
-        pass
+    task = (node.overrides or {}).get("prompt", {}).get("task")
+    if task:
+        return str(task)
+    task = OmegaConf.select(cfg, "prompt.task")
+    if task:
+        return str(task)
     return None
 
 
 def _resolve_checkpoint_name(cfg: DictConfig) -> Optional[str]:
     """Derive checkpoint name from model config."""
-    try:
-        model_cfg = getattr(cfg, "model", None)
-        if not model_cfg:
-            return None
-        cn = getattr(model_cfg, "checkpoint_name", None)
-        if cn:
-            return str(cn)
-        model_source = getattr(model_cfg, "model_source", None)
-        lora_path = getattr(model_cfg, "lora_path", None)
-        if lora_path:
-            from dagspaces.common.wandb_logger import _derive_checkpoint_name
-            return _derive_checkpoint_name(
-                str(lora_path), str(model_source) if model_source else ""
-            )
-        elif model_source:
-            return os.path.basename(str(model_source))
-    except Exception:
-        pass
+    model_cfg = getattr(cfg, "model", None)
+    if not model_cfg:
+        return None
+    cn = getattr(model_cfg, "checkpoint_name", None)
+    if cn:
+        return str(cn)
+    model_source = getattr(model_cfg, "model_source", None)
+    lora_path = getattr(model_cfg, "lora_path", None)
+    if lora_path:
+        from dagspaces.common.wandb_logger import _derive_checkpoint_name
+        return _derive_checkpoint_name(
+            str(lora_path), str(model_source) if model_source else ""
+        )
+    elif model_source:
+        return os.path.basename(str(model_source))
     return None
 
 
@@ -348,8 +334,12 @@ def _inject_prompt_from_file(
                 OmegaConf.update(cfg, "prompt.system_prompt", sys_p, merge=True)
             if usr_p:
                 OmegaConf.update(cfg, "prompt.prompt_template", usr_p, merge=True)
-    except Exception:
-        pass  # Non-critical, stage may have defaults
+    except Exception as exc:
+        print(
+            f"[orchestrator] WARNING: could not inject prompt from "
+            f"{prompt_filename}: {exc}",
+            flush=True,
+        )
 
 
 def _load_launcher_config(
@@ -725,7 +715,7 @@ def _print_status(payload: Dict[str, Any]) -> None:
     try:
         print(json.dumps(payload, indent=2))
     except Exception:
-        pass
+        print(f"[orchestrator] status: {payload!r}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -837,8 +827,8 @@ def _adjust_tensor_parallel_env(
         tp_val = max(1, int(tp_env))
         if valid_count > 0 and tp_val > valid_count:
             os.environ[tp_env_name] = str(valid_count)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[orchestrator] WARNING: could not adjust {tp_env_name}: {exc}", flush=True)
 
 
 def _log_gpu_environment(reason: str, env_prefix: str = "UAIR") -> None:
@@ -878,8 +868,8 @@ def _log_gpu_environment(reason: str, env_prefix: str = "UAIR") -> None:
             except Exception:
                 payload["tensor_parallel_size"] = tp_env
         _print_status({"gpu_env": payload})
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[orchestrator] WARNING: GPU env logging failed: {exc}", flush=True)
 
 
 def _sanitize_cuda_visible_devices(
@@ -984,8 +974,11 @@ def _sanitize_cuda_visible_devices(
                         len(valid),
                         merge=True,
                     )
-        except Exception:
-            pass
+        except Exception as exc:
+            print(
+                f"[orchestrator] WARNING: could not merge TP override into cfg: {exc}",
+                flush=True,
+            )
 
     _print_status(
         {
@@ -1206,8 +1199,8 @@ def _resolve_hydra_output_dir() -> Optional[str]:
         hc = HydraConfig.get()
         if hc and hc.runtime and hc.runtime.output_dir:
             return str(hc.runtime.output_dir)
-    except Exception:
-        pass
+    except (ImportError, ValueError):
+        pass  # Hydra not initialized or not installed
     return None
 
 
@@ -1553,8 +1546,11 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
             try:
                 with open(manifest_path, "w", encoding="utf-8") as fh:
                     json.dump(manifest, fh, indent=2)
-            except Exception:
-                pass
+            except Exception as exc:
+                print(
+                    f"[orchestrator] WARNING: could not write pipeline manifest: {exc}",
+                    flush=True,
+                )
 
             total_duration = time.time() - pipeline_start
             _print_status({
