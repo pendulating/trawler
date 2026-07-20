@@ -33,6 +33,7 @@ Manuscript: `papers/colm26_normative-simulacra/`. Experiment runbook: `EXPERIMEN
 **Integrations**
 - [integrations/batch-judging.md](integrations/batch-judging.md) — OpenAI Batch API judging for PrivacyLens + CIRL-Vignettes, 1:1 upstream prompt parity, offline export, finalize flow
 - [integrations/openai-batch-api.md](integrations/openai-batch-api.md) — upstream OpenAI Batch API reference (mirror)
+- [integrations/wandb-parity.md](integrations/wandb-parity.md) — local metrics.json ↔ W&B parity contract: mechanical mirror, bidirectional linkage, derived sweep groups, verify/push/pull sync tool
 
 **Changelog (run-affecting changes)**
 - [changelog/2026-07-13_canonical_models_and_harmony.md](changelog/2026-07-13_canonical_models_and_harmony.md) — **⚠️ IN PROGRESS, has a "Resume here"**: canonical 13-model set established; gpt-oss was returning its hidden `analysis` channel as its answer (all prior gpt-oss numbers suspect) — fixed; vLLM 0.19.1→0.25 upgrade blocked on a CUDA-13/driver question that needs a GPU node; the overnight top100 chain died with its SLURM session (reasoning done, extraction never submitted)

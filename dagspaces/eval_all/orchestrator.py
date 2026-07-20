@@ -77,6 +77,24 @@ def run_eval_all(cfg: DictConfig) -> None:
     # Shared vLLM server (optional): launch once, inject URL into child env.
     server_info = None
     child_env = os.environ.copy()
+    # Sweep identity for W&B: when the operator didn't export WANDB_GROUP,
+    # derive it from this arm's output path (multirun/<sweep>/<time>/<arm> →
+    # "<sweep>/<time>") and pin it for every child benchmark and the judge
+    # sidecar. This is what makes each child run carry the eval_all_run:
+    # tag and a stable resumable id — i.e. what lets W&B be scoped back to
+    # this multirun dir at analysis time.
+    if not (child_env.get("WANDB_GROUP") or "").strip():
+        try:
+            from dagspaces.common.metrics_sync import derive_group_from_output_dir
+
+            _derived_group = derive_group_from_output_dir(parent_output_dir)
+        except Exception:
+            _derived_group = None
+        if _derived_group:
+            child_env["WANDB_GROUP"] = _derived_group
+            os.environ["WANDB_GROUP"] = _derived_group  # summary run + tags
+            print(f"[eval_all] WANDB_GROUP not set — derived '{_derived_group}' "
+                  "from the output path")
     server_cfg = OmegaConf.select(cfg, "server_mode")
     if server_cfg is not None and bool(server_cfg.get("enabled", False)):
         from .server import launch_vllm_server, shutdown_vllm_server

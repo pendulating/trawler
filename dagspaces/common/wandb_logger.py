@@ -357,8 +357,14 @@ def _get_group_from_config(cfg) -> str | None:
     Priority order:
     1. cfg.wandb.group
     2. WANDB_GROUP env var
-    3. SUBMITIT_JOB_ID (parent SLURM job)
-    4. SLURM_JOB_ID (current SLURM job)
+    3. the hydra output dir's ``<date>_<name>/<HH-MM-SS>`` sweep identity
+    4. SUBMITIT_JOB_ID (parent SLURM job)
+    5. SLURM_JOB_ID (current SLURM job)
+
+    (3) is the parity fallback: it guarantees every run is scopeable back
+    to its multirun/outputs directory (``eval_all_run:`` tag, resumable
+    ``pipeline_run_id``) even when nobody exported WANDB_GROUP — which is
+    how the 2026-07-19 per-checkpoint sweep became unscopeable in W&B.
     """
     try:
         grp = getattr(cfg.wandb, "group", None)
@@ -370,6 +376,15 @@ def _get_group_from_config(cfg) -> str | None:
     env_group = os.environ.get("WANDB_GROUP")
     if env_group and env_group.strip():
         return env_group
+
+    try:
+        from dagspaces.common.metrics_sync import derive_default_group
+
+        derived = derive_default_group()
+        if derived:
+            return derived
+    except Exception:
+        pass
 
     submitit_job_id = os.environ.get("SUBMITIT_JOB_ID")
     if submitit_job_id and submitit_job_id.strip():
@@ -1570,6 +1585,24 @@ class WandbLogger:
         try:
             self._run = self.wandb.init(**init_kwargs)
 
+            # W&B → local linkage: record where on disk this run's outputs
+            # live, so a run found in the UI (or by wandb_local_sync.py) can
+            # be walked back to its metrics.json without guessing.
+            try:
+                from dagspaces.common.metrics_sync import (
+                    derive_group_from_output_dir,
+                    resolve_hydra_runtime_dir,
+                )
+
+                local_dir = resolve_hydra_runtime_dir() or os.getcwd()
+                link = {"local_output_dir": local_dir}
+                sweep_dir = derive_group_from_output_dir(local_dir)
+                if sweep_dir:
+                    link["local_sweep_dir"] = sweep_dir
+                self.set_config(link, allow_val_change=True)
+            except Exception:
+                pass
+
             try:
                 compute_metadata = collect_compute_metadata(
                     self.cfg,
@@ -1935,6 +1968,55 @@ class WandbLogger:
         except Exception as e:
             print(
                 f"[wandb] Warning: Failed to log sanity failure rows for {stage}: {e}",
+                file=sys.stderr,
+            )
+
+    def run_info(self) -> dict[str, Any] | None:
+        """Identity of the active run, for the local → W&B linkage sidecar
+        (``metrics_sync.write_wandb_sidecar``). None when disabled."""
+        if not self.enabled or self._run is None:
+            return None
+        try:
+            return {
+                "entity": getattr(self._run, "entity", None),
+                "project": getattr(self._run, "project", None),
+                "run_id": getattr(self._run, "id", None),
+                "run_name": getattr(self._run, "name", None),
+                "run_url": getattr(self._run, "url", None),
+                "group": getattr(self._run, "group", None)
+                or self.wb_config.group,
+                "tags": list(getattr(self._run, "tags", None) or ()),
+            }
+        except Exception:
+            return None
+
+    def save_file(self, path: str, *, base_path: str | None = None) -> None:
+        """Upload a file into the run's Files tab (live, not end-of-run).
+
+        ``base_path`` controls the stored relative name — pass the outputs/
+        root so e.g. ``compute_metrics_tier2b/metrics.json`` keeps its
+        stage identity inside the run.
+        """
+        if not self.enabled or self._run is None:
+            return
+        try:
+            self.wandb.save(path, base_path=base_path, policy="now")
+        except Exception as e:
+            print(
+                f"[wandb] Warning: Failed to save file {path}: {e}",
+                file=sys.stderr,
+            )
+
+    def add_tags(self, tags: list[str]) -> None:
+        """Merge tags into the active run (idempotent)."""
+        if not self.enabled or self._run is None or not tags:
+            return
+        try:
+            merged = list(dict.fromkeys(list(self._run.tags or ()) + list(tags)))
+            self._run.tags = tuple(merged)
+        except Exception as e:
+            print(
+                f"[wandb] Warning: Failed to add tags {tags}: {e}",
                 file=sys.stderr,
             )
 
