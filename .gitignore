@@ -267,6 +267,11 @@ CI_FLOW_PIPELINE_AUDIT.md
 # Generated inspection / report HTML (root-level, regenerable)
 /*.html
 
+# Scratch / benchmark / debug artifacts (regenerable, large)
+.bench/
+.debug/
+.viz/
+
 # Regenerable GRPO prescreen cache (keyed by SFT checkpoint; large)
 /cache/
 
