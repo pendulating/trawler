@@ -6,11 +6,9 @@ with direct vLLM LLM.generate() calls. Designed for single-machine multi-GPU set
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import pickle
-import re
 import subprocess
 import sys
 import tempfile
@@ -59,9 +57,7 @@ def _remap_lora_keys_for_vlm(lora_path: str, model_source: str, stage_name: str)
     # We need them to be "model.language_model.layers.X..." instead.
     needs_remap = any(
         k.startswith("base_model.model.model.layers.") for k in adapter_keys
-    ) and not any(
-        "language_model.layers." in k for k in adapter_keys
-    )
+    ) and not any("language_model.layers." in k for k in adapter_keys)
     if not needs_remap:
         return lora_path
 
@@ -72,11 +68,14 @@ def _remap_lora_keys_for_vlm(lora_path: str, model_source: str, stage_name: str)
         print(f"[{stage_name}] Using cached VLM-remapped LoRA: {remapped_dir}")
         return remapped_dir
 
-    print(f"[{stage_name}] Remapping LoRA keys: model.layers → model.language_model.layers")
+    print(
+        f"[{stage_name}] Remapping LoRA keys: model.layers → model.language_model.layers"
+    )
     os.makedirs(remapped_dir, exist_ok=True)
 
     # Remap and save weights
     import torch
+
     tensors = {}
     with safe_open(adapter_sf, framework="pt") as f:
         for key in f.keys():
@@ -89,14 +88,22 @@ def _remap_lora_keys_for_vlm(lora_path: str, model_source: str, stage_name: str)
 
     # Copy adapter_config.json and other metadata
     import shutil
-    for fname in ("adapter_config.json", "tokenizer_config.json", "tokenizer.json",
-                  "chat_template.jinja", "README.md"):
+
+    for fname in (
+        "adapter_config.json",
+        "tokenizer_config.json",
+        "tokenizer.json",
+        "chat_template.jinja",
+        "README.md",
+    ):
         src = os.path.join(lora_path, fname)
         if os.path.exists(src):
             shutil.copy2(src, remapped_dir)
 
-    print(f"[{stage_name}] VLM-remapped LoRA saved to {remapped_dir} "
-          f"({len(tensors)} tensors)")
+    print(
+        f"[{stage_name}] VLM-remapped LoRA saved to {remapped_dir} "
+        f"({len(tensors)} tensors)"
+    )
     return remapped_dir
 
 
@@ -104,7 +111,7 @@ def _remap_lora_keys_for_vlm(lora_path: str, model_source: str, stage_name: str)
 # Reasoning / thinking-block extraction — moved to common/reasoning.py
 # (Finding 7).  Re-exported here for backward compatibility.
 # ---------------------------------------------------------------------------
-from dagspaces.common.reasoning import (  # noqa: E402
+from dagspaces.common.reasoning import (  # noqa: E402, F401
     _fallback_strip_reasoning,
     _is_harmony_model,
     _split_harmony,
@@ -118,6 +125,7 @@ from dagspaces.common.reasoning import (  # noqa: E402
 # ---------------------------------------------------------------------------
 # GPU / environment helpers
 # ---------------------------------------------------------------------------
+
 
 def get_pcie_nccl_env_vars() -> Dict[str, str]:
     """Return NCCL environment variables required for PCIe-only GPUs (no NVLink).
@@ -202,9 +210,8 @@ def detect_num_gpus() -> int:
 
     # SLURM
     try:
-        slurm_gpus = (
-            os.environ.get("SLURM_GPUS_PER_NODE")
-            or os.environ.get("SLURM_GPUS_ON_NODE")
+        slurm_gpus = os.environ.get("SLURM_GPUS_PER_NODE") or os.environ.get(
+            "SLURM_GPUS_ON_NODE"
         )
         if slurm_gpus:
             if ":" in slurm_gpus:
@@ -260,7 +267,9 @@ def apply_gpu_aware_settings(engine_kwargs: Dict[str, Any]) -> Dict[str, Any]:
     defaults = GPU_DEFAULTS.get(gpu_type, {})
     if defaults and "max_num_seqs" not in engine_kwargs:
         engine_kwargs["max_num_seqs"] = defaults["max_num_seqs"]
-        print(f"[vllm_inference] Auto-set max_num_seqs={defaults['max_num_seqs']} for {gpu_type}")
+        print(
+            f"[vllm_inference] Auto-set max_num_seqs={defaults['max_num_seqs']} for {gpu_type}"
+        )
     return defaults
 
 
@@ -276,8 +285,7 @@ def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
 
         sig = inspect.signature(_LLM.__init__)
         has_var_keyword = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD
-            for p in sig.parameters.values()
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
         )
 
         if has_var_keyword:
@@ -285,11 +293,13 @@ def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
             accepted = {k for k in sig.parameters if k != "self"}
             try:
                 from vllm.config import EngineArgs
+
                 ea_sig = inspect.signature(EngineArgs.__init__)
                 accepted |= {k for k in ea_sig.parameters if k != "self"}
             except ImportError:
                 try:
                     from vllm.engine.arg_utils import EngineArgs
+
                     ea_sig = inspect.signature(EngineArgs.__init__)
                     accepted |= {k for k in ea_sig.parameters if k != "self"}
                 except ImportError:
@@ -306,9 +316,8 @@ def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
         if dropped:
             print(f"[vllm_inference] Dropped unsupported vLLM kwargs: {dropped}")
         return filtered
-    except Exception:
-        pass
-    # Conservative fallback — only drop known non-vLLM keys
+    except Exception as exc:
+        print(f"[vllm_inference] WARNING: engine kwarg filtering failed, using conservative fallback: {exc}")
     ek = dict(ek)
     for k in ("use_v2_block_manager", "concurrency", "batch_size"):
         ek.pop(k, None)
@@ -319,24 +328,33 @@ def filter_vllm_engine_kwargs(ek: Dict[str, Any]) -> Dict[str, Any]:
 # Engine kwargs builder
 # ---------------------------------------------------------------------------
 
+
 def _build_engine_kwargs(cfg) -> Dict[str, Any]:
     """Build vLLM LLM constructor kwargs from Hydra config."""
     model_source = str(getattr(cfg.model, "model_source"))
     from omegaconf import OmegaConf as _OC
+
     _raw_ek = getattr(cfg.model, "engine_kwargs", {})
-    ek = _OC.to_container(_raw_ek, resolve=True) if _OC.is_config(_raw_ek) else dict(_raw_ek)
+    ek = (
+        _OC.to_container(_raw_ek, resolve=True)
+        if _OC.is_config(_raw_ek)
+        else dict(_raw_ek)
+    )
 
     # Model — redirected to the node-local /scratch registry mirror when a
     # completed mirror exists on this node (NFS zoo path otherwise). The
     # mirror keeps the zoo basename, so the name-based heuristics below and
     # downstream (AWQ/harmony/parser detection) see the same text either way.
     from dagspaces.common.model_registry import resolve_model_source
+
     ek["model"] = resolve_model_source(model_source, stage_name="vllm_inference")
 
     # Tensor parallelism
     if "tensor_parallel_size" not in ek:
         ek["tensor_parallel_size"] = detect_num_gpus()
-        print(f"[vllm_inference] Auto-detected {ek['tensor_parallel_size']} GPU(s) for tensor parallelism")
+        print(
+            f"[vllm_inference] Auto-detected {ek['tensor_parallel_size']} GPU(s) for tensor parallelism"
+        )
 
     # GPU-aware tuning
     apply_gpu_aware_settings(ek)
@@ -357,6 +375,7 @@ def _build_engine_kwargs(cfg) -> Dict[str, Any]:
     # PretrainedConfig object and can update nested attributes properly.
     _hf_ov = ek.get("hf_overrides")
     if isinstance(_hf_ov, dict) and any(isinstance(v, dict) for v in _hf_ov.values()):
+
         def _make_hf_override_fn(overrides):
             def _fn(config):
                 for key, val in overrides.items():
@@ -367,7 +386,9 @@ def _build_engine_kwargs(cfg) -> Dict[str, Any]:
                     else:
                         setattr(config, key, val)
                 return config
+
             return _fn
+
         ek["hf_overrides"] = _make_hf_override_fn(_hf_ov)
 
     # Preserve data_parallel_size (our key, not a vLLM LLM kwarg) before filtering
@@ -386,6 +407,7 @@ def _build_engine_kwargs(cfg) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # SamplingParams builder
 # ---------------------------------------------------------------------------
+
 
 def _resolve_server_url(cfg) -> Optional[str]:
     """Return the vLLM OpenAI-compatible server URL to use, or ``None``.
@@ -429,7 +451,9 @@ def _resolve_server_url(cfg) -> Optional[str]:
     return url
 
 
-def _sp_to_openai_kwargs(sp_dict: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def _sp_to_openai_kwargs(
+    sp_dict: Dict[str, Any],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Translate our sampling_params dict to OpenAI API kwargs + extra_body.
 
     Returns ``(kwargs, extra_body)`` where ``kwargs`` are fields accepted
@@ -441,14 +465,28 @@ def _sp_to_openai_kwargs(sp_dict: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[
     extra_body: Dict[str, Any] = {}
 
     # Direct-mapping OpenAI params
-    for k in ("max_tokens", "temperature", "top_p", "n", "stop",
-              "presence_penalty", "frequency_penalty", "seed"):
+    for k in (
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "n",
+        "stop",
+        "presence_penalty",
+        "frequency_penalty",
+        "seed",
+    ):
         if k in sp and sp[k] is not None:
             kwargs[k] = sp[k]
 
     # vLLM extensions via extra_body
-    for k in ("top_k", "min_p", "repetition_penalty", "length_penalty",
-              "ignore_eos", "skip_special_tokens"):
+    for k in (
+        "top_k",
+        "min_p",
+        "repetition_penalty",
+        "length_penalty",
+        "ignore_eos",
+        "skip_special_tokens",
+    ):
         if k in sp and sp[k] is not None:
             extra_body[k] = sp[k]
 
@@ -457,8 +495,9 @@ def _sp_to_openai_kwargs(sp_dict: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[
     # ``structured_outputs`` (mirrors StructuredOutputsParams).
     guided = sp.get("guided_decoding") or sp.get("structured_output")
     if guided and isinstance(guided, dict):
-        so = {k: guided[k] for k in ("json", "regex", "choice", "grammar")
-              if k in guided}
+        so = {
+            k: guided[k] for k in ("json", "regex", "choice", "grammar") if k in guided
+        }
         if so:
             extra_body["structured_outputs"] = so
 
@@ -489,11 +528,7 @@ def _run_server_inference(
     # Resolve model name — either the full local path (if the server was
     # launched with --served-model-name pointing at it) or a short name
     # the user configured via model.vllm_served_model_name.
-    served_name = ""
-    try:
-        served_name = str(getattr(cfg.model, "vllm_served_model_name", "") or "")
-    except Exception:
-        pass
+    served_name = str(getattr(cfg.model, "vllm_served_model_name", "") or "")
     if not served_name:
         served_name = str(getattr(cfg.model, "model_source", "") or "")
     # LoRA: when this stage's model is a LoRA checkpoint and the server
@@ -520,6 +555,7 @@ def _run_server_inference(
     ctk_extra: Dict[str, Any] = {}
     try:
         from dagspaces.common.stage_utils import resolve_thinking_mode
+
         _thinking_enabled = resolve_thinking_mode(cfg.model, default=True)
     except Exception:
         _thinking_enabled = True
@@ -527,13 +563,17 @@ def _run_server_inference(
     # in-process path), with enable_thinking resolved on top.
     try:
         from omegaconf import OmegaConf as _OC
+
         _ctk_cfg = getattr(cfg.model, "chat_template_kwargs", None)
         if _ctk_cfg is not None:
-            _ctk = _OC.to_container(_ctk_cfg, resolve=True) if _OC.is_config(_ctk_cfg) else dict(_ctk_cfg)
+            _ctk = (
+                _OC.to_container(_ctk_cfg, resolve=True)
+                if _OC.is_config(_ctk_cfg)
+                else dict(_ctk_cfg)
+            )
             ctk_extra.update({k: v for k, v in (_ctk or {}).items()})
-    except Exception:
-        pass
-    ctk_extra["enable_thinking"] = _thinking_enabled
+    except Exception as exc:
+        print(f"[vllm_inference] WARNING: could not read chat_template_kwargs: {exc}")
     _model_source = str(getattr(cfg.model, "model_source", "") or "")
 
     # Preprocess all rows
@@ -555,9 +595,16 @@ def _run_server_inference(
         messages = row.get("messages") or []
         sp_dict = row.get("sampling_params") or {}
         if int(sp_dict.get("n", 1) or 1) > 1:
-            return idx, "", "", None, None, (
-                "request_error: sampling_params.n>1 is not supported in "
-                "server mode (client reads a single choice)"
+            return (
+                idx,
+                "",
+                "",
+                None,
+                None,
+                (
+                    "request_error: sampling_params.n>1 is not supported in "
+                    "server mode (client reads a single choice)"
+                ),
             )
         sp_kwargs, extra_body = _sp_to_openai_kwargs(sp_dict)
         extra_body["chat_template_kwargs"] = ctk_extra
@@ -580,7 +627,10 @@ def _run_server_inference(
         if not reasoning:
             # Server didn't parse reasoning — do it client-side.
             reasoning, content = _split_reasoning(
-                content, _model_source, _thinking_enabled, tokenizer=None,
+                content,
+                _model_source,
+                _thinking_enabled,
+                tokenizer=None,
             )
         finish_reason = getattr(choice, "finish_reason", None) if choice else None
 
@@ -598,9 +648,13 @@ def _run_server_inference(
         return idx, content.strip(), reasoning.strip(), usage, finish_reason, None
 
     max_workers = int(os.environ.get("VLLM_SERVER_CLIENT_CONCURRENCY", "32"))
-    results_raw: List[Optional[Tuple[int, str, str, Any, Optional[str], Optional[str]]]] = [None] * len(preprocessed_rows)
-    print(f"[{stage_name}] Dispatching {len(preprocessed_rows)} requests "
-          f"(concurrency={max_workers})...")
+    results_raw: List[
+        Optional[Tuple[int, str, str, Any, Optional[str], Optional[str]]]
+    ] = [None] * len(preprocessed_rows)
+    print(
+        f"[{stage_name}] Dispatching {len(preprocessed_rows)} requests "
+        f"(concurrency={max_workers})..."
+    )
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures = [ex.submit(_make_request, i) for i in range(len(preprocessed_rows))]
         done = 0
@@ -614,7 +668,9 @@ def _run_server_inference(
     # Postprocess
     n_errors = sum(1 for r in results_raw if r and r[5])
     if n_errors:
-        print(f"[{stage_name}] WARNING: {n_errors} request errors — rows marked with __postprocess_error__")
+        print(
+            f"[{stage_name}] WARNING: {n_errors} request errors — rows marked with __postprocess_error__"
+        )
 
     out_rows: List[Dict[str, Any]] = []
     for entry in results_raw:
@@ -654,7 +710,11 @@ def _resolve_streaming_dir(cfg, stage_name: str) -> Optional[str]:
       3. ``cfg.runtime.output_dir`` → ``<output_dir>/_streaming/<stage_name>``.
       4. Otherwise → disabled.
     """
-    if os.environ.get("UAIR_VLLM_STREAMING_DISABLE", "").lower() in ("1", "true", "yes"):
+    if os.environ.get("UAIR_VLLM_STREAMING_DISABLE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
         return None
 
     override = os.environ.get("UAIR_VLLM_STREAMING_DIR_OVERRIDE", "").strip()
@@ -672,12 +732,9 @@ def _resolve_streaming_dir(cfg, stage_name: str) -> Optional[str]:
 
 def _streaming_chunk_size(cfg, default: int = 32) -> int:
     """Resolve the chunk size for streaming writes (prompts per shard)."""
-    try:
-        val = OmegaConf.select(cfg, "runtime.streaming_chunk_size")
-        if val:
-            return max(1, int(val))
-    except Exception:
-        pass
+    val = OmegaConf.select(cfg, "runtime.streaming_chunk_size")
+    if val:
+        return max(1, int(val))
     env = os.environ.get("UAIR_VLLM_STREAMING_CHUNK_SIZE", "").strip()
     if env:
         try:
@@ -715,6 +772,7 @@ def _shutdown_llm(llm: Any, stage_name: str = "vllm") -> None:
     # Force refcount to 0 and run GC so LLMEngine.__del__ fires for DP group cleanup.
     try:
         import gc
+
         del llm  # type: ignore[misc]
         gc.collect()
     except Exception:
@@ -722,6 +780,7 @@ def _shutdown_llm(llm: Any, stage_name: str = "vllm") -> None:
     # Best-effort: terminate any multiprocessing children that survived.
     try:
         import multiprocessing as _mp
+
         survivors = [p for p in _mp.active_children() if p.is_alive()]
         for p in survivors:
             try:
@@ -729,7 +788,10 @@ def _shutdown_llm(llm: Any, stage_name: str = "vllm") -> None:
             except Exception:
                 pass
         if survivors:
-            print(f"[{stage_name}] terminated {len(survivors)} surviving mp children", flush=True)
+            print(
+                f"[{stage_name}] terminated {len(survivors)} surviving mp children",
+                flush=True,
+            )
     except Exception:
         pass
 
@@ -747,19 +809,20 @@ def _build_sampling_params(sp_dict: Dict[str, Any]):
     # Extract guided_decoding / structured_output if present
     guided = sp.pop("guided_decoding", None) or sp.pop("structured_output", None)
     # Remove keys that aren't valid SamplingParams fields
-    for k in ("early_stopping", "length_penalty", "response_format",
-              "detokenize"):
+    for k in ("early_stopping", "length_penalty", "response_format", "detokenize"):
         sp.pop(k, None)
 
     if guided and isinstance(guided, dict):
         # vLLM >=0.12: StructuredOutputsParams replaces GuidedDecodingParams
         try:
             from vllm.sampling_params import StructuredOutputsParams
+
             sp["structured_outputs"] = StructuredOutputsParams(**guided)
         except ImportError:
             # vLLM <=0.11: fall back to GuidedDecodingParams
             try:
                 from vllm.sampling_params import GuidedDecodingParams
+
                 sp["guided_decoding"] = GuidedDecodingParams(**guided)
             except ImportError:
                 pass
@@ -1047,7 +1110,9 @@ def _run_data_parallel(
 
     tp_size = engine_kwargs.get("tensor_parallel_size", 1)
     visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
-    all_devices = [d.strip() for d in visible.split(",") if d.strip()] if visible else []
+    all_devices = (
+        [d.strip() for d in visible.split(",") if d.strip()] if visible else []
+    )
     needed = dp_size * tp_size
     if all_devices and len(all_devices) < needed:
         raise RuntimeError(
@@ -1081,18 +1146,24 @@ def _run_data_parallel(
 
     # Write worker script to a temp file
     worker_script = tempfile.NamedTemporaryFile(
-        mode="w", suffix="_dp_worker.py", dir=tmpdir, delete=False,
+        mode="w",
+        suffix="_dp_worker.py",
+        dir=tmpdir,
+        delete=False,
     )
     worker_script.write(_DP_WORKER_SCRIPT)
     worker_script.close()
 
-    print(f"[{stage_name}] Launching {dp_size} DP workers "
-          f"(TP={tp_size}, {len(prompts)} total prompts)...", flush=True)
+    print(
+        f"[{stage_name}] Launching {dp_size} DP workers "
+        f"(TP={tp_size}, {len(prompts)} total prompts)...",
+        flush=True,
+    )
 
     for rank in range(dp_size):
         # GPU slice for this rank
         if all_devices:
-            rank_devices = all_devices[rank * tp_size:(rank + 1) * tp_size]
+            rank_devices = all_devices[rank * tp_size : (rank + 1) * tp_size]
         else:
             rank_devices = []
 
@@ -1121,13 +1192,21 @@ def _run_data_parallel(
         child_env = dict(os.environ)
         if rank_devices:
             child_env["CUDA_VISIBLE_DEVICES"] = ",".join(rank_devices)
-        for var in ("VLLM_DP_RANK", "VLLM_DP_RANK_LOCAL", "VLLM_DP_SIZE",
-                     "VLLM_DP_MASTER_IP", "VLLM_DP_MASTER_PORT"):
+        for var in (
+            "VLLM_DP_RANK",
+            "VLLM_DP_RANK_LOCAL",
+            "VLLM_DP_SIZE",
+            "VLLM_DP_MASTER_IP",
+            "VLLM_DP_MASTER_PORT",
+        ):
             child_env.pop(var, None)
 
         devices_str = child_env.get("CUDA_VISIBLE_DEVICES", "<unset>")
-        print(f"[{stage_name}] DP rank {rank}: {len(shards[rank])} prompts, "
-              f"CUDA_VISIBLE_DEVICES={devices_str}", flush=True)
+        print(
+            f"[{stage_name}] DP rank {rank}: {len(shards[rank])} prompts, "
+            f"CUDA_VISIBLE_DEVICES={devices_str}",
+            flush=True,
+        )
 
         proc = subprocess.Popen(
             [sys.executable, worker_script.name, task_path, result_path],
@@ -1138,8 +1217,10 @@ def _run_data_parallel(
         procs.append(proc)
 
     # Wait for all workers
-    print(f"[{stage_name}] Waiting for {dp_size} DP workers "
-          f"(timeout={timeout}s)...", flush=True)
+    print(
+        f"[{stage_name}] Waiting for {dp_size} DP workers (timeout={timeout}s)...",
+        flush=True,
+    )
     errors = []
     for rank, proc in enumerate(procs):
         try:
@@ -1177,8 +1258,7 @@ def _run_data_parallel(
 
     if errors:
         raise RuntimeError(
-            f"[{stage_name}] Data-parallel inference failed:\n"
-            + "\n".join(errors)
+            f"[{stage_name}] Data-parallel inference failed:\n" + "\n".join(errors)
         )
 
     # Reassemble in original order
@@ -1221,6 +1301,7 @@ def _run_transformers_text_inference(
     model_source = str(cfg.model.model_source)
     print(f"[{stage_name}] Using native transformers fallback for {model_source}")
     from dagspaces.common.model_registry import resolve_model_source
+
     model_source = resolve_model_source(model_source, stage_name=stage_name)
 
     tokenizer = AutoTokenizer.from_pretrained(model_source, trust_remote_code=True)
@@ -1231,6 +1312,7 @@ def _run_transformers_text_inference(
     # Use flash_attention_2 if available for ~2x speedup on long sequences
     try:
         import flash_attn  # noqa: F401
+
         _attn_impl = "flash_attention_2"
     except ImportError:
         _attn_impl = "sdpa"
@@ -1249,6 +1331,7 @@ def _run_transformers_text_inference(
     _lora_path = str(getattr(cfg.model, "lora_path", "") or "")
     if _lora_path:
         from peft import PeftModel
+
         print(f"[{stage_name}] Loading LoRA adapter: {_lora_path}")
         model = PeftModel.from_pretrained(model, _lora_path)
         model = model.merge_and_unload()
@@ -1258,6 +1341,7 @@ def _run_transformers_text_inference(
 
     # Determine thinking mode (single source of truth).
     from dagspaces.common.stage_utils import resolve_thinking_mode
+
     _thinking_enabled = resolve_thinking_mode(cfg.model, default=True)
     _strip_thinking = not _thinking_enabled
 
@@ -1301,12 +1385,17 @@ def _run_transformers_text_inference(
     batch_size = 16
     generated_texts: List[str] = []
     generated_reasonings: List[str] = []
-    print(f"[{stage_name}] Generating {len(prompts)} prompts in batches of {batch_size}...")
+    print(
+        f"[{stage_name}] Generating {len(prompts)} prompts in batches of {batch_size}..."
+    )
 
     for start in range(0, len(prompts), batch_size):
-        batch_prompts = prompts[start:start + batch_size]
+        batch_prompts = prompts[start : start + batch_size]
         inputs = tokenizer(
-            batch_prompts, return_tensors="pt", padding=True, truncation=True,
+            batch_prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
             max_length=8192,
         ).to(model.device)
         prompt_len = inputs["input_ids"].shape[1]
@@ -1322,19 +1411,26 @@ def _run_transformers_text_inference(
             gen_ids = output_ids[j, prompt_len:]
             raw_text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
             reasoning, content = _split_reasoning(
-                raw_text, model_source, _thinking_enabled, tokenizer,
+                raw_text,
+                model_source,
+                _thinking_enabled,
+                tokenizer,
             )
             generated_texts.append(content)
             generated_reasonings.append(reasoning)
 
-        print(f"[{stage_name}] Batch {start // batch_size + 1}: "
-              f"{min(start + batch_size, len(prompts))}/{len(prompts)} done")
+        print(
+            f"[{stage_name}] Batch {start // batch_size + 1}: "
+            f"{min(start + batch_size, len(prompts))}/{len(prompts)} done"
+        )
 
     # Reassemble results in original order
     results = [None] * len(preprocessed_rows)
     for i, row_data in failed_rows:
         results[i] = row_data
-    for vi, gen_text, gen_reasoning in zip(valid_indices, generated_texts, generated_reasonings):
+    for vi, gen_text, gen_reasoning in zip(
+        valid_indices, generated_texts, generated_reasonings
+    ):
         row = preprocessed_rows[vi]
         row["generated_text"] = gen_text
         row["generated_reasoning"] = gen_reasoning
@@ -1347,6 +1443,7 @@ def _run_transformers_text_inference(
 # ---------------------------------------------------------------------------
 # Main inference function
 # ---------------------------------------------------------------------------
+
 
 def run_vllm_inference(
     df: pd.DataFrame,
@@ -1389,8 +1486,12 @@ def run_vllm_inference(
     _server_url = _resolve_server_url(cfg)
     if _server_url:
         return _run_server_inference(
-            df=df, cfg=cfg, preprocess=preprocess, postprocess=postprocess,
-            stage_name=stage_name, server_url=_server_url,
+            df=df,
+            cfg=cfg,
+            preprocess=preprocess,
+            postprocess=postprocess,
+            stage_name=stage_name,
+            server_url=_server_url,
         )
 
     # Models whose architectures vLLM no longer supports get routed to a
@@ -1398,7 +1499,10 @@ def run_vllm_inference(
     _model_family = str(getattr(cfg.model, "model_family", ""))
     if _model_family in _TRANSFORMERS_FALLBACK_FAMILIES:
         return _run_transformers_text_inference(
-            df=df, cfg=cfg, preprocess=preprocess, postprocess=postprocess,
+            df=df,
+            cfg=cfg,
+            preprocess=preprocess,
+            postprocess=postprocess,
             stage_name=stage_name,
         )
 
@@ -1410,7 +1514,9 @@ def run_vllm_inference(
         "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>"),
         "SLURM_JOB_GPUS": os.environ.get("SLURM_JOB_GPUS", "<unset>"),
         "SLURM_GPUS_ON_NODE": os.environ.get("SLURM_GPUS_ON_NODE", "<unset>"),
-        "VLLM_WORKER_MULTIPROC_METHOD": os.environ.get("VLLM_WORKER_MULTIPROC_METHOD", "<unset>"),
+        "VLLM_WORKER_MULTIPROC_METHOD": os.environ.get(
+            "VLLM_WORKER_MULTIPROC_METHOD", "<unset>"
+        ),
     }
     print(f"[{stage_name}] Runtime env: {env_snapshot}")
 
@@ -1439,6 +1545,7 @@ def run_vllm_inference(
         model_source = engine_kwargs.get("model", "")
         lora_path = _remap_lora_keys_for_vlm(lora_path, model_source, stage_name)
         from vllm.lora.request import LoRARequest
+
         lora_request = LoRARequest("sft", 1, lora_path)
         print(f"[{stage_name}] LoRA adapter: {lora_path}")
 
@@ -1447,12 +1554,15 @@ def run_vllm_inference(
     # The chat template flag controls *what prompt* the model sees; reasoning
     # is always extracted from output via `_split_reasoning` regardless.
     from dagspaces.common.stage_utils import resolve_thinking_mode
+
     _thinking_enabled = resolve_thinking_mode(cfg.model, default=True)
     _strip_thinking = not _thinking_enabled  # retained for legacy log lines
     _model_source = str(engine_kwargs.get("model", "") or "")
     _parser_name = _detect_reasoning_parser(_model_source)
-    print(f"[{stage_name}] Reasoning extraction: parser={_parser_name or 'regex-fallback'}, "
-          f"thinking_enabled={_thinking_enabled}")
+    print(
+        f"[{stage_name}] Reasoning extraction: parser={_parser_name or 'regex-fallback'}, "
+        f"thinking_enabled={_thinking_enabled}"
+    )
 
     # Check for data parallelism
     dp_size = int(engine_kwargs.pop("data_parallel_size", 1) or 1)
@@ -1463,10 +1573,14 @@ def run_vllm_inference(
     streaming_chunk_size = _streaming_chunk_size(cfg, default=64)
     if streaming_dir:
         os.makedirs(streaming_dir, exist_ok=True)
-        print(f"[{stage_name}] Streaming writes ON: shards →  {streaming_dir} "
-              f"(chunk_size={streaming_chunk_size})")
+        print(
+            f"[{stage_name}] Streaming writes ON: shards →  {streaming_dir} "
+            f"(chunk_size={streaming_chunk_size})"
+        )
     else:
-        print(f"[{stage_name}] Streaming writes OFF (no runtime.output_dir or disabled)")
+        print(
+            f"[{stage_name}] Streaming writes OFF (no runtime.output_dir or disabled)"
+        )
 
     print(
         f"[{stage_name}] Initializing vLLM with: "
@@ -1474,14 +1588,17 @@ def run_vllm_inference(
     )
     print(f"[{stage_name}] Model: {engine_kwargs.get('model')}")
     if dp_size > 1:
-        print(f"[{stage_name}] Data parallelism enabled: {dp_size} replicas "
-              f"x TP={engine_kwargs.get('tensor_parallel_size', 1)}")
+        print(
+            f"[{stage_name}] Data parallelism enabled: {dp_size} replicas "
+            f"x TP={engine_kwargs.get('tensor_parallel_size', 1)}"
+        )
 
     # Load tokenizer without full LLM for prompt templating.
     # For DP mode we can't create the LLM in the parent process; for
     # single-process mode we create LLM first and reuse its tokenizer.
     if dp_size > 1:
         from transformers import AutoTokenizer
+
         tokenizer = AutoTokenizer.from_pretrained(
             engine_kwargs["model"], trust_remote_code=True
         )
@@ -1505,29 +1622,31 @@ def run_vllm_inference(
                 failed_indices.append(idx)
 
         if failed_indices:
-            print(f"[{stage_name}] WARNING: {len(failed_indices)} rows failed "
-                  f"preprocessing and will be skipped for inference")
+            print(
+                f"[{stage_name}] WARNING: {len(failed_indices)} rows failed "
+                f"preprocessing and will be skipped for inference"
+            )
 
         # Separate valid rows from failed ones for inference
         failed_set = set(failed_indices)
-        preliminary_valid = [i for i in range(len(preprocessed_rows)) if i not in failed_set]
+        preliminary_valid = [
+            i for i in range(len(preprocessed_rows)) if i not in failed_set
+        ]
 
         # Determine model's max context length for prompt validation.
         _max_model_len = None
         if llm is not None:
             try:
                 _max_model_len = llm.llm_engine.model_config.max_model_len
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[{stage_name}] WARNING: could not read max_model_len from engine: {exc}")
         if _max_model_len is None:
             try:
                 _max_model_len = int(getattr(tokenizer, "model_max_length", 0) or 0)
                 if _max_model_len <= 0 or _max_model_len > 1_000_000:
                     _max_model_len = None
-            except Exception:
-                pass
-
-        # Build prompts and sampling params dicts for valid rows only.
+            except Exception as exc:
+                print(f"[{stage_name}] WARNING: could not read max_model_len from tokenizer: {exc}")
         prompts: List[str] = []
         sp_dicts: List[Dict[str, Any]] = []
         valid_indices: List[int] = []
@@ -1546,7 +1665,9 @@ def run_vllm_inference(
                         getattr(cfg.model, "chat_template_kwargs", {}) or {}
                     )
                     prompt = tokenizer.apply_chat_template(
-                        messages, tokenize=False, add_generation_prompt=True,
+                        messages,
+                        tokenize=False,
+                        add_generation_prompt=True,
                         **chat_template_kwargs,
                     )
                 except Exception:
@@ -1625,8 +1746,10 @@ def run_vllm_inference(
         if _is_harmony_model(_model_source):
             for _d in sp_dicts:
                 _d["skip_special_tokens"] = False
-            print(f"[{stage_name}] harmony model detected — skip_special_tokens=False "
-                  f"(channel delimiters preserved for the final-channel parser)")
+            print(
+                f"[{stage_name}] harmony model detected — skip_special_tokens=False "
+                f"(channel delimiters preserved for the final-channel parser)"
+            )
 
         # -----------------------------------------------------------------------
         # Inference: data-parallel or single-process
@@ -1646,8 +1769,10 @@ def run_vllm_inference(
                 ]
                 if _budgets:
                     sp_dict["max_tokens"] = min(_budgets)
-            print(f"[{stage_name}] Running data-parallel inference: "
-                  f"{len(prompts)} prompts across {dp_size} replicas...")
+            print(
+                f"[{stage_name}] Running data-parallel inference: "
+                f"{len(prompts)} prompts across {dp_size} replicas..."
+            )
             dp_outputs = _run_data_parallel(
                 engine_kwargs=engine_kwargs,
                 dp_size=dp_size,
@@ -1684,14 +1809,18 @@ def run_vllm_inference(
                 out = next(output_iter)
                 raw_text = out.get("generated_text", "")
                 reasoning, content = _split_reasoning(
-                    raw_text, _model_source, _thinking_enabled, tokenizer,
+                    raw_text,
+                    _model_source,
+                    _thinking_enabled,
+                    tokenizer,
                 )
                 row["generated_text"] = content
                 row["generated_reasoning"] = reasoning
                 row["usage"] = {
                     "prompt_tokens": out.get("prompt_tokens", 0),
                     "completion_tokens": out.get("completion_tokens", 0),
-                    "total_tokens": out.get("prompt_tokens", 0) + out.get("completion_tokens", 0),
+                    "total_tokens": out.get("prompt_tokens", 0)
+                    + out.get("completion_tokens", 0),
                 }
                 try:
                     result = postprocess(row)
@@ -1718,7 +1847,9 @@ def run_vllm_inference(
 
             if len(_sp_cache) == 1 and sp_objects:
                 sampling_params_list = sp_objects[0]  # single object, vLLM broadcasts
-                print(f"[{stage_name}] Using shared SamplingParams for all {len(prompts)} prompts")
+                print(
+                    f"[{stage_name}] Using shared SamplingParams for all {len(prompts)} prompts"
+                )
             else:
                 sampling_params_list = sp_objects
 
@@ -1729,7 +1860,11 @@ def run_vllm_inference(
             if batch_size <= 0:
                 batch_size = max(len(prompts), 1)
 
-            shared_sp = sampling_params_list if not isinstance(sampling_params_list, list) else None
+            shared_sp = (
+                sampling_params_list
+                if not isinstance(sampling_params_list, list)
+                else None
+            )
 
             # Streaming-shard setup — recover completed rows from prior runs.
             sp_streaming_dir = None
@@ -1748,12 +1883,17 @@ def run_vllm_inference(
                             idx = int(record.pop("__row_idx"))
                             completed_outputs[idx] = record
                     except Exception as e:
-                        print(f"[{stage_name}] SP: skipping unreadable shard "
-                              f"{shard_path}: {e}", flush=True)
+                        print(
+                            f"[{stage_name}] SP: skipping unreadable shard "
+                            f"{shard_path}: {e}",
+                            flush=True,
+                        )
                 next_shard_id = len(existing_shards)
                 if completed_outputs:
-                    print(f"[{stage_name}] SP: recovered {len(completed_outputs)} "
-                          f"prompts from {next_shard_id} existing shards")
+                    print(
+                        f"[{stage_name}] SP: recovered {len(completed_outputs)} "
+                        f"prompts from {next_shard_id} existing shards"
+                    )
 
             # Determine remaining work
             remaining_local_indices = [
@@ -1787,7 +1927,9 @@ def run_vllm_inference(
                     f"prompts {start}-{end - 1} of {len(remaining_local_indices)}",
                 )
                 chunk_outputs = llm.generate(
-                    prompt_batch, sampling_batch, lora_request=lora_request,
+                    prompt_batch,
+                    sampling_batch,
+                    lora_request=lora_request,
                 )
 
                 if len(chunk_outputs) != len(batch_indices):
@@ -1805,7 +1947,8 @@ def run_vllm_inference(
                     )
                     completion_tokens = (
                         len(output.outputs[0].token_ids)
-                        if output.outputs and output.outputs[0].token_ids else 0
+                        if output.outputs and output.outputs[0].token_ids
+                        else 0
                     )
                     finish_reason = (
                         output.outputs[0].finish_reason
@@ -1832,7 +1975,9 @@ def run_vllm_inference(
                     next_shard_id += 1
 
             # Verify every prompt has an output before postprocess
-            missing_indices = [i for i in range(len(prompts)) if i not in completed_outputs]
+            missing_indices = [
+                i for i in range(len(prompts)) if i not in completed_outputs
+            ]
             if missing_indices:
                 raise RuntimeError(
                     f"[{stage_name}] vLLM output count mismatch: "
@@ -1864,7 +2009,10 @@ def run_vllm_inference(
                 record = completed_outputs[prompt_idx]
                 raw_text = record.get("generated_text", "")
                 reasoning, content = _split_reasoning(
-                    raw_text, _model_source, _thinking_enabled, tokenizer,
+                    raw_text,
+                    _model_source,
+                    _thinking_enabled,
+                    tokenizer,
                 )
                 row["generated_text"] = content
                 row["generated_reasoning"] = reasoning
