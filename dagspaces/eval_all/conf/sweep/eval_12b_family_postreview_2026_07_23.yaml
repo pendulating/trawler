@@ -1,0 +1,72 @@
+# @package _global_
+# gemma-4-12b family re-run under POST-PARITY-REVIEW code (Matt's call
+# 2026-07-23): ckpt513 finished training after the 07-19 per-checkpoint
+# sweep, and a lone new-era cell cannot join that pre-review record
+# (goldcoin/vlm/confaide semantics changed 07-21; CIRL trajectory flow
+# retired in the benchmark swap). So the WHOLE family — instruct +
+# ckpt171/342/513 — reruns under current code: an internally consistent
+# E0-E3 series, deliberately a DIFFERENT era than the other 10 families'
+# longitudinal rows (the notebook must annotate this when it adopts these
+# cells).
+#
+# Protocol: per-benchmark engine tuning copied from
+# eval_sft_per_checkpoint_all_2026_07_19.yaml; confaide tier2_only as
+# there; cirl = CIRL-729 with the strict-format escape hatch (paper
+# protocol -1s recorded); privacylens via the default async judge flow
+# (sidecar enabled — safe on judge-free-only cells too since the
+# wait_for_drain zero-manifest fix).
+#
+# Usage:
+#   /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/python \
+#     -m dagspaces.eval_all.cli --multirun +sweep=eval_12b_family_postreview_2026_07_23
+
+experiment:
+  name: eval_12b_family_postreview
+
+benchmarks:
+  confaide:
+    pipeline: confaide_tier2_only
+    extra_args:
+      - model.engine_kwargs.max_model_len=5120
+      - model.engine_kwargs.max_num_seqs=64
+  cirl:
+    extra_args:
+      - +runtime.allow_unreliable_metrics=true
+  goldcoin:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+  mmlu:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=128
+  vlm_geoprivacy:
+    extra_args:
+      - model.engine_kwargs.max_model_len=3072
+      - model.engine_kwargs.max_num_seqs=32
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 4
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      model: >-
+        gemma-4-12b/instruct,
+        gemma-4-12b/sft-canonical-ckpt171,
+        gemma-4-12b/sft-canonical-ckpt342,
+        gemma-4-12b/sft-canonical-ckpt513

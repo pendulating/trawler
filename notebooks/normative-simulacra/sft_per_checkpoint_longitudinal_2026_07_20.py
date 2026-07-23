@@ -81,6 +81,14 @@ def _(mo):
        sweeps, CIRL trajectory in the ckpt sweep), verified from manifests
        below. It is also the SFT teacher — accepted coupling of the gemma
        consolidation.
+    7. **Gemma-4-12B rows are a different era.** Its whole E0–E3 series
+       comes from the 2026-07-23 post-parity-review family rerun
+       (ckpt513 finished training after the record above froze, and the
+       07-21 parity reviews changed goldcoin/vlm/confaide semantics in
+       between). Within-family 12B trends are clean; comparing 12B
+       *levels* against the other ten families crosses the review
+       boundary. Its CIRL column is CIRL-729 (net/leak/util), not the
+       retired trajectory flow.
     """)
     return
 
@@ -110,6 +118,18 @@ def _():
     INSTRUCT_SWEEP_DIR = Path(
         "/share/pierson/matt/UAIR/multirun/"
         "2026-07-17_eval_canonical_instruct/21-21-52"
+    )
+    # gemma-4-12b E0-E3 rerun under POST-parity-review code (Matt's call
+    # 2026-07-23: ckpt513 landed after the 07-19 record froze, and the
+    # parity reviews changed goldcoin/vlm/confaide semantics in between —
+    # a lone new-era E3 cell could not join its family's old-era rows, so
+    # the WHOLE family reran for an internally consistent series).
+    # Highest precedence: these rows REPLACE every gemma-4-12b row from
+    # the sweeps above. Era caveat: 12b deltas vs OTHER families are
+    # cross-era; within-family E0→E3 comparisons are clean.
+    POSTREVIEW_12B_SWEEP_DIR = Path(
+        "/share/pierson/matt/UAIR/multirun/"
+        "2026-07-23_eval_12b_family_postreview/09-48-49"
     )
     REPORT_DIR = (
         Path(__file__).resolve().parent
@@ -402,6 +422,10 @@ def _(
         # Restart supersedes the wedge-holed original arms cell-by-cell.
         + _scan_sweep(RESTART_SWEEP_DIR, "sft_restart21", precedence=1)
         + _scan_sweep(INSTRUCT_SWEEP_DIR, "canonical_instruct", precedence=0)
+        # Post-review 12b family rerun supersedes ALL gemma-4-12b rows
+        # (incl. its E0 instruct anchor) — see POSTREVIEW_12B_SWEEP_DIR.
+        + _scan_sweep(POSTREVIEW_12B_SWEEP_DIR, "12b_postreview",
+                      precedence=2)
     )
     print(
         f"{len(scan)} (cell × metric) observations — "
@@ -472,8 +496,9 @@ def _(EXPECTED_ROSTER, SLUG_TO_DISPLAY, json, pd, scan):
     _pend = (progress.status == "NOT DISPATCHED YET").sum()
     print(f"sweep progress: {_done}/32 arms complete, "
           f"{(32 - _done - _pend)} running/failed, {_pend} not yet dispatched")
-    print("(gemma-4-12b ckpt513 is not in the roster at all — still training "
-          "at launch; owed by a follow-up sweep)")
+    print("(gemma-4-12b is absent from this 32-cell roster tracker by "
+          "design — its whole E0-E3 series now comes from the 2026-07-23 "
+          "post-review family rerun; see intro caveat 7)")
     progress
     return
 
