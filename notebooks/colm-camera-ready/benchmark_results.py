@@ -109,10 +109,8 @@ def _(mo):
     |---|---|---|---|---|
     | Appl. / Comp. | `goldcoin/goldcoin_hipaa` | `compute_metrics_{applicability,compliance}` | `accuracy` (×`parseable_rate` retro-conv on pre-flip files) | no |
     | QA Acc | `privacylens/privacylens_eval` | `compute_metrics` | `qa_probing.accuracy` | no |
-    | Lk ↓ | ″ | ″ | `leakage.leakage_rate_among_parseable` | **yes** |
     | Adj Lk ↓ | ″ | ″ | `adjusted_leakage.adjusted_leakage_rate` | **yes** |
     | Helpful | ″ | ″ | `helpfulness.helpful_rate_among_parseable` | **yes** |
-    | Help | ″ | ″ | `helpfulness.mean_score_among_parseable` | **yes** |
     | r | `confaide/confaide` | `compute_metrics_tier2b` | `pearson_r` | no |
     | CIRL Lk↓ / Util / Net | `cirl/cirl` | `compute_metrics` | `leakage.leakage_rate` / `utility.utility_rate` / `net_score` | no |
     | Q7 | `vlm_geoprivacy/vlm_geoprivacy_bench` | `compute_metrics` | `per_question.Q7.accuracy` | no |
@@ -308,18 +306,6 @@ def _():
         ),
         (
             "PrivacyLens",
-            "Lk↓",
-            "privacylens",
-            "privacylens_eval",
-            "compute_metrics",
-            "leakage.leakage_rate_among_parseable",
-            True,
-            True,
-            "pct",
-            "pl_stale",
-        ),
-        (
-            "PrivacyLens",
             "Adj Lk↓",
             "privacylens",
             "privacylens_eval",
@@ -340,18 +326,6 @@ def _():
             True,
             False,
             "pct",
-            "pl_stale",
-        ),
-        (
-            "PrivacyLens",
-            "Help",
-            "privacylens",
-            "privacylens_eval",
-            "compute_metrics",
-            "helpfulness.mean_score_among_parseable",
-            True,
-            False,
-            "raw",
             "pl_stale",
         ),
         (
@@ -837,8 +811,8 @@ def _(mo):
     mo.md("""
     ## Phase C — Assemble the table + markdown
 
-    Lay the cells out in row/column order, format (percentages ×100; Help on
-    the 0–3 scale; CIRL Net on −1…1), bold the best per column, mark
+    Lay the cells out in row/column order, format (percentages ×100; CIRL
+    Net on −1…1), bold the best per column, mark
     self-judged (†) and stale-parser (‡) cells, render, and save to
     `benchmark_results.md` plus a provenance parquet.
     """)
@@ -944,17 +918,16 @@ def _(
         print("Dropped (no data for any column): " + ", ".join(_dropped))
 
     _legend = (
-        "\n\n*Percentages (×100) except **Help** (mean helpfulness, 0–3) "
-        "and **CIRL Net** (utility − leakage, −1…1). ↓ = lower is better. "
+        "\n\n*Percentages (×100) except **CIRL Net** (utility − leakage, "
+        "−1…1). ↓ = lower is better. "
         "Best per column in **bold**. "
         "GoldCoin Appl./Comp. = upstream-parity accuracy (unparseable "
         "counted as wrong, per the 2026-07-21 denominator flip); pre-flip "
         "metrics files are retro-converted exactly as "
         "accuracy × parseable_rate — see the provenance table. Sub-1pt "
         "GoldCoin gaps are re-run noise (temp 0.2, measured ±0.9pt). "
-        "PrivacyLens: QA Acc, Lk = leakage rate among parseable, Adj Lk = "
-        "adjusted leakage, Helpful = helpful rate, Help = mean helpfulness "
-        "(all judged rates are the `*_among_parseable` primary variants). "
+        "PrivacyLens: QA Acc, Adj Lk = adjusted leakage, Helpful = helpful "
+        "rate (both judged, the `*_among_parseable` primary variants). "
         "ConfAIde r = Tier-2b Pearson. CIRL-729: Net = utility − leakage "
         "with every strict-format miss scored −1 per the paper protocol "
         "(recorded, not dropped); Lk/Util are rates conditional on "
@@ -1177,13 +1150,13 @@ def _(
         rf"under its zero-shot (the pre-SFT \texttt{{<family>/instruct}} "
         rf"checkpoint) and SFT condition across six benchmarks: GoldCoin-HIPAA "
         rf"(applicability and compliance, upstream-parity accuracy), PrivacyLens "
-        rf"(question-answering accuracy, leakage, adjusted leakage, helpfulness "
-        rf"rate, and mean helpfulness), ConfAIde (Tier-2b Pearson correlation), "
+        rf"(question-answering accuracy, adjusted leakage, and helpfulness "
+        rf"rate), ConfAIde (Tier-2b Pearson correlation), "
         rf"CIRL-729 (leakage, utility, and net score), VLM-GeoPrivacy (Q7 "
         rf"location-granularity accuracy), and MMLU (overall accuracy). We bold "
         rf"the best value per column, excluding the self-judged teacher. "
-        rf"Percentages are scaled by 100, except mean helpfulness (0--3) and "
-        rf"CIRL net score ($-1$ to $1$); $\downarrow$ marks lower-is-better "
+        rf"Percentages are scaled by 100, except CIRL net score ($-1$ to $1$); "
+        rf"$\downarrow$ marks lower-is-better "
         rf"columns. All judged columns use {EXPECTED_JUDGE} as the judge. "
         rf"$\dagger$: self-judged (judge and subject share weights), an "
         rf"optimistic bound excluded from best-per-column bolding. $\ddagger$: "
