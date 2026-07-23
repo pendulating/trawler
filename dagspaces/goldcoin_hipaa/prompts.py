@@ -1,7 +1,22 @@
 """Prompt construction for GoldCoin HIPAA evaluation.
 
 Ported from GoldCoin/eval/build_instruction_compliance.py,
-build_instruction_applicability.py, and eval_llm.py.
+build_instruction_applicability.py, and eval_llm.py. The Alpaca template,
+instruction texts, and few-shot blocks are upstream-verbatim (2026-07-21
+parity review, test-locked in ``tests/goldcoin_hipaa/test_parity.py``).
+
+Deliberate deviations from upstream (documented):
+
+* ``llm_inference`` appends a JSON-format instruction and applies guided
+  decoding (``ComplianceResult`` / ``ApplicabilityResult``) — same
+  robustness trade as the other dagspaces; the upstream keyword scan
+  remains a parse fallback, with the 2026-07-14 negation fixes
+  ("impermissible" no longer matches "permis", word-boundary anchoring).
+* The parser reports ``"unparseable"`` instead of upstream's random-wrong
+  guess; the upstream forced-wrong substitution happens in
+  ``compute_metrics`` where it carries provenance.
+* Sampling: temperature 0.2 (repo eval convention) vs upstream 0.7;
+  max_tokens 1024/4096 vs upstream 512.
 """
 
 from __future__ import annotations

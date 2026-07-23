@@ -1,0 +1,13 @@
+{
+  "plot-title": "Corpus-composition shift by axis",
+  "plot-caption": "We rank all six schema axes by Jensen-Shannon divergence (base 2) between the fiction10 and top100 corpora, annotating the total variation distance on each bar. Only raz_context shifts appreciably (JSD = 0.104); every other axis lands at JSD of 0.016 or below. Because both corpora share one extractor, these divergences isolate corpus composition from model effects.",
+  "plot-latex-label": "fig:divergence_summary",
+  "plot-tags": [
+    "norm-distribution",
+    "divergence-summary",
+    "jsd",
+    "tvd",
+    "fiction10-vs-top100",
+    "camera-ready"
+  ]
+}

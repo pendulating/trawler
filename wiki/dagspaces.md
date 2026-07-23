@@ -71,9 +71,13 @@ One directory per pipeline. All invoked with `python -m dagspaces.{name}.cli pip
 
 ---
 
-### Judges (privacylens, cirl_vignettes)
+### Judges (privacylens)
 
-Both `privacylens` and `cirl_vignettes` use `dagspaces/common/judge_client.py` (`JudgeClient`) to score outputs via an OpenAI-compatible chat endpoint. The same client now works against:
+`privacylens` uses `dagspaces/common/judge_client.py` (`JudgeClient`) to score
+outputs via an OpenAI-compatible chat endpoint — both for its native
+agent-action leakage and for the ported `cirl_protocol` trajectory pipelines.
+(The `cirl` / CIRL-729 dagspace is judge-free — its scoring is deterministic
+substring matching.) The same client works against:
 
 - **vLLM** (default) — launch via `sbatch scripts/judge_server.sub`, `export JUDGE_SERVER_URL=http://host:port`
 - **OpenAI** — `judge.base_url=https://api.openai.com/v1 judge.model_name=gpt-4o judge.api_key_env=OPENAI_API_KEY`
@@ -147,11 +151,27 @@ See [howto/geoprivacy-hypotheticals.md](howto/geoprivacy-hypotheticals.md) for r
 
 ---
 
-## `cirl_vignettes` — CI-RL structured vignettes
+## `cirl` — CIRL-729 action benchmark
 
-**Purpose**: 729 vignettes with explicit flows + norms; tests norm-conditioned appropriateness judgment. Uses adapted ToolEmu code (`toolemu/`).
+**Purpose**: The 729-example synthetic Contextual-Integrity dataset from the CIRL
+paper (Lan, Inan et al., NeurIPS 2025, `huseyinatahaninan/ContextualIntegritySyntheticDataset`).
+An **action-generation** task: the model is given a `user_task` + a pool of
+allowed/disallowed attributes and must write the message completing the task,
+disclosing justified attributes while withholding private ones. Scoring is
+**deterministic substring matching** (no LLM judge) replicating the CIRL reward
+`compute_score(task="action")` — `leakage_rate` (↓) + `utility_rate` (↑) +
+`net_score`. See [benchmarks/cirl.md](benchmarks/cirl.md).
 
-**Entrypoint**: `python -m dagspaces.cirl_vignettes.cli pipeline=<pipeline> model=<model>`
+**Entrypoint**: `python -m dagspaces.cirl.cli pipeline=cirl_eval model=<model>`
+
+> **Note (2026-07-21 swap).** The dagspace formerly named `cirl_vignettes` did
+> **not** evaluate this dataset — it ran (A)/(B) rejection probing + trajectory
+> leakage on a vendored copy of **PrivacyLens-493**. That "PrivacyLens under the
+> CIRL protocol" now lives in the `privacylens` dagspace
+> (`pipeline=privacylens_cirl_protocol` / `privacylens_cirl_trajectory*`), and
+> the `cirl` dagspace evaluates the real CIRL-729 benchmark. Historical W&B runs
+> under project `cirl-vignettes` are the old protocol; new runs land in
+> `cirl-729`.
 
 ---
 

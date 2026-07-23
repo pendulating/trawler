@@ -31,6 +31,23 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             QAProbeInferenceRunner,
         )
 
+        # PrivacyLens-under-CIRL-protocol stages (ported from the retired
+        # cirl_vignettes dagspace — (A)/(B) probing + trajectory leakage on the
+        # same PrivacyLens-493 cases, with the CIRL paper prompt framing).
+        from ..cirl_protocol.runners import (
+            CirlTrajectoryFinalizeAsyncRunner,
+            ComputeMetricsRunner as CirlComputeMetricsRunner,
+            ComputeTrajectoryMetricsRunner as CirlComputeTrajectoryMetricsRunner,
+            JudgeHelpfulnessBatchExportRunner as CirlHelpfulnessJudgeBatchExportRunner,
+            JudgeHelpfulnessRunner as CirlJudgeHelpfulnessRunner,
+            JudgeLeakageBatchExportRunner as CirlLeakageJudgeBatchExportRunner,
+            JudgeLeakageRunner as CirlJudgeLeakageRunner,
+            LLMInferenceRunner as CirlLLMInferenceRunner,
+            LoadDatasetRunner as CirlLoadDatasetRunner,
+            ParseResponsesRunner as CirlParseResponsesRunner,
+            TrajectoryInferenceRunner as CirlTrajectoryInferenceRunner,
+        )
+
         _STAGE_REGISTRY = {
             # Clean PrivacyLens evaluation pipeline
             "load_dataset": LoadDatasetRunner(),
@@ -44,6 +61,18 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             "compute_metrics": ComputeMetricsRunner(),
             # Async-judge finalize: drain output.jsonl + parse + metrics.
             "privacylens_finalize_async": PrivacylensFinalizeAsyncRunner(),
+            # PrivacyLens-under-CIRL-protocol
+            "cirl_load_dataset": CirlLoadDatasetRunner(),
+            "cirl_probe_inference": CirlLLMInferenceRunner(),
+            "cirl_parse_responses": CirlParseResponsesRunner(),
+            "cirl_compute_metrics": CirlComputeMetricsRunner(),
+            "cirl_trajectory_inference": CirlTrajectoryInferenceRunner(),
+            "cirl_judge_leakage": CirlJudgeLeakageRunner(),
+            "cirl_judge_helpfulness": CirlJudgeHelpfulnessRunner(),
+            "cirl_judge_leakage_batch_export": CirlLeakageJudgeBatchExportRunner(),
+            "cirl_judge_helpfulness_batch_export": CirlHelpfulnessJudgeBatchExportRunner(),
+            "cirl_compute_trajectory_metrics": CirlComputeTrajectoryMetricsRunner(),
+            "cirl_finalize_async": CirlTrajectoryFinalizeAsyncRunner(),
         }
     return _STAGE_REGISTRY.copy()
 

@@ -1,0 +1,12 @@
+{
+  "plot-title": "Norm source (explicit versus implicit) by corpus",
+  "plot-caption": "We compare whether each norm is stated explicitly in the text or inferred implicitly from the scene. Both corpora are implicit-dominant (76.7% fiction10 versus 80.1% top100 implicit, and 19.5% versus 15.8% explicit), a small but consistent shift (Jensen-Shannon divergence, JSD = 0.002).",
+  "plot-latex-label": "fig:norm_source",
+  "plot-tags": [
+    "norm-distribution",
+    "raz_norm_source",
+    "explicit-implicit",
+    "fiction10-vs-top100",
+    "camera-ready"
+  ]
+}

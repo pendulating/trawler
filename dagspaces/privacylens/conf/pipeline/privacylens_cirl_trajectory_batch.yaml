@@ -1,0 +1,63 @@
+# @package _global_
+# Batch-export variant of privacylens_cirl_trajectory: trajectory_inference runs
+# locally on GPUs; leakage + helpfulness judging are exported as OpenAI Batch API
+# JSONL files. Finalize with scripts/cirl_trajectory_batch_finalize.py. Ported
+# from cirl_vignettes.
+defaults:
+  - /model: qwen2.5-7b/instruct
+  - override /hydra/launcher: slurm_monitor
+
+data:
+  name: cirl_protocol_pl493
+  json_path: ${oc.env:CIRL_DATA,}
+prompt:
+  think: false
+  trajectory_prompt_type: naive
+
+sampling_params:
+  seed: 42
+  temperature: 0.0
+  max_tokens: 16
+  trajectory_temperature: 0.7
+  trajectory_max_tokens: 7000
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/privacylens_cirl
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      cirl_load_dataset:
+        stage: cirl_load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+        overrides:
+          data:
+            probing_levels: [trajectory]
+
+      cirl_trajectory_inference:
+        stage: cirl_trajectory_inference
+        depends_on: [cirl_load_dataset]
+        inputs:
+          dataset: cirl_load_dataset.dataset
+        outputs:
+          dataset: outputs/trajectory_inference/dataset.parquet
+        launcher: slurm_gpu_1x
+
+      cirl_judge_leakage_batch_export:
+        stage: cirl_judge_leakage_batch_export
+        depends_on: [cirl_trajectory_inference]
+        inputs:
+          dataset: cirl_trajectory_inference.dataset
+        outputs:
+          dataset: outputs/judge_leakage_batch/pending.parquet
+
+      cirl_judge_helpfulness_batch_export:
+        stage: cirl_judge_helpfulness_batch_export
+        depends_on: [cirl_trajectory_inference]
+        inputs:
+          dataset: cirl_trajectory_inference.dataset
+        outputs:
+          dataset: outputs/judge_helpfulness_batch/pending.parquet

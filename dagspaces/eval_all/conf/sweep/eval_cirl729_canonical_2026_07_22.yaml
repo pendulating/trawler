@@ -1,0 +1,95 @@
+# @package _global_
+# CIRL-729 backfill over the canonical set — camera-ready repair sweep.
+#
+# The CIRL benchmark was swapped 2026-07-21 (wiki/changelog/
+# 2026-07-21_cirl_benchmark_swap.md): the retired `cirl_vignettes` dagspace was
+# PrivacyLens-under-CIRL-protocol; the `cirl` dagspace now evaluates the real
+# CIRL-729 action benchmark (huseyinatahaninan/ContextualIntegritySyntheticDataset,
+# deterministic substring leakage/utility, judge-free). No canonical cell has
+# CIRL-729 numbers yet — the camera-ready table renders those columns as
+# "pend." until this sweep lands (notebooks/colm-camera-ready/benchmark_results.py).
+#
+# Scope: all 22 paired canonical cells (11 instruct + 11 sft-canonical),
+# CIRL only via benchmark_filter. The teacher reference row (gemma-4-31b,
+# TP=2) runs separately: +sweep=eval_cirl729_teacher_2026_07_22.
+#
+# Judge-free -> no judge server required, no JUDGE_SERVER_URL, zero contention
+# with any live judge deployment. Each cell is one 1-GPU vLLM generation pass
+# over 729 prompts (max_tokens 2048-4096) + CPU scoring — light cells, so
+# array_parallelism is raised to 4 (vs 3 on the full-roster sweeps).
+#
+# Engine pin: same vLLM 0.25 / cu129 venv as the canonical sweeps so the rows
+# compose with the rest of the table under one engine version.
+#
+# Usage (launch with the ABSOLUTE venv python — the submitit driver bakes the
+# monitor srun python from the driver's sys.executable, see
+# wiki/slurm-and-env.md / the sweep-driver-venv trap):
+#   /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/python \
+#       -m dagspaces.eval_all.cli --multirun +sweep=eval_cirl729_canonical_2026_07_22
+
+experiment:
+  name: eval_cirl729_canonical
+
+benchmark_filter:
+  include:
+    - cirl
+
+# 2026-07-22 (Matt's ruling, matching the judge-free variance sweep):
+# models that ignore the strict <think>/<answer> format score -1 per the
+# paper's own protocol instead of hard-failing the sanity gate with an
+# empty cell. Arms 0-2/6-7 of the first launch (qwen instructs,
+# openthinker, llama) hard-failed and are requeued via
+# scripts/run_cirl729_repair_5arms.sh; pending arms compose this file at
+# job start and get the flag automatically.
+benchmarks:
+  cirl:
+    extra_args:
+      - +runtime.allow_unreliable_metrics=true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 4
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      # vLLM 0.25 pin, matching eval_canonical_{instruct,sft_gemma4} — the
+      # rows this sweep backfills.
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      # 11 instruct + 11 sft-canonical, row-aligned with
+      # eval_canonical_instruct.yaml / eval_canonical_sft_gemma4.yaml.
+      model: >-
+        qwen3.5-2b/instruct,
+        qwen3.5-4b/instruct,
+        qwen3.5-9b/instruct,
+        gemma-4-e2b/instruct,
+        gemma-4-e4b/instruct,
+        gemma-4-12b/instruct,
+        openthinker3-7b/instruct,
+        llama3.1-8b/instruct,
+        harc-llama3.1-8b/instruct,
+        phi-4/instruct,
+        gpt-oss-20b/instruct,
+        qwen3.5-2b/sft-canonical,
+        qwen3.5-4b/sft-canonical,
+        qwen3.5-9b/sft-canonical,
+        gemma-4-e2b/sft-canonical,
+        gemma-4-e4b/sft-canonical,
+        gemma-4-12b/sft-canonical,
+        openthinker3-7b/sft-canonical,
+        llama3.1-8b/sft-canonical,
+        harc-llama3.1-8b/sft-canonical,
+        phi-4/sft-canonical,
+        gpt-oss-20b/sft-canonical

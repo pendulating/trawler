@@ -1,6 +1,21 @@
 """Question data, system messages, and prompt construction for VLM-GeoPrivacyBench.
 
 Ported from VLM-GeoPrivacyBench/src/prompts.py and VLM-GeoPrivacyBench/src/utils.py.
+``QUESTION_DATA`` / ``SYS_MSG`` / ``GRANULARITY_JUDGE`` / the per-question
+block format in ``prepare_question_prompt`` are verbatim (2026-07-21 parity
+review). Deliberate deviations from upstream:
+
+* ``INST_LABEL_STRICT`` asks for a JSON object instead of upstream's
+  ``Q1: <label>\\n...`` lines, paired with guided decoding (``MCQResult``)
+  in ``vlm_mcq_inference`` — same robustness trade the other dagspaces make.
+  ``parse_answers`` still handles the upstream line format as a fallback,
+  byte-faithful to ``utils.py::parse_answers`` (incl. the ``*`` strip,
+  yes→A / no→B mapping, ``Answer:`` fallback, and N/A padding).
+* Sampling: temperature 0.2 (repo-wide eval convention) vs upstream's 0.7 /
+  top_p 0.95; seed 1 and max_tokens 512 match upstream.
+* Free-form granularity judging runs as a separate vLLM stage with a local
+  judge model instead of upstream's inline gpt-4.1-mini call; the judge
+  prompt text is upstream-verbatim.
 """
 
 from __future__ import annotations

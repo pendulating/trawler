@@ -29,9 +29,9 @@ benchmarks:
     pipeline: privacylens_clean
     vlm_only: false
     enabled: true
-  cirl_vignettes:
-    module: dagspaces.cirl_vignettes.cli
-    pipeline: cirl_vignettes_eval
+  cirl:
+    module: dagspaces.cirl.cli
+    pipeline: cirl_eval
     vlm_only: false
     enabled: true
   confaide:

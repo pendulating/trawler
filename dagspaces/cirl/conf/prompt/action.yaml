@@ -1,0 +1,6 @@
+# @package _global_
+# CIRL-729 action task. The prompt is format-fixed by the paper (Contextual
+# Integrity reasoning in <think>, message in <answer>); there is no
+# direct/think variant toggle. See dagspaces/cirl/prompts.py.
+prompt:
+  name: action

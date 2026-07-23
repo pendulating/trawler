@@ -19,7 +19,7 @@
 #    scripts/judge_server.sub on klara). The sidecar logs throughput +
 #    per-row failures to its own W&B run.
 #
-# 3. Other benchmarks (goldcoin, cirl_vignettes, confaide, vlm_geoprivacy)
+# 3. Other benchmarks (goldcoin, cirl, confaide, vlm_geoprivacy)
 #    run unchanged — they have no judge stage, so they finish on their
 #    own timeline while privacylens is still being judged.
 #
@@ -86,9 +86,9 @@ benchmarks:
     finalize_pipeline: privacylens_async_finalize
     vlm_only: false
     enabled: true
-  cirl_vignettes:
-    module: dagspaces.cirl_vignettes.cli
-    pipeline: cirl_vignettes_eval
+  cirl:
+    module: dagspaces.cirl.cli
+    pipeline: cirl_eval
     vlm_only: false
     enabled: true
   confaide:

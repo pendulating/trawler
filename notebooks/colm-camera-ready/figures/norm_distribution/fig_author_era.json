@@ -1,0 +1,12 @@
+{
+  "plot-title": "Author era by corpus (birth and death year)",
+  "plot-caption": "We compare the publication era of the two corpora using author death year (left) and birth year (right) as a proxy, because Gutenberg records no publication year. Medians are annotated in the legend. The era axis is an author-lifespan proxy, not a true publication date.",
+  "plot-latex-label": "fig:author_era",
+  "plot-tags": [
+    "corpus-composition",
+    "author-era",
+    "book-metadata",
+    "fiction10-vs-top100",
+    "camera-ready"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "plot-title": "Per-axis distributions on the 7 shared books",
+  "plot-caption": "We recompute the six schema axes on the 7 books present in both corpora (8,839 fiction10 versus 9,297 top100 norms), isolating the run-to-run noise floor. The two independent Gemma-4 runs agree closely: normative force, norm source, and information flow all sit at a same-book Jensen-Shannon divergence near 0.000, confidence at 0.009, the quality gate at 0.015, and societal domain at 0.073. Panel titles report the same-book total variation distance and Jensen-Shannon divergence.",
+  "plot-latex-label": "fig:overlap_axes_grid",
+  "plot-tags": [
+    "norm-distribution",
+    "noise-floor",
+    "overlap",
+    "per-axis",
+    "camera-ready"
+  ]
+}

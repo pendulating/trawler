@@ -318,7 +318,7 @@ _MIGRATED: List[str] = [  # extended as each eval dagspace lands
     "dagspaces.vlm_geoprivacy_bench.orchestrator",
     "dagspaces.vlm_geoprivacy_aug.orchestrator",
     "dagspaces.confaide.orchestrator",
-    "dagspaces.cirl_vignettes.orchestrator",
+    "dagspaces.cirl.orchestrator",
     "dagspaces.privacylens.orchestrator",
     "dagspaces.ci_heuristic.orchestrator",
 ]
@@ -367,9 +367,9 @@ _GOLDEN_PARAMS: Dict[str, Dict[str, Any]] = {
     "dagspaces.confaide.orchestrator": dict(
         dagspace_name="confaide", output_subdir="confaide", job_prefix="CONFAIDE",
         wandb_dagspace="confaide", use_srun=False),
-    "dagspaces.cirl_vignettes.orchestrator": dict(
-        dagspace_name="cirl_vignettes", output_subdir="cirl_vignettes",
-        job_prefix="CIRLVignettes", wandb_dagspace="cirl_vignettes", use_srun=False),
+    "dagspaces.cirl.orchestrator": dict(
+        dagspace_name="cirl", output_subdir="cirl",
+        job_prefix="CIRL", wandb_dagspace="cirl", use_srun=False),
     "dagspaces.privacylens.orchestrator": dict(
         dagspace_name="privacylens", output_subdir="privacylens_eval",
         job_prefix="PLens", wandb_dagspace="privacylens", use_srun=False),

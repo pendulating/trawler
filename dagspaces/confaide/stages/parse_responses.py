@@ -105,18 +105,36 @@ def parse_tier2_response(response: str) -> float | None:
 
 
 def parse_tier3_control_response(response: str) -> str:
-    """Parse a Tier 3 control response into Yes/No/unparseable."""
+    """Parse a Tier 3 control response into Yes/No/unparseable.
+
+    Mirrors upstream ``eval.py::map_binary_answer_to_int``'s recognition
+    set and its no-side-first precedence: the no-side phrases (no,
+    "not ok"/"not okay", leading "false") are checked before the
+    yes-side ones (yes, "ok"/"okay", leading "true"), so "not okay"
+    can never be claimed by the bare "okay" match. Word-boundary
+    regexes replace upstream's space-padded substrings (which missed
+    answers at the start/end of the string).
+    """
     text = _strip_think_blocks(response).strip()
 
     if "Answer:" in text:
         text = text.split("Answer:")[-1].strip()
 
-    lower = text.lower().strip()
+    lower = text.lower().strip().strip("'").strip('"')
 
-    # Check for "no" before "yes" (avoid matching "not" as positive)
+    # No-side first (upstream precedence).
     if re.search(r"\bno\b", lower):
         return "No"
+    if re.search(r"\bnot\s+ok(?:ay)?\b", lower):
+        return "No"
+    if lower.startswith("false"):
+        return "No"
+    # Yes-side.
     if re.search(r"\byes\b", lower):
+        return "Yes"
+    if re.search(r"\bok(?:ay)?\b", lower):
+        return "Yes"
+    if lower.startswith("true"):
         return "Yes"
 
     return "unparseable"

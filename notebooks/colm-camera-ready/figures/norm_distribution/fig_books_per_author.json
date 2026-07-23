@@ -1,0 +1,12 @@
+{
+  "plot-title": "Author productivity within each corpus",
+  "plot-caption": "We compare the distribution of books per author across the two reading lists. The top100 corpus is more concentrated, with a few prolific authors contributing many books, while fiction10 spreads more evenly across authors. Densities are normalized within each corpus.",
+  "plot-latex-label": "fig:books_per_author",
+  "plot-tags": [
+    "corpus-composition",
+    "author-productivity",
+    "book-metadata",
+    "fiction10-vs-top100",
+    "camera-ready"
+  ]
+}

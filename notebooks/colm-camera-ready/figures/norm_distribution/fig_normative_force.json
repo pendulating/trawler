@@ -1,0 +1,12 @@
+{
+  "plot-title": "Normative force distribution by corpus",
+  "plot-caption": "We compare the deontic force of norms extracted from the fiction10 (10,034 norms) and top100 (53,492 norms) corpora, both extracted by Gemma-4-31B-it under the fiction prompts. The two corpora are nearly identical (Jensen-Shannon divergence, JSD = 0.001): obligatory norms dominate at 54.0% versus 53.4%, followed by recommended at 34.3% versus 33.8% and prohibited at 7.3% versus 8.5%. Bars show the proportion of norms in each category; exact counts are in the co-located table.",
+  "plot-latex-label": "fig:normative_force",
+  "plot-tags": [
+    "norm-distribution",
+    "raz_normative_force",
+    "deontic-modality",
+    "fiction10-vs-top100",
+    "camera-ready"
+  ]
+}

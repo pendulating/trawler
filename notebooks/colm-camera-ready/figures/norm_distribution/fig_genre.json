@@ -1,0 +1,12 @@
+{
+  "plot-title": "Genre distribution by corpus (top 14 tags)",
+  "plot-caption": "We compare the genres of the books in each corpus, showing the 14 most common tags by pooled book share. Bars give the share of books carrying each tag; tags are multi-label, so the columns do not sum to one. The tag-share divergence is modest, consistent with the small norm-distribution shifts in Part A. Genre labels are Gutenberg-curated and coarse.",
+  "plot-latex-label": "fig:genre",
+  "plot-tags": [
+    "corpus-composition",
+    "genre",
+    "book-metadata",
+    "fiction10-vs-top100",
+    "camera-ready"
+  ]
+}

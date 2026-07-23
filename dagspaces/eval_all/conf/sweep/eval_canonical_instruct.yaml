@@ -20,7 +20,7 @@
 # All 11 are TP=1 (confirmed against each instruct.yaml), so the 1-GPU
 # all_benchmarks pipeline covers the whole set; no all_benchmarks_2gpu split.
 #
-# Full roster (no benchmark_filter): goldcoin, privacylens, cirl_vignettes,
+# Full roster (no benchmark_filter): goldcoin, privacylens, cirl,
 # confaide, vlm_geoprivacy, mmlu. simpleqa_verified stays disabled by default.
 #
 # Required cluster setup — PrivacyLens is the only judge-dependent benchmark:

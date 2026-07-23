@@ -1,0 +1,12 @@
+{
+  "plot-title": "Information-flow governance by corpus",
+  "plot-caption": "We report the fraction of norms that regulate information transmission, the contextual-integrity-relevant subset. The rate is essentially corpus-independent: 28.6% of fiction10 norms versus 29.1% of top100 norms (a 1.02-fold difference, JSD = 0.000). With the extractor held fixed, the contextual-integrity-relevant fraction behaves as a constant rather than a property of the reading list.",
+  "plot-latex-label": "fig:governs_info_flow",
+  "plot-tags": [
+    "norm-distribution",
+    "raz_governs_info_flow",
+    "contextual-integrity",
+    "fiction10-vs-top100",
+    "camera-ready"
+  ]
+}

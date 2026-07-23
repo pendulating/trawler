@@ -1,7 +1,7 @@
 """Finalize a CIRL-Vignettes trajectory batch-export run.
 
 Thin CLI wrapper — the logic lives in
-``dagspaces.cirl_vignettes.stages.finalize_async`` (shared with the
+``dagspaces.privacylens.cirl_protocol.stages.finalize_async`` (shared with the
 eval_all async-judge flow's ``cirl_finalize_async`` stage; this script is
 the manual path for OpenAI-Batch runs where you fetched ``output.jsonl``
 yourself via ``python -m dagspaces.common.batch_api fetch``).
@@ -33,7 +33,7 @@ def main() -> int:
         print(f"error: run-dir not found: {run_dir}", file=sys.stderr)
         return 1
 
-    from dagspaces.cirl_vignettes.stages.finalize_async import (
+    from dagspaces.privacylens.cirl_protocol.stages.finalize_async import (
         finalize_trajectory_async,
     )
 

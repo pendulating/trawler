@@ -27,7 +27,11 @@ embedding_model:
 # Judge model for R_ground reward prep.
 # model_source doubles as the `model` field in OpenAI-style API calls to
 # the external judge server (klara:8002), so it MUST match the served name.
-# Qwen3.6-27B is the COLM-paper canonical judge — see CONGRUENCE.md #1.
+# Qwen3.6-27B is the COLM-paper canonical (keeper-era) judge. NB: since the
+# 2026-07-16 Gemma migration, scripts/judge_server.sub defaults to
+# Gemma-4-31B-it — launch it with JUDGE_MODEL pointed here or the served name
+# mismatches model_source. See
+# wiki/changelog/2026-07-20_grpo_methodology_congruency_review.md §3.1.
 judge_model:
   model_source: ${oc.env:JUDGE_MODEL_PATH,/share/pierson/matt/zoo/models/Qwen3.6-27B}
   engine_kwargs:

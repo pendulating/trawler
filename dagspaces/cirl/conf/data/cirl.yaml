@@ -1,0 +1,10 @@
+# @package _global_
+data:
+  name: cirl729
+  # Local parquet override; empty → download from HF
+  # (huseyinatahaninan/ContextualIntegritySyntheticDataset) and cache under
+  # data/ci_benchmarks/CIRL729/.
+  parquet_path: ${oc.env:CIRL_DATA,}
+  # Base seed for the per-row attribute-list shuffle (seeded shuffle_seed +
+  # row_index). Fixed for reproducibility.
+  shuffle_seed: 42

@@ -303,8 +303,14 @@ class TestGoldFieldNonLeakage:
             user = build_qa_prompt(prow, axis)["user"]
             assert "X_CANARY_FINAL_ACTION_X" not in user
             assert "X_CANARY_SECRET_X" not in user
+        # The action prompt PINS the tool upstream-style ("The [Action]
+        # should be {final_action}.") — invariant updated in the 2026-07-21
+        # parity review; final_action is a bare tool name, not gold content.
+        # The secret canary must still never appear.
         action_user = build_action_prompt(prow)["user"]
-        assert "X_CANARY_FINAL_ACTION_X" not in action_user
+        assert action_user.rstrip().endswith(
+            "The [Action] should be X_CANARY_FINAL_ACTION_X."
+        )
         assert "X_CANARY_SECRET_X" not in action_user
 
 

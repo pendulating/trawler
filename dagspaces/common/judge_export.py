@@ -2,7 +2,7 @@
 
 Shared by every dagspace that emits ``requests.jsonl`` for judging:
 :mod:`dagspaces.privacylens.stages.llm_inference` and
-:mod:`dagspaces.cirl_vignettes.stages.judge_leakage`.
+:mod:`dagspaces.privacylens.cirl_protocol.stages.judge_leakage`.
 
 Three judge modes, two export targets
 -------------------------------------

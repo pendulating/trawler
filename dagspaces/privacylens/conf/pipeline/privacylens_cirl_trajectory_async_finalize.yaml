@@ -1,0 +1,31 @@
+# @package _global_
+# Finalize half of the async-judge trajectory flow. Run AFTER
+# privacylens_cirl_trajectory_async has exported AND the sidecar has filled both
+# output.jsonl files. Reads from the same output_root as the export pipeline
+# (invoke with the same hydra.run.dir). Ported from cirl_vignettes.
+defaults:
+  - /model: qwen2.5-7b/instruct
+  - override /hydra/launcher: slurm_monitor
+
+data:
+  name: cirl_protocol_pl493
+  json_path: ${oc.env:CIRL_DATA,}
+judge:
+  mode: async
+
+wandb:
+  phase: finalize
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/privacylens_cirl
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      finalize:
+        stage: cirl_finalize_async
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/compute_trajectory_metrics/metrics.parquet
+          metrics_json: outputs/compute_trajectory_metrics/metrics.json

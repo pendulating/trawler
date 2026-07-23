@@ -25,7 +25,10 @@ def _json(obj: dict, **kwargs) -> str:
 
 
 ANSWER = {"classification": "appropriate", "confidence": 0.9}
-SCHEMA_EXAMPLE = {"classification": "<appropriate|inappropriate>", "confidence": "<float>"}
+SCHEMA_EXAMPLE = {
+    "classification": "<appropriate|inappropriate>",
+    "confidence": "<float>",
+}
 
 
 # ── Fast path: whole string is valid JSON ─────────────────────────────
@@ -100,7 +103,7 @@ class TestOutermostExtraction:
         """When multiple objects exist, the outermost span (first { to
         last }) is attempted.  If that span isn't valid JSON, returns None.
         This matches the old extract_last_json behavior (greedy regex)."""
-        text = f'{_json({"first": 1})} prose {_json({"second": 2})}'
+        text = f"{_json({'first': 1})} prose {_json({'second': 2})}"
         obj, _ = extract_json_from_text(text)
         # The span '{"first": 1} prose {"second": 2}' is not valid JSON
         assert obj is None
@@ -120,7 +123,10 @@ class TestOutermostExtraction:
             End of response.
         """)
         obj, _ = extract_json_from_text(text)
-        assert obj == {"classification": "inappropriate", "reasoning": "PHI was disclosed"}
+        assert obj == {
+            "classification": "inappropriate",
+            "reasoning": "PHI was disclosed",
+        }
 
 
 # ── json_repair fallback ──────────────────────────────────────────────
@@ -183,7 +189,7 @@ class TestExtractLastJsonCompat:
 
         cases = [
             '{"a": 1}',
-            f'prose {_json(ANSWER)} more prose',
+            f"prose {_json(ANSWER)} more prose",
             "no json",
             "",
             f"```json\n{_json(ANSWER)}\n```",

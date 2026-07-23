@@ -2,14 +2,19 @@
 
 Ported from VLM-GeoPrivacyBench/src/eval.py.
 
-The parser correctly returns ``None`` for unparseable predictions and
-``compute_metrics`` filters them out before computing accuracy / F1, so
-no silent zero-defaulting occurs. The migration here is
-**provenance-only**: every per-question accuracy / F1 carries
-``n_total / n_real / n_defaulted`` so a reader can see what fraction
-of the dataset each per-question rate was computed on. Per-question
-``parseable_rate`` is also surfaced as the trust signal that the format
-gate would react to.
+**Denominator semantics (2026-07-21 parity review).** Upstream
+``eval.py`` computes per-question accuracy over ALL merged rows —
+an ``N/A`` (unparseable) prediction counts as *wrong*, it is not
+dropped. The headline ``per_question.<Q>.accuracy`` / ``f1_macro``
+mirror that (house style: headline = paper parity, cf.
+``wiki/metric-trust.md``), with provenance flagging how many rows
+were unparseable-counted-wrong. The previous drop-unparseable
+behavior is preserved as the ``*_among_parseable`` diagnostic.
+(Empirically identical on every 2026-07 run — guided JSON decoding
+holds ``parseable_rate`` at 1.000 across all 85 cells — the flip
+protects future runs from silent inflation, it does not change any
+reported number.) Per-question ``parseable_rate`` remains the trust
+signal that the format gate reacts to.
 """
 
 from __future__ import annotations
@@ -126,24 +131,32 @@ def compute_metrics(df: pd.DataFrame, free_form: bool = False) -> dict[str, Any]
         if true_col not in df.columns or pred_col not in df.columns:
             continue
 
-        y_true = df[true_col].apply(_extract_first_char).dropna()
-        y_pred = df[pred_col].apply(_extract_first_char).dropna()
+        y_true_all = df[true_col].apply(_extract_first_char)
+        y_pred_all = df[pred_col].apply(_extract_first_char)
 
-        # Align indices
-        common_idx = y_true.index.intersection(y_pred.index)
-        y_true = y_true.loc[common_idx]
-        y_pred = y_pred.loc[common_idx]
+        # Upstream denominator: every row with a valid gold label. An
+        # invalid/unparseable PREDICTION stays in as the sentinel "N/A"
+        # and scores wrong (upstream eval.py passes raw predictions —
+        # incl. "N/A" — straight into accuracy_score).
+        gold_mask = y_true_all.isin(LABEL_ORDER)
+        y_true_gold = y_true_all[gold_mask].tolist()
+        y_pred_gold = [
+            p if p in LABEL_ORDER else "N/A"
+            for p in y_pred_all[gold_mask].tolist()
+        ]
+        n_gold = len(y_true_gold)
 
-        # Filter to valid labels
-        valid_mask = y_true.isin(LABEL_ORDER) & y_pred.isin(LABEL_ORDER)
-        y_true_valid = y_true[valid_mask].tolist()
-        y_pred_valid = y_pred[valid_mask].tolist()
+        # Rows where BOTH sides parsed — the among-parseable diagnostic
+        # set, also used for the confusion matrix / directionality (same
+        # effective filtering as upstream's label-restricted views).
+        y_true_valid = [t for t, p in zip(y_true_gold, y_pred_gold) if p in LABEL_ORDER]
+        y_pred_valid = [p for p in y_pred_gold if p in LABEL_ORDER]
 
         n_valid = len(y_true_valid)
-        n_defaulted = max(n_total - n_valid, 0)
+        n_unparseable = n_gold - n_valid
 
         # parseable_rate is the trust signal — what fraction of inputs
-        # this question's metric was actually computed on. format-health
+        # this question's prediction actually parsed. format-health
         # would react to this falling below 0.9.
         em.emit_simple(
             f"per_question.{q}.parseable_rate",
@@ -153,34 +166,43 @@ def compute_metrics(df: pd.DataFrame, free_form: bool = False) -> dict[str, Any]
         em.emit_raw(f"per_question.{q}.n_valid", n_valid)
         em.emit_raw(f"per_question.{q}.n_total", int(n_total))
 
-        if not y_true_valid:
+        if not y_true_gold:
             per_question[q] = {"accuracy": 0.0, "f1_macro": 0.0, "n_valid": 0}
             em.emit_simple(f"per_question.{q}.accuracy", 0.0, n_total=0)
             em.emit_simple(f"per_question.{q}.f1_macro", 0.0, n_total=0)
+            em.emit_simple(f"per_question.{q}.accuracy_among_parseable", 0.0, n_total=0)
             continue
 
-        acc = accuracy_score(y_true_valid, y_pred_valid)
-        f1 = f1_score(y_true_valid, y_pred_valid, labels=LABEL_ORDER, average="macro", zero_division=0)
+        # Headline (paper parity): unparseable predictions count as wrong.
+        acc = accuracy_score(y_true_gold, y_pred_gold)
+        f1 = f1_score(y_true_gold, y_pred_gold, labels=LABEL_ORDER, average="macro", zero_division=0)
 
         em.emit(
             f"per_question.{q}.accuracy",
             round(acc, 6),
-            n_total=n_total,
+            n_total=n_gold,
             n_real=n_valid,
-            n_defaulted=n_defaulted,
-            default_reason="unparseable_dropped" if n_defaulted else None,
+            n_defaulted=n_unparseable,
+            default_reason="unparseable_counted_as_wrong" if n_unparseable else None,
         )
         em.emit(
             f"per_question.{q}.f1_macro",
             round(f1, 6),
-            n_total=n_total,
+            n_total=n_gold,
             n_real=n_valid,
-            n_defaulted=n_defaulted,
-            default_reason="unparseable_dropped" if n_defaulted else None,
+            n_defaulted=n_unparseable,
+            default_reason="unparseable_counted_as_wrong" if n_unparseable else None,
+        )
+
+        # Diagnostic: accuracy among rows whose prediction parsed.
+        em.emit_simple(
+            f"per_question.{q}.accuracy_among_parseable",
+            round(accuracy_score(y_true_valid, y_pred_valid), 6) if n_valid else 0.0,
+            n_total=n_valid,
         )
         per_question.setdefault(q, {})
 
-        if q == "Q7":
+        if q == "Q7" and y_true_valid:
             cm = confusion_matrix(y_true_valid, y_pred_valid, labels=LABEL_ORDER)
             em.emit_raw(f"per_question.Q7.confusion_matrix", cm.tolist())
 

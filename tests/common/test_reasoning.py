@@ -172,6 +172,7 @@ class TestBackwardCompat:
             _strip_think_blocks as stb,
             model_needs_reasoning_budget as mnrb,
         )
+
         assert stb is _strip_think_blocks
         assert ihm is _is_harmony_model
         assert drp is _detect_reasoning_parser

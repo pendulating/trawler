@@ -1,0 +1,12 @@
+{
+  "plot-title": "Societal domain distribution by corpus (top 12 categories)",
+  "plot-caption": "We compare the societal domains the norms govern, showing the 12 categories with the largest pooled share. This is the only axis with a non-trivial shift (total variation distance, TVD = 0.205; Jensen-Shannon divergence, JSD = 0.104), driven by the larger fiction10 share of social-propriety, courtship, and governance norms. However, the same-book analysis shows most of this gap is free-text label-vocabulary noise rather than corpus composition.",
+  "plot-latex-label": "fig:context",
+  "plot-tags": [
+    "norm-distribution",
+    "raz_context",
+    "societal-domain",
+    "fiction10-vs-top100",
+    "camera-ready"
+  ]
+}

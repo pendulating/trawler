@@ -1,0 +1,12 @@
+{
+  "plot-title": "Generalizability gate pass rate by corpus (extraction stage)",
+  "plot-caption": "We report the share of norms that pass the extraction-stage generalizability gate, which flags any character- or plot-specific leakage. Both corpora pass at high rates: 95.6% for fiction10 versus 99.5% for top100 (Jensen-Shannon divergence, JSD = 0.013). The residual 4-point gap does not shrink on identical books (noise-floor ratio 1.15), so we read it as a run-level effect rather than a corpus-composition effect. Role abstraction has not yet been applied to either corpus.",
+  "plot-latex-label": "fig:quality_gate",
+  "plot-tags": [
+    "norm-distribution",
+    "norm_quality_passed",
+    "generalizability",
+    "fiction10-vs-top100",
+    "camera-ready"
+  ]
+}

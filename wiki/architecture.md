@@ -30,7 +30,7 @@ The orchestrator loads a pipeline YAML → topologically sorts nodes → resolve
 | `privacylens` | Agent action / QA leakage benchmark |
 | `vlm_geoprivacy_bench` | Visual geolocation CI benchmark |
 | `confaide` | ConfAIde tiers 1–2 paired with crowdsourced humans |
-| `cirl_vignettes` | Structured CI-vignette benchmark |
+| `cirl` | CIRL-729 synthetic action benchmark (leakage/utility, judge-free) |
 
 Deprecated (dot-prefixed, ignore for COLM): `.uair`, `.rule_tuples`.
 

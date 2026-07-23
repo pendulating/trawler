@@ -1,13 +1,19 @@
 """Compute evaluation metrics for GoldCoin HIPAA benchmark.
 
-GoldCoin's parser correctly labels rows that don't yield a Permit/Forbid
-or Applicable/Not-Applicable as ``"unparseable"``. ``compute_metrics``
-already filters those out before computing accuracy / F1 / confusion
-matrix, so unparseable rows do not silently contribute to the headline
-metric. The migration here is **provenance-only**: every numeric metric
-records ``n_total / n_real / n_defaulted`` so a reader of
-``metrics.json`` can tell what fraction of inputs the metric was
-actually computed on.
+**Denominator semantics (2026-07-21 parity review, approved by Matt).**
+Upstream ``eval/parse_eval_result.py`` never drops an unparseable
+response — its fallback assigns the WRONG label
+(``gt.remove(truth); random.choice(gt)`` over a binary label set is
+deterministically the opposite class) and keeps the row in accuracy and
+macro-F1. The headline ``accuracy`` / ``macro_f1`` (and the confusion
+matrix / per-class blocks) mirror that: unparseable predictions are
+substituted with the wrong label over ALL rows, with provenance
+``unparseable_forced_wrong``. The former drop-unparseable behavior is
+preserved as the ``accuracy_among_parseable`` diagnostic (house style:
+headline = paper parity, cf. ``wiki/metric-trust.md``). Quantified
+impact at flip time: 19/266 July cells had ``parseable_rate`` < 0.99
+(all Gemma-4-E2B-it and GPT-OSS-20B; worst 0.715), i.e. the old
+headline overstated those cells by up to ~12 points.
 """
 
 from __future__ import annotations
@@ -65,25 +71,36 @@ def compute_metrics(df: pd.DataFrame, task: str) -> dict[str, Any]:
     else:
         labels = ["Applicable", "Not Applicable"]
 
-    if parseable_count == 0:
+    if total == 0:
         em.emit_simple("accuracy", 0.0, n_total=0)
         em.emit_simple("macro_f1", 0.0, n_total=0)
+        em.emit_simple("accuracy_among_parseable", 0.0, n_total=0)
         em.emit_raw("per_class", {})
         em.emit_raw("confusion_matrix", {})
         return em.to_dict()
 
-    true_labels = df_parseable["ground_truth"].tolist()
-    predictions = df_parseable["prediction"].tolist()
+    # Upstream forced-wrong substitution: an unparseable prediction becomes
+    # the opposite of the ground truth (deterministic for a binary label
+    # set — exactly what upstream's ``gt.remove(truth); random.choice(gt)``
+    # produces) and stays in every metric below.
+    def _wrong(gt: str) -> str:
+        return labels[1] if gt == labels[0] else labels[0]
 
-    # Accuracy + macro F1 — provenance reflects that unparseable rows
-    # were dropped, not zero-defaulted.
+    true_labels = df["ground_truth"].tolist()
+    predictions = [
+        p if p != "unparseable" else _wrong(g)
+        for g, p in zip(true_labels, df["prediction"].tolist())
+    ]
+
+    # Headline accuracy + macro F1 — paper parity: all rows, unparseable
+    # counted wrong via substitution.
     em.emit(
         "accuracy",
         round(accuracy_score(true_labels, predictions), 6),
         n_total=total,
         n_real=parseable_count,
         n_defaulted=unparseable_count,
-        default_reason="unparseable_dropped" if unparseable_count else None,
+        default_reason="unparseable_forced_wrong" if unparseable_count else None,
     )
     em.emit(
         "macro_f1",
@@ -94,7 +111,22 @@ def compute_metrics(df: pd.DataFrame, task: str) -> dict[str, Any]:
         n_total=total,
         n_real=parseable_count,
         n_defaulted=unparseable_count,
-        default_reason="unparseable_dropped" if unparseable_count else None,
+        default_reason="unparseable_forced_wrong" if unparseable_count else None,
+    )
+
+    # Diagnostic: accuracy among rows the parser actually labeled.
+    em.emit_simple(
+        "accuracy_among_parseable",
+        round(
+            accuracy_score(
+                df_parseable["ground_truth"].tolist(),
+                df_parseable["prediction"].tolist(),
+            ),
+            6,
+        )
+        if parseable_count
+        else 0.0,
+        n_total=parseable_count,
     )
 
     # Per-class metrics via classification_report
@@ -121,12 +153,14 @@ def compute_metrics(df: pd.DataFrame, task: str) -> dict[str, Any]:
             cm_dict[true_label][pred_label] = int(cm[i, j])
     em.emit_raw("confusion_matrix", cm_dict)
 
-    # Per-class correct/error counts
+    # Per-class correct/error counts (substituted full set, matching the
+    # headline denominator).
     class_counts: dict[str, dict[str, int]] = {}
     for label in labels:
-        mask = df_parseable["ground_truth"] == label
-        class_total = int(mask.sum())
-        class_correct = int((df_parseable.loc[mask, "prediction"] == label).sum())
+        class_total = sum(1 for t in true_labels if t == label)
+        class_correct = sum(
+            1 for t, p in zip(true_labels, predictions) if t == label and p == label
+        )
         class_counts[label] = {
             "total": class_total,
             "correct": class_correct,

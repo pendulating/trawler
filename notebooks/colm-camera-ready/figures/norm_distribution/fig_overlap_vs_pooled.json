@@ -1,0 +1,12 @@
+{
+  "plot-title": "Run-to-run noise floor versus pooled shift, per axis",
+  "plot-caption": "We compare, for each axis, the pooled divergence (all books, corpus composition plus noise) against the overlap divergence (the 7 books present in both corpora, extracted independently by the same model, i.e., the run-to-run noise floor). A pooled shift far above the floor indicates a genuine corpus-composition effect, while a shift near the floor is indistinguishable from sampling noise. Only raz_context exceeds its floor, and only modestly (pooled 0.104 versus floor 0.073, ratio 0.70).",
+  "plot-latex-label": "fig:overlap_vs_pooled",
+  "plot-tags": [
+    "norm-distribution",
+    "noise-floor",
+    "overlap",
+    "divergence",
+    "camera-ready"
+  ]
+}

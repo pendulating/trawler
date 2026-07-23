@@ -1,0 +1,69 @@
+# @package _global_
+# PrivacyLens under the CIRL protocol — trajectory leakage (model generates the
+# final action; judge scores leakage=Integrity + helpfulness=Utility).
+defaults:
+  - /model: qwen2.5-7b/instruct
+  - override /hydra/launcher: slurm_monitor
+
+data:
+  name: cirl_protocol_pl493
+  json_path: ${oc.env:CIRL_DATA,}
+prompt:
+  think: false
+  trajectory_prompt_type: naive
+
+sampling_params:
+  seed: 42
+  temperature: 0.0
+  max_tokens: 16
+  trajectory_temperature: 0.7
+  trajectory_max_tokens: 7000
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/privacylens_cirl
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      cirl_load_dataset:
+        stage: cirl_load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+        overrides:
+          data:
+            probing_levels: [trajectory]
+
+      cirl_trajectory_inference:
+        stage: cirl_trajectory_inference
+        depends_on: [cirl_load_dataset]
+        inputs:
+          dataset: cirl_load_dataset.dataset
+        outputs:
+          dataset: outputs/trajectory_inference/dataset.parquet
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
+
+      cirl_judge_leakage:
+        stage: cirl_judge_leakage
+        depends_on: [cirl_trajectory_inference]
+        inputs:
+          dataset: cirl_trajectory_inference.dataset
+        outputs:
+          dataset: outputs/judge_leakage/dataset.parquet
+
+      cirl_judge_helpfulness:
+        stage: cirl_judge_helpfulness
+        depends_on: [cirl_judge_leakage]
+        inputs:
+          dataset: cirl_judge_leakage.dataset
+        outputs:
+          dataset: outputs/judge_helpfulness/dataset.parquet
+
+      cirl_compute_trajectory_metrics:
+        stage: cirl_compute_trajectory_metrics
+        depends_on: [cirl_judge_helpfulness]
+        inputs:
+          dataset: cirl_judge_helpfulness.dataset
+        outputs:
+          dataset: outputs/compute_trajectory_metrics/metrics.parquet

@@ -16,9 +16,9 @@ benchmarks:
     pipeline: privacylens_clean_2gpu
     vlm_only: false
     enabled: true
-  cirl_vignettes:
-    module: dagspaces.cirl_vignettes.cli
-    pipeline: cirl_vignettes_eval_2gpu
+  cirl:
+    module: dagspaces.cirl.cli
+    pipeline: cirl_eval_2gpu
     vlm_only: false
     enabled: true
   confaide:

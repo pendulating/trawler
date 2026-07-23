@@ -1,0 +1,7 @@
+# @package _global_
+# PrivacyLens-493 cases as vendored in the CI-RL repo (main_data.json). Same
+# data the retired cirl_vignettes dagspace used; downloaded on first use if
+# CIRL_DATA is unset. This is "PrivacyLens under the CIRL protocol".
+data:
+  name: cirl_protocol_pl493
+  json_path: ${oc.env:CIRL_DATA,}

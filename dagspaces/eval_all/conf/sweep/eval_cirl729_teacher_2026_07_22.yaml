@@ -1,0 +1,46 @@
+# @package _global_
+# CIRL-729 backfill for the teacher reference row (Gemma-4-31B-it), TP=2.
+# Companion to eval_cirl729_canonical_2026_07_22.yaml — see that file for the
+# benchmark-swap context. CIRL is judge-free, so unlike the original
+# eval_teacher_gemma4_31b sweep this needs no judge server and the row carries
+# no self-judging caveat for these columns.
+#
+# Usage (absolute venv python — sweep-driver-venv trap):
+#   /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/python \
+#       -m dagspaces.eval_all.cli --multirun +sweep=eval_cirl729_teacher_2026_07_22
+
+defaults:
+  - override /pipeline: all_benchmarks_2gpu
+
+experiment:
+  name: eval_cirl729_teacher
+
+benchmark_filter:
+  include:
+    - cirl
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 1
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      # TP=2 collectives are this model's bottleneck — keep SHM on, P2P off
+      # (see gemma-4-31b/instruct.yaml throughput notes).
+      - export NCCL_SHM_DISABLE=0
+      - export NCCL_P2P_DISABLE=1
+  sweeper:
+    params:
+      model: gemma-4-31b/instruct

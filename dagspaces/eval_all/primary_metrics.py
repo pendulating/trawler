@@ -59,16 +59,21 @@ PRIMARY_METRICS: dict[str, list[PrimaryMetric]] = {
     "privacylens": [
         # Lower leakage = better; higher helpfulness = better. Both
         # surface separately; the summary table shows both columns.
+        # Paths must match what privacylens/stages/compute_metrics.py
+        # actually emits: the ``*_among_parseable`` variants are the
+        # primary, paper-quoted rates (the bare ``leakage.leakage_rate`` /
+        # ``helpfulness.mean_score`` names were pre-refactor and resolved
+        # to None — 2026-07-21 parity review).
         PrimaryMetric(
             name="leakage_rate",
             subdir="compute_metrics",
-            path="leakage.leakage_rate",
+            path="leakage.leakage_rate_among_parseable",
             higher_is_better=False,
         ),
         PrimaryMetric(
             name="helpfulness",
             subdir="compute_metrics",
-            path="helpfulness.mean_score",
+            path="helpfulness.mean_score_among_parseable",
             higher_is_better=True,
             format_spec=".3f",
         ),
@@ -91,11 +96,29 @@ PRIMARY_METRICS: dict[str, list[PrimaryMetric]] = {
             path="accuracy",
         ),
     ],
-    "cirl_vignettes": [
+    # CIRL-729 action benchmark (huseyinatahaninan/ContextualIntegritySyntheticDataset):
+    # deterministic substring leakage/utility. Lower leakage = better;
+    # higher utility/net = better. (The retired "cirl_vignettes" key held
+    # PrivacyLens-under-CIRL-protocol rejection accuracy — a different task;
+    # that protocol now lives in the privacylens dagspace.)
+    "cirl": [
         PrimaryMetric(
-            name="accuracy",
+            name="leakage_rate",
             subdir="compute_metrics",
-            path="accuracy",
+            path="leakage.leakage_rate",
+            higher_is_better=False,
+        ),
+        PrimaryMetric(
+            name="utility",
+            subdir="compute_metrics",
+            path="utility.utility_rate",
+            higher_is_better=True,
+        ),
+        PrimaryMetric(
+            name="net_score",
+            subdir="compute_metrics",
+            path="net_score",
+            higher_is_better=True,
         ),
     ],
     "confaide": [
@@ -110,17 +133,22 @@ PRIMARY_METRICS: dict[str, list[PrimaryMetric]] = {
             subdir="compute_metrics_tier2b",
             path="pearson_r",
         ),
-        # tier 3: error_rate = how often the model leaked. Lower = better.
+        # tier 3: error/leak rates. Lower = better. Paths must match what
+        # confaide/stages/compute_metrics.py actually emits — the bare
+        # ``error_rate`` name only exists for tier3_control; free/info/
+        # sharing emit the ``*_among_parseable`` headline (2026-04-27
+        # anti-gaming split) and previously resolved to None in every
+        # eval_all summary (2026-07-21 parity review).
         PrimaryMetric(
             name="tier3_info_error",
             subdir="compute_metrics_tier3_info",
-            path="error_rate",
+            path="error_rate_among_parseable",
             higher_is_better=False,
         ),
         PrimaryMetric(
             name="tier3_free_error",
             subdir="compute_metrics_tier3_free",
-            path="error_rate",
+            path="leak_rate_among_parseable",
             higher_is_better=False,
         ),
         PrimaryMetric(
@@ -132,7 +160,7 @@ PRIMARY_METRICS: dict[str, list[PrimaryMetric]] = {
         PrimaryMetric(
             name="tier3_sharing_error",
             subdir="compute_metrics_tier3_sharing",
-            path="error_rate",
+            path="error_rate_among_parseable",
             higher_is_better=False,
         ),
     ],

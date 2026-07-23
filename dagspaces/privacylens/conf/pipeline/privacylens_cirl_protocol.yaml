@@ -1,0 +1,59 @@
+# @package _global_
+# PrivacyLens under the CIRL protocol — (A)/(B) rejection probing (seed +
+# vignette) using the CIRL paper prompt framing. Ported from the retired
+# cirl_vignettes dagspace; same PrivacyLens-493 cases as the native
+# privacylens pipelines, different prompt framing (the protocol comparison).
+defaults:
+  - /model: qwen2.5-7b/instruct
+  - override /hydra/launcher: slurm_monitor
+
+data:
+  name: cirl_protocol_pl493
+  json_path: ${oc.env:CIRL_DATA,}
+prompt:
+  think: false
+
+sampling_params:
+  seed: 42
+  temperature: 0.0
+  max_tokens: 16
+  trajectory_temperature: 0.7
+  trajectory_max_tokens: 7000
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/privacylens_cirl
+  allow_partial: false
+  sources: {}
+  graph:
+    nodes:
+      cirl_load_dataset:
+        stage: cirl_load_dataset
+        depends_on: []
+        inputs: {}
+        outputs:
+          dataset: outputs/load_dataset/dataset.parquet
+
+      cirl_probe_inference:
+        stage: cirl_probe_inference
+        depends_on: [cirl_load_dataset]
+        inputs:
+          dataset: cirl_load_dataset.dataset
+        outputs:
+          dataset: outputs/llm_inference/dataset.parquet
+        launcher: ${oc.env:TRAWLER_EVAL_INFER_LAUNCHER,slurm_gpu_1x}
+
+      cirl_parse_responses:
+        stage: cirl_parse_responses
+        depends_on: [cirl_probe_inference]
+        inputs:
+          dataset: cirl_probe_inference.dataset
+        outputs:
+          dataset: outputs/parse_responses/dataset.parquet
+
+      cirl_compute_metrics:
+        stage: cirl_compute_metrics
+        depends_on: [cirl_parse_responses]
+        inputs:
+          dataset: cirl_parse_responses.dataset
+        outputs:
+          dataset: outputs/compute_metrics/metrics.parquet

@@ -150,16 +150,24 @@ class TestConfaide:
             "generated_text": ["x"] * 100,
         })
         m = compute_metrics(df, "3_control")
-        assert m["accuracy"] == pytest.approx(80 / 95, abs=1e-5)
+        # Headline is upstream parity (2026-07-21 review, Matt-approved):
+        # unparseable counts as error, denominator = all rows.
+        assert m["accuracy"] == pytest.approx(80 / 100, abs=1e-5)
+        assert m["error_rate"] == pytest.approx(20 / 100, abs=1e-5)
+        prov = m["metric_provenance"]["error_rate"]
+        assert prov["n_defaulted"] == 5
+        assert prov["default_reason"] == "unparseable_counted_as_error"
+        # Drop-unparseable variant survives as the diagnostic.
+        assert m["accuracy_among_parseable"] == pytest.approx(80 / 95, abs=1e-5)
 
 
 # ---------------------------------------------------------------------------
-# cirl_vignettes — trajectory metrics with the helpfulness_score=0 corruption.
+# PrivacyLens-under-CIRL-protocol — trajectory metrics with the helpfulness_score=0 corruption.
 # ---------------------------------------------------------------------------
 
 class TestCirlTrajectory:
     def test_among_judged_vs_overall(self):
-        from dagspaces.cirl_vignettes.stages.compute_trajectory_metrics import (
+        from dagspaces.privacylens.cirl_protocol.stages.compute_trajectory_metrics import (
             compute_trajectory_metrics,
         )
 
@@ -193,7 +201,7 @@ class TestCirlTrajectory:
         # adherence the report warns loudly but does NOT raise, so the
         # pipeline reaches compute_metrics and emits the conditioned
         # leakage/helpfulness rates rather than disqualifying the run.
-        from dagspaces.cirl_vignettes.stages.compute_trajectory_metrics import (
+        from dagspaces.privacylens.cirl_protocol.stages.compute_trajectory_metrics import (
             compute_trajectory_metrics,
         )
 
@@ -210,7 +218,7 @@ class TestCirlTrajectory:
         assert m["agent_action_format_rate"] == pytest.approx(0.5)
 
         report = compute_format_health(
-            df, dagspace="cirl_vignettes", stage="agent_action_format",
+            df, dagspace="privacylens_cirl", stage="agent_action_format",
             format_col="agent_action_format_status",
         )
         assert report.has_warnings(), "low adherence must surface a warning"
@@ -226,7 +234,7 @@ class TestCirlTrajectory:
     def test_format_health_halts_at_50pct_with_explicit_fail_override(self):
         # Operators who DO want a hard adherence gate can opt in per-run
         # via a severity-keyed threshold override on compute_format_health.
-        from dagspaces.cirl_vignettes.stages.compute_trajectory_metrics import (
+        from dagspaces.privacylens.cirl_protocol.stages.compute_trajectory_metrics import (
             compute_trajectory_metrics,  # noqa: F401 — imported for parity
         )
 
@@ -240,7 +248,7 @@ class TestCirlTrajectory:
             "final_action_generated": (["Action: x"] * n_judged + ["nope"] * (n_total - n_judged)),
         })
         report = compute_format_health(
-            df, dagspace="cirl_vignettes", stage="agent_action_format",
+            df, dagspace="privacylens_cirl", stage="agent_action_format",
             format_col="agent_action_format_status",
             thresholds={"format_adherence_rate:lt:fail": 0.9},
         )
@@ -252,7 +260,7 @@ class TestCirlTrajectory:
 
 class TestCirlProbing:
     def test_provenance_and_conditional(self):
-        from dagspaces.cirl_vignettes.stages.compute_metrics import compute_metrics
+        from dagspaces.privacylens.cirl_protocol.stages.compute_metrics import compute_metrics
 
         df = pd.DataFrame({
             "prediction": ["B"] * 80 + ["A"] * 15 + ["unparseable"] * 5,
@@ -289,9 +297,13 @@ class TestGoldcoin:
         assert prov["n_total"] == 100
         assert prov["n_real"] == 95  # parseable
         assert prov["n_defaulted"] == 5
-        assert prov["default_reason"] == "unparseable_dropped"
-        # Accuracy = 95/95 (all parseable rows correct in this synth)
-        assert m["accuracy"] == pytest.approx(1.0)
+        # Headline is upstream parity (2026-07-21 review, Matt-approved):
+        # unparseable rows are substituted with the WRONG label and stay in
+        # the denominator — 95 correct / 100.
+        assert prov["default_reason"] == "unparseable_forced_wrong"
+        assert m["accuracy"] == pytest.approx(0.95)
+        # The old drop-unparseable behavior survives as the diagnostic.
+        assert m["accuracy_among_parseable"] == pytest.approx(1.0)
 
     def test_zero_unparseable_clean_provenance(self):
         from dagspaces.goldcoin_hipaa.stages.compute_metrics import compute_metrics
@@ -337,8 +349,13 @@ class TestVlmGeoprivacy:
         # Q1 has all 50 rows valid
         q1_acc = m["metric_provenance"]["per_question.Q1.accuracy"]
         assert q1_acc["n_defaulted"] == 0
-        # Q7 has 5 unparseable
+        # Q7 has 5 unparseable. Headline semantics are upstream parity
+        # (2026-07-21 review): unparseable predictions count as WRONG,
+        # not dropped — 45 correct / 50 gold rows.
         q7_acc = m["metric_provenance"]["per_question.Q7.accuracy"]
         assert q7_acc["n_defaulted"] == 5
-        assert q7_acc["default_reason"] == "unparseable_dropped"
+        assert q7_acc["default_reason"] == "unparseable_counted_as_wrong"
         assert q7_acc["n_real"] == 45
+        assert m["per_question"]["Q7"]["accuracy"] == 0.9
+        # The drop-unparseable variant survives as the diagnostic.
+        assert m["per_question"]["Q7"]["accuracy_among_parseable"] == 1.0

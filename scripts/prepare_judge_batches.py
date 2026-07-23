@@ -90,10 +90,10 @@ def _build_registry() -> Dict[str, StageEntry]:
         export_helpfulness_judge_batch as pl_helpfulness,
         export_leakage_judge_batch as pl_leakage,
     )
-    from dagspaces.cirl_vignettes.stages.judge_helpfulness import (
+    from dagspaces.privacylens.cirl_protocol.stages.judge_helpfulness import (
         export_helpfulness_judge_batch as cv_helpfulness,
     )
-    from dagspaces.cirl_vignettes.stages.judge_leakage import (
+    from dagspaces.privacylens.cirl_protocol.stages.judge_leakage import (
         export_leakage_judge_batch as cv_leakage,
     )
 

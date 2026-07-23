@@ -14,7 +14,7 @@ Manuscript: `papers/colm26_normative-simulacra/`. Experiment runbook: `EXPERIMEN
 
 **Method deep-dives**
 - [grpo_redesign/](grpo_redesign/README.md) — **⚠️ ACTIVE (2026-07-16): ground-up modular GRPO redesign** for the corrected Gemma-4 data retrain — one module = one sentence, ablation cells = literal take-one-out from a config list; master doc + per-module subpages. Supersedes grpo-reward.md *for new runs*; the v9-ckpt100 keeper path stays frozen
-- [grpo-reward.md](grpo-reward.md) — composite reward components and contrastive scoring (the v9–v12a lineage; keeper-era reference)
+- [grpo-reward.md](grpo-reward.md) — composite reward, directional composition, listwise R_ground, deontic tier ladder (the v9–v12a lineage; keeper-era reference — **rewritten 2026-07-20 to be 1:1 with the code**, incl. a deviations-from-vanilla-GRPO checklist for the camera-ready)
 - [grpo_training_field_notes/](grpo_training_field_notes/README.md) — dated scratch notes from training-run analysis (reward traces, sweeps, gold-label behavior)
 - [normative-simulacra.md](normative-simulacra.md) — IFT + Raz norm extraction from fiction
 - [thinking-modes.md](thinking-modes.md) — `<think>` token handling across SFT, GRPO, and eval
@@ -35,6 +35,7 @@ Manuscript: `papers/colm26_normative-simulacra/`. Experiment runbook: `EXPERIMEN
 - [integrations/openai-batch-api.md](integrations/openai-batch-api.md) — upstream OpenAI Batch API reference (mirror)
 
 **Changelog (run-affecting changes)**
+- [changelog/2026-07-20_grpo_methodology_congruency_review.md](changelog/2026-07-20_grpo_methodology_congruency_review.md) — GRPO wiki↔code↔paper congruency review: listwise R_ground is a deliberate GRPO-tenet deviation the camera-ready must own; epsilon_high inert at μ=1; `loss_type` silently inherited (TRL 1.8.0 `dapo`); judge-server default (Gemma-4-31B-it) mismatches the dagspace's keeper judge (Qwen3.6-27B); 5 wiki drifts fixed by rewriting grpo-reward.md
 - [changelog/2026-07-13_canonical_models_and_harmony.md](changelog/2026-07-13_canonical_models_and_harmony.md) — **⚠️ IN PROGRESS, has a "Resume here"**: canonical 13-model set established; gpt-oss was returning its hidden `analysis` channel as its answer (all prior gpt-oss numbers suspect) — fixed; vLLM 0.19.1→0.25 upgrade blocked on a CUDA-13/driver question that needs a GPU node; the overnight top100 chain died with its SLURM session (reasoning done, extraction never submitted)
 - [changelog/2026-05-12_privacylens_action_prompt_react.md](changelog/2026-05-12_privacylens_action_prompt_react.md) — PrivacyLens action-inference prompt rewritten to upstream SALT-NLP ReAct (May 12+ runs not byte-comparable to Mar/Apr)
 - [changelog/2026-06-09_code_review_norms_grpo.md](changelog/2026-06-09_code_review_norms_grpo.md) — code review of historical_norms + grpo_training vs. paper claims; ALL code findings fixed same day (λ primary→1.0, ranked judge-failure neutrality, chunker size invariant, prescreen cache key, universe dedup, vignette accounting, embedding-outage abort, eval-reward trend gate). Before sweeping: re-run `norm_universe_and_reward_prep`; manuscript actions listed at the end

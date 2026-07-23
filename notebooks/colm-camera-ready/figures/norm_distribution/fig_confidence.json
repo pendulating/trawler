@@ -1,0 +1,12 @@
+{
+  "plot-title": "Extractor confidence by corpus (qualitative and numeric)",
+  "plot-caption": "We show extractor confidence as the ordinal qualitative label (left) and the 0 to 10 numeric score (right). The qualitative axis carries the second-largest shift (Jensen-Shannon divergence, JSD = 0.016): fiction10 skews toward certain (74.3% versus 66.0%), while top100 carries more somewhat-certain mass (24.9% versus 13.4%). The numeric distributions overlap closely.",
+  "plot-latex-label": "fig:confidence",
+  "plot-tags": [
+    "norm-distribution",
+    "raz_confidence",
+    "extractor-confidence",
+    "fiction10-vs-top100",
+    "camera-ready"
+  ]
+}
