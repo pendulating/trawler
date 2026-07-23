@@ -33,6 +33,7 @@ Manuscript: `papers/colm26_normative-simulacra/`. Experiment runbook: `EXPERIMEN
 **Integrations**
 - [integrations/batch-judging.md](integrations/batch-judging.md) — OpenAI Batch API judging for PrivacyLens + CIRL-Vignettes, 1:1 upstream prompt parity, offline export, finalize flow
 - [integrations/openai-batch-api.md](integrations/openai-batch-api.md) — upstream OpenAI Batch API reference (mirror)
+- [integrations/wandb-parity.md](integrations/wandb-parity.md) — local metrics.json ↔ W&B parity contract: mechanical mirror, bidirectional linkage, derived sweep groups, verify/push/pull sync tool
 
 **Changelog (run-affecting changes)**
 - [changelog/2026-07-20_grpo_methodology_congruency_review.md](changelog/2026-07-20_grpo_methodology_congruency_review.md) — GRPO wiki↔code↔paper congruency review: listwise R_ground is a deliberate GRPO-tenet deviation the camera-ready must own; epsilon_high inert at μ=1; `loss_type` silently inherited (TRL 1.8.0 `dapo`); judge-server default (Gemma-4-31B-it) mismatches the dagspace's keeper judge (Qwen3.6-27B); 5 wiki drifts fixed by rewriting grpo-reward.md

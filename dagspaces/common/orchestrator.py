@@ -113,6 +113,15 @@ class _NoOpLogger:
     def log_artifact(self, *args: Any, **kwargs: Any) -> None:
         return None
 
+    def run_info(self) -> dict[str, Any] | None:
+        return None
+
+    def save_file(self, path: str, *, base_path: str | None = None) -> None:
+        pass
+
+    def add_tags(self, tags: list[str]) -> None:
+        pass
+
     def log_sanity_report(self, report: Any) -> None:
         # Even with wandb disabled, surface warnings on stderr so the
         # operator sees them. Tolerate any non-SanityReport object.
@@ -1181,6 +1190,36 @@ def _submit_slurm_job(
 # ---------------------------------------------------------------------------
 
 
+def _mirror_stage_metrics(logger: Any, result: Any, stage: str) -> None:
+    """Mechanical local↔W&B metrics mirror (parity layer).
+
+    Runs after the per-dagspace curated ``log_eval_metrics`` hook and is
+    deliberately independent of it: every numeric leaf of the stage's
+    metrics lands in W&B under ``<subdir>/metrics_json/<dotted>`` with keys
+    byte-identical to metrics.json, and the file itself is uploaded. The
+    curated hook can rot (the cirl formatter logged nothing for months);
+    this cannot, because it has no per-benchmark key list.
+    """
+    try:
+        metrics = (result.metadata or {}).get("metrics")
+        metrics_json = (result.outputs or {}).get("metrics_json")
+        if not isinstance(metrics, dict):
+            metrics = None
+        if not metrics and not metrics_json:
+            return
+        from dagspaces.common.metrics_sync import mirror_metrics_to_wandb
+
+        mirror_metrics_to_wandb(
+            logger,
+            metrics=metrics,
+            metrics_json_path=metrics_json,
+            stage=stage,
+        )
+    except Exception as exc:
+        print(f"[metrics_sync] mirror failed for stage {stage}: {exc}",
+              file=sys.stderr)
+
+
 @dataclass(frozen=True)
 class OrchestratorHooks:
     """Per-dagspace parameters for the generic eval run loop.
@@ -1521,6 +1560,7 @@ def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
         eval_metrics = result.metadata.get("metrics")
         if eval_metrics and isinstance(eval_metrics, dict):
             hooks.log_eval_metrics(logger, eval_metrics, node.stage)
+        _mirror_stage_metrics(logger, result, node.stage)
 
         return {"outputs": result.outputs, "metadata": result.metadata}
 
@@ -1653,6 +1693,7 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                 eval_metrics = result.metadata.get("metrics")
                 if eval_metrics and isinstance(eval_metrics, dict):
                     hooks.log_eval_metrics(logger, eval_metrics, node.stage)
+                _mirror_stage_metrics(logger, result, node.stage)
 
                 registry.register_outputs(node.key, result.outputs)
                 duration = time.time() - node_start
