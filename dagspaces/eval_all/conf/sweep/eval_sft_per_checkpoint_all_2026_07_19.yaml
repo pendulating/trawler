@@ -1,0 +1,126 @@
+# @package _global_
+# Hydra sweep: full eval_all PER EPOCH CHECKPOINT — JOINT run of the ENTIRE
+# 2026-07-19 canonical SFT cohort (template-overhaul + DFT era), 32 cells.
+#
+# Supersedes the fragmented earlier attempts of 2026-07-19 (batch1 19-20-27,
+# repair 21-50-31, b2 21-21-50), which were repeatedly holed by concurrent
+# in-place refactoring of dagspaces/common/orchestrator.py (a broken-syntax
+# window, then a missing wandb_logger.pipeline_run_id shim re-export) while
+# their monitors were dispatching. Relaunched clean after the refactor
+# settled. Salvageable results from those dirs exist but THIS run is the
+# canonical per-checkpoint record.
+#
+# Roster (checkpoints = epochs 1/2/3 of 513 steps unless noted):
+#   qwen3.5-2b / qwen3.5-4b / qwen3.5-9b / openthinker3-7b / llama3.1-8b /
+#   harc-llama3.1-8b / phi-4            ckpt 171/342/513  (00-11-59 arms 0,1,2,6,7,8,9)
+#   gemma-4-e2b                         ckpt 171/342/513  (00-11-59 arm 3)
+#   gemma-4-e4b                         ckpt 171/342/513  (repair_oom/12-49-41/0)
+#   gemma-4-12b                         ckpt 171/342 ONLY (repair_oom/12-49-41/1
+#     still training at launch; add ckpt513 in a follow-up once logged)
+#   gpt-oss-20b                         ckpt 86/172/258   (gptoss/00-11-59/0,
+#     own step count: 258 total = 3 epochs)
+#
+# Roster tweaks + engine tuning (see eval_sft_per_checkpoint_2026_07_19.yaml
+# for the measured derivation):
+#   - confaide restricted to tiers 2a/2b (confaide_tier2_only)
+#   - cirl_vignettes runs TRAJECTORY probing via the async-judge flow
+#   - per-benchmark max_model_len / max_num_seqs from measured profiles;
+#     privacylens + cirl deliberately keep each family's canonical default
+#
+# NOT protocol-comparable with keeper-era (pre-2026-07-18) SFT evals.
+#
+# Required cluster setup:
+#   sbatch scripts/judge_server.sub      # must report /v1/models before launch
+# Judge: Gemma-4-31B-it on klara:8002. At 6-wide parallelism the per-cell
+# sidecar cap is lowered 16 -> 8 (judge KV-bound at ~55 concurrent;
+# 6 cells x 8 = 48 stays under it — same total budget as 3 x 16).
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_sft_per_checkpoint_all_2026_07_19
+
+experiment:
+  name: eval_sft_per_checkpoint_all
+
+judge_sidecar:
+  # 6 concurrent cells -> halve the per-cell in-flight cap so combined
+  # judge load (6 x 8 = 48) stays under the server's ~55 capacity.
+  max_inflight: 8
+
+benchmarks:
+  confaide:
+    pipeline: confaide_tier2_only
+    extra_args:
+      - model.engine_kwargs.max_model_len=5120
+      - model.engine_kwargs.max_num_seqs=64
+  cirl_vignettes:
+    pipeline: cirl_trajectory_async
+    finalize_pipeline: cirl_trajectory_async_finalize
+  goldcoin:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+  mmlu:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=128
+  vlm_geoprivacy:
+    extra_args:
+      - model.engine_kwargs.max_model_len=3072
+      - model.engine_kwargs.max_num_seqs=32
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 6 concurrent cells (operator-confirmed GPU headroom); combined
+    # sidecar load stays under judge capacity via judge_sidecar.max_inflight=8.
+    array_parallelism: 6
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      model: >-
+        qwen3.5-2b/sft-canonical-ckpt171,
+        qwen3.5-2b/sft-canonical-ckpt342,
+        qwen3.5-2b/sft-canonical-ckpt513,
+        qwen3.5-4b/sft-canonical-ckpt171,
+        qwen3.5-4b/sft-canonical-ckpt342,
+        qwen3.5-4b/sft-canonical-ckpt513,
+        qwen3.5-9b/sft-canonical-ckpt171,
+        qwen3.5-9b/sft-canonical-ckpt342,
+        qwen3.5-9b/sft-canonical-ckpt513,
+        gemma-4-e2b/sft-canonical-ckpt171,
+        gemma-4-e2b/sft-canonical-ckpt342,
+        gemma-4-e2b/sft-canonical-ckpt513,
+        gemma-4-e4b/sft-canonical-ckpt171,
+        gemma-4-e4b/sft-canonical-ckpt342,
+        gemma-4-e4b/sft-canonical-ckpt513,
+        gemma-4-12b/sft-canonical-ckpt171,
+        gemma-4-12b/sft-canonical-ckpt342,
+        openthinker3-7b/sft-canonical-ckpt171,
+        openthinker3-7b/sft-canonical-ckpt342,
+        openthinker3-7b/sft-canonical-ckpt513,
+        llama3.1-8b/sft-canonical-ckpt171,
+        llama3.1-8b/sft-canonical-ckpt342,
+        llama3.1-8b/sft-canonical-ckpt513,
+        harc-llama3.1-8b/sft-canonical-ckpt171,
+        harc-llama3.1-8b/sft-canonical-ckpt342,
+        harc-llama3.1-8b/sft-canonical-ckpt513,
+        phi-4/sft-canonical-ckpt171,
+        phi-4/sft-canonical-ckpt342,
+        phi-4/sft-canonical-ckpt513,
+        gpt-oss-20b/sft-canonical-ckpt86,
+        gpt-oss-20b/sft-canonical-ckpt172,
+        gpt-oss-20b/sft-canonical-ckpt258

@@ -13,6 +13,7 @@ import importlib
 import json
 import os
 import pickle
+import shlex
 import subprocess
 import sys
 import time
@@ -1104,6 +1105,16 @@ def _create_submitit_executor(
     # mirror is only substituted when it mirrors *this* venv (guards against
     # silently swapping engine versions on mixed-venv clusters).
     setup_lines: list[str] = [f"export TRAWLER_DRIVER_VENV={sys.prefix}"]
+    # Server-mode handshake (eval_all): sbatch here is an ssh shim to the
+    # login node, so the driver's environment does NOT reach the stage job
+    # (no --export=ALL semantics across ssh). Stage-side consumers
+    # (run_vllm_inference's _resolve_server_url / LoRA adapter lookup) read
+    # these from os.environ, so forward them explicitly. Stages running a
+    # different model are protected by the VLLM_SERVER_MODEL identity guard.
+    for _var in ("VLLM_SERVER_URL", "VLLM_SERVER_MODEL", "VLLM_SERVER_LORA_NAME"):
+        _val = os.environ.get(_var, "")
+        if _val:
+            setup_lines.append(f"export {_var}={shlex.quote(_val)}")
     setup_lines.extend(launcher_cfg.get("setup", []))
 
     params: dict[str, Any] = dict(

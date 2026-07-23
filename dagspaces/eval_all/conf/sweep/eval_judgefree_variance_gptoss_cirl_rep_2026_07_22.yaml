@@ -1,0 +1,26 @@
+# @package _global_
+# Requeue of ONE companion rep: gpt-oss-20b/sft-canonical-ckpt258,
+# variance_seed=102, cirl only — the original arm's cirl inference job
+# was externally scancelled mid-engine-load (2026-07-22 16:55, SIGNAL
+# Terminated; environmental, not code). Composes the gpt-oss companion
+# sweep config and narrows the roster to the single (model, seed) plus a
+# cirl-only benchmark filter, so exactly one arm runs and no existing
+# (model, seed, metric) rep is duplicated (the notebook pools every
+# *_eval_judgefree_variance_gptoss/* dir — duplicates would deflate the
+# measured spread).
+#
+# Usage (chained by scripts/run_overnight_batch_2026_07_22.sh):
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_judgefree_variance_gptoss_cirl_rep_2026_07_22
+
+defaults:
+  - eval_judgefree_variance_n3_gptoss_2026_07_20
+
+benchmark_filter:
+  include:
+    - cirl
+
+hydra:
+  sweeper:
+    params:
+      model: gpt-oss-20b/sft-canonical-ckpt258
+      variance_seed: "102"

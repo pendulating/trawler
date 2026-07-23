@@ -1,0 +1,103 @@
+# @package _global_
+# gpt-oss half of the GoldCoin variance top-up: extra seed reps for the
+# four gpt-oss configs — ALL of which exceeded the 2pt threshold in the
+# N=3 companion (instruct Comp. range 9.9pt, ckpt86 7.0pt, ckpt172
+# Appl. 4.2pt, ckpt258 3.3pt — the widest Compliance spreads in the
+# cohort). Excluded from the server-mode top-up because server mode
+# refuses harmony models, so these run IN-PROCESS: each goldcoin_sNNN
+# benchmark entry loads its own engine (no cross-rep server persistence
+# available for this family — ~5-10 min load + ~3 min inference per rep).
+#
+# Same cross-N shape as eval_judgefree_variance_topup_goldcoin_2026_07_21
+# (reps as benchmark entries, seed per entry; rep seed parsed from the
+# dir suffix by the longitudinal notebook's Phase D2 scan).
+#
+# Usage (chained by scripts/run_overnight_batch_2026_07_22.sh):
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_judgefree_variance_topup_gptoss_gc_2026_07_22
+
+experiment:
+  name: eval_judgefree_variance_topup
+
+benchmark_filter:
+  include:
+    - goldcoin_s104
+    - goldcoin_s105
+    - goldcoin_s106
+    - goldcoin_s107
+    - goldcoin_s108
+
+judge_sidecar:
+  enabled: false
+
+benchmarks:
+  goldcoin_s104:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+    enabled: true
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=104
+  goldcoin_s105:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+    enabled: true
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=105
+  goldcoin_s106:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+    enabled: true
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=106
+  goldcoin_s107:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+    enabled: true
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=107
+  goldcoin_s108:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+    enabled: true
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=108
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 4
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      model: >-
+        gpt-oss-20b/instruct,
+        gpt-oss-20b/sft-canonical-ckpt86,
+        gpt-oss-20b/sft-canonical-ckpt172,
+        gpt-oss-20b/sft-canonical-ckpt258

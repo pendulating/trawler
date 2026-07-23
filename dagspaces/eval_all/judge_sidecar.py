@@ -605,7 +605,13 @@ def wait_for_drain(
                 on_tick(len(pending), len(manifests))
             except Exception:
                 pass
-        if manifests and not pending:
+        # Zero manifests IS drained: wait_for_drain runs only after every
+        # benchmark child has returned, so no further manifests can appear.
+        # Requiring `manifests` here made judge-free-only runs (e.g. an
+        # eval_all cell filtered to cirl with the sidecar left enabled)
+        # burn the full 6h timeout per arm doing nothing (observed
+        # 2026-07-22, eval_cirl729_canonical arms 0-7).
+        if not pending:
             return True
         time.sleep(poll_interval_s)
     return False

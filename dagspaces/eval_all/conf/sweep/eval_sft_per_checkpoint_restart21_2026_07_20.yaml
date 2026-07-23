@@ -1,0 +1,97 @@
+# @package _global_
+# Hydra sweep: RESTART of eval_sft_per_checkpoint_all_2026_07_19 arms 21-31.
+#
+# 2026-07-20 ~12:00-15:06: klara's job-launch path wedged — every batch job
+# started after 12:02 sat in state RUNNING without ever executing (no stdout
+# file created, sstat NTasks=0/no accounting; fresh ssh sessions to klara
+# hung the same way), while jobs launched before 11:54 kept running. The
+# operator mass-cancelled klara compute jobs at 15:06, which cleared the
+# wedge (verified: job 144418 launched 15:06:52 and accrued CPU normally).
+# Casualties: arms 21-24 lost their first GPU stage (GoldCoin) to the wedge,
+# arms 25-31 were still pending, and the cancel also took arm 18's MMLU and
+# arm 19's ConfAIde tier2b mid-flight (those two are owed a separate
+# per-benchmark repair, NOT rerun here — the rest of arms 18/19 completed
+# in place).
+#
+# This sweep reruns models 18-19 and 21-31 of the original roster,
+# protocol-identical (same engine tuning, judge sidecar cap, launcher setup —
+# copied verbatim from eval_sft_per_checkpoint_all_2026_07_19.yaml). Arms
+# 18/19 (openthinker ckpt342/513) are rerun WHOLE — they lost MMLU/ConfAIde
+# to the 15:06 cancel and their remaining benchmarks didn't finish either;
+# any benchmarks they did complete in 22-48-47 will be superseded
+# cell-by-cell (latest wins) at analysis time. Combined per-checkpoint
+# record = 22-48-47 arms 0-17 + 20 + this sweep. Also still owed from the
+# original plan: gemma-4-12b ckpt513 (was still training at launch).
+#
+# Required cluster setup:
+#   judge server on klara:8002 must report /v1/models before launch
+#   (job 75101 at relaunch time).
+#
+# Usage:
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_sft_per_checkpoint_restart21_2026_07_20
+
+experiment:
+  name: eval_sft_per_checkpoint_restart
+
+judge_sidecar:
+  # 6 concurrent cells -> halve the per-cell in-flight cap so combined
+  # judge load (6 x 8 = 48) stays under the server's ~55 capacity.
+  max_inflight: 8
+
+benchmarks:
+  confaide:
+    pipeline: confaide_tier2_only
+    extra_args:
+      - model.engine_kwargs.max_model_len=5120
+      - model.engine_kwargs.max_num_seqs=64
+  cirl_vignettes:
+    pipeline: cirl_trajectory_async
+    finalize_pipeline: cirl_trajectory_async_finalize
+  goldcoin:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+  mmlu:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=128
+  vlm_geoprivacy:
+    extra_args:
+      - model.engine_kwargs.max_model_len=3072
+      - model.engine_kwargs.max_num_seqs=32
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 6
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      model: >-
+        openthinker3-7b/sft-canonical-ckpt342,
+        openthinker3-7b/sft-canonical-ckpt513,
+        llama3.1-8b/sft-canonical-ckpt342,
+        llama3.1-8b/sft-canonical-ckpt513,
+        harc-llama3.1-8b/sft-canonical-ckpt171,
+        harc-llama3.1-8b/sft-canonical-ckpt342,
+        harc-llama3.1-8b/sft-canonical-ckpt513,
+        phi-4/sft-canonical-ckpt171,
+        phi-4/sft-canonical-ckpt342,
+        phi-4/sft-canonical-ckpt513,
+        gpt-oss-20b/sft-canonical-ckpt86,
+        gpt-oss-20b/sft-canonical-ckpt172,
+        gpt-oss-20b/sft-canonical-ckpt258

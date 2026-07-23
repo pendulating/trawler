@@ -1,0 +1,65 @@
+# @package _global_
+# ConfAIde repair for the judge-free variance sweep (Matt's Option B,
+# 2026-07-22): the 6 cells that hard-failed the parity-review sanity gate
+# (openthinker3-7b/instruct + harc-llama3.1-8b/instruct x seeds 101-103;
+# parse rate ~0.45 < 0.7 from the max_tokens=32 truncation trap) rerun
+# with the escape hatch so tier2a/2b Pearson is RECORDED over the
+# parseable subset (provenance retained in metrics.json) instead of the
+# cells staying empty. Read those cells with care: a Pearson over <50% of
+# items is a different quantity than the full-set Pearson.
+#
+# experiment.name matches the main variance sweep ON PURPOSE — the
+# longitudinal notebook's Phase D2 scan globs
+# multirun/*_eval_judgefree_variance/* and reads model= + variance_seed=
+# from arm-level overrides, so these 6 arms pool automatically.
+#
+# In-process (single benchmark per cell — a persistent server buys
+# nothing), temp-0 reps: variance_seed is the rep id only.
+#
+# Usage (chained by scripts/run_overnight_batch_2026_07_22.sh):
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_judgefree_variance_confaide_repair_2026_07_22
+
+experiment:
+  name: eval_judgefree_variance
+
+variance_seed: 101
+
+benchmark_filter:
+  include:
+    - confaide
+
+judge_sidecar:
+  enabled: false
+
+benchmarks:
+  confaide:
+    pipeline: confaide_tier2_only
+    extra_args:
+      - model.engine_kwargs.max_model_len=5120
+      - model.engine_kwargs.max_num_seqs=64
+      - +runtime.allow_unreliable_metrics=true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 6
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      model: >-
+        openthinker3-7b/instruct,
+        harc-llama3.1-8b/instruct
+      variance_seed: 101,102,103

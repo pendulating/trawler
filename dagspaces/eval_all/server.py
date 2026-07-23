@@ -31,6 +31,13 @@ def _serve_entrypoint(args: dict[str, Any]) -> None:
     This function is pickled and shipped to the compute node by submitit.
     Keep top-level imports minimal so the pickle stays stable.
     """
+    # The job's env comes from the ssh sbatch shim (fresh login env), not
+    # the driver — load server.env so cache redirects (VLLM_CACHE_ROOT,
+    # TRITON_CACHE_DIR) and site settings reach the exec'd vLLM server.
+    from dagspaces.common.stage_utils import ensure_dotenv
+
+    ensure_dotenv()
+
     hostname = socket.gethostname()
     port = int(args["port"])
     address_file = args["address_file"]
@@ -282,6 +289,8 @@ def launch_vllm_server(
         except Exception:
             state = "UNKNOWN"
         if state in ("FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "PREEMPTED"):
+            print(f"[eval_all] SERVER LAUNCH FAILED: job {job.job_id} entered "
+                  f"terminal state {state}", flush=True)
             raise RuntimeError(f"vLLM server job entered terminal state: {state}")
         time.sleep(5)
 
@@ -290,6 +299,15 @@ def launch_vllm_server(
             job.cancel()
         except Exception:
             pass
+        # Print loudly: under the hydra-submitit launcher a raised exception
+        # is captured into the job's result pickle WITHOUT being printed
+        # (the driver surfaces only the first failed arm), so without this
+        # line a timed-out arm looks like a clean no-op in its own log
+        # (observed 2026-07-22: top-up arms 6-10 pending behind a full
+        # queue for 900s, zero output).
+        print(f"[eval_all] SERVER LAUNCH TIMED OUT after {startup_timeout_s}s "
+              f"(job {job.job_id} never wrote {address_file} — likely stuck "
+              "PENDING behind a full queue); aborting this cell.", flush=True)
         raise TimeoutError(
             f"vLLM server did not write {address_file} within {startup_timeout_s}s"
         )

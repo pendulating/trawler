@@ -1,0 +1,89 @@
+# @package _global_
+# Hydra sweep: gpt-oss companion of the judge-free variance run.
+#
+# server_mode hard-raises on gpt-oss/harmony models (final-channel
+# extraction needs the in-process harmony path), so the 4 gpt-oss configs
+# x 3 seeds = 12 cells run here IN-PROCESS (one engine per benchmark),
+# after the 117-cell server-mode half
+# (eval_judgefree_variance_n3_2026_07_20.yaml — see its header for the
+# full variance design; everything except server_mode/roster/parallelism
+# is identical, including the variance_seed injection into the sampled
+# benchmarks).
+#
+# vlm_geoprivacy self-skips (gpt-oss is text-only), so each cell is
+# goldcoin + confaide tier2 + cirl (CIRL-729) + mmlu. mmlu on gpt-oss is
+# the slow one (harmony reasoning): expect ~1-2 h/cell, 12 cells at
+# 6-wide ≈ 2-4 h.
+#
+# Usage (chained automatically by scripts/run_eval_judgefree_variance_n3.sh):
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_judgefree_variance_n3_gptoss_2026_07_20
+
+experiment:
+  name: eval_judgefree_variance_gptoss
+
+variance_seed: 101
+
+benchmark_filter:
+  include:
+    - goldcoin
+    - confaide
+    - cirl
+    - vlm_geoprivacy
+    - mmlu
+
+judge_sidecar:
+  enabled: false
+
+benchmarks:
+  # Same CIRL policy as the main half: strict-format misses score -1
+  # (paper protocol) instead of hard-failing the child — see the main
+  # yaml's cirl comment.
+  cirl:
+    extra_args:
+      - +runtime.allow_unreliable_metrics=true
+  confaide:
+    pipeline: confaide_tier2_only
+    extra_args:
+      - model.engine_kwargs.max_model_len=5120
+      - model.engine_kwargs.max_num_seqs=64
+  goldcoin:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=${variance_seed}
+  mmlu:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=128
+  vlm_geoprivacy:
+    extra_args:
+      - model.engine_kwargs.max_model_len=3072
+      - model.engine_kwargs.max_num_seqs=32
+      - sampling_params.seed=${variance_seed}
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 6
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      model: >-
+        gpt-oss-20b/instruct,
+        gpt-oss-20b/sft-canonical-ckpt86,
+        gpt-oss-20b/sft-canonical-ckpt172,
+        gpt-oss-20b/sft-canonical-ckpt258
+      variance_seed: 101,102,103

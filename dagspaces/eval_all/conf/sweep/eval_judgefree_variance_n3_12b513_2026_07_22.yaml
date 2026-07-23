@@ -1,0 +1,21 @@
+# @package _global_
+# gemma-4-12b ckpt513 variance N=3 cell — the checkpoint finished training
+# after the main variance sweep's roster froze (owed-cell note in
+# eval_judgefree_variance_n3_2026_07_20.yaml). Composes the ENTIRE main
+# variance sweep config (server mode, benchmark filter, seed injection,
+# engine extra_args, launcher) and overrides only the model roster:
+# 1 model x 3 seeds = 3 arms. A dedicated yaml rather than a CLI
+# `model=` override because CLI-vs-config sweeper-param precedence is
+# not worth betting a 117-arm mislaunch on.
+#
+# Usage (chained by scripts/run_overnight_batch_2026_07_22.sh):
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_judgefree_variance_n3_12b513_2026_07_22
+
+defaults:
+  - eval_judgefree_variance_n3_2026_07_20
+
+hydra:
+  sweeper:
+    params:
+      model: gemma-4-12b/sft-canonical-ckpt513
+      variance_seed: 101,102,103

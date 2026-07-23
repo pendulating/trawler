@@ -1,0 +1,128 @@
+# @package _global_
+# Hydra sweep: GOLDCOIN VARIANCE TOP-UP — extra sampling-seed reps for the
+# model configs whose GoldCoin rep ranges in the N=3 judge-free variance
+# sweep (multirun/2026-07-21_eval_judgefree_variance/09-19-13) exceeded the
+# quotable threshold (e.g. qwen3.5-2b/instruct: 22.6pt Appl. macro-F1 range
+# across seeds 101-103 at 100% parseable — a genuine decision-boundary
+# instability, not a parser artifact).
+#
+# CROSS-N SERVER PERSISTENCE: unlike the N=3 sweep (one cell = one
+# (model, seed) pair = one server boot), here the model is swept ALONE and
+# the N reps live INSIDE each cell as separate benchmark entries
+# (goldcoin_s104..s108). The eval_all orchestrator iterates benchmarks
+# generically — the dict key just becomes the output subdir — and `seed` is
+# a per-request parameter on the vLLM OpenAI API (forwarded from
+# sampling_params.seed by _sp_to_openai_kwargs), so ONE server boot serves
+# all 5 reps back-to-back. Seeds 104-108 extend the N=3 sweep's 101-103
+# (and still match no canonical run, which pinned 42).
+#
+# Output layout per arm: <arm>/goldcoin_s104/goldcoin_hipaa/outputs/...
+# — the longitudinal notebook's Phase D2 scan parses the rep seed from the
+# benchmark dir suffix (no variance_seed override at the arm level here).
+#
+# MODEL ROSTER IS INJECTED AT LAUNCH, not defined here: the launcher
+# (scripts/run_eval_judgefree_variance_topup.sh) reads the finished N=3
+# sweep from disk, selects configs whose GoldCoin rep range exceeds the
+# threshold, and passes them as a CLI sweep override:
+#   python -m dagspaces.eval_all.cli --multirun \
+#     +sweep=eval_judgefree_variance_topup_goldcoin_2026_07_21 \
+#     "model=qwen3.5-2b/instruct,qwen3.5-4b/instruct,..."
+# Do NOT launch without the model override (you'd get one arm on the
+# config-default model). gpt-oss configs must NOT be passed (server_mode
+# raises on harmony models) — the launcher excludes them and reports if
+# they exceeded threshold; top those up with a separate in-process run.
+#
+# Sizing: goldcoin-only cells — one server boot (~2-10 min by family) then
+# 5 HTTP-routed goldcoin runs (~1-3 min each). No VLM stage in the cell, so
+# no floating GPU is needed: 6-wide on the 6 free klara GPUs is safe.
+
+experiment:
+  name: eval_judgefree_variance_topup
+
+benchmark_filter:
+  include:
+    - goldcoin_s104
+    - goldcoin_s105
+    - goldcoin_s106
+    - goldcoin_s107
+    - goldcoin_s108
+
+judge_sidecar:
+  enabled: false
+
+server_mode:
+  enabled: true
+
+# Five reps of the same benchmark, distinguished only by sampling seed.
+# module/pipeline/engine extra_args copied from the canonical goldcoin
+# entry + the N=3 variance sweep (engine kwargs inert for the routed path,
+# kept for the identity-guard local-engine fallback).
+benchmarks:
+  goldcoin_s104:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+    enabled: true
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=104
+  goldcoin_s105:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+    enabled: true
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=105
+  goldcoin_s106:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+    enabled: true
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=106
+  goldcoin_s107:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+    enabled: true
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=107
+  goldcoin_s108:
+    module: dagspaces.goldcoin_hipaa.cli
+    pipeline: full_eval
+    vlm_only: false
+    enabled: true
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=108
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # Goldcoin-only cells hold a server GPU and nothing else — no VLM
+    # stage, so all 6 free klara GPUs can hold servers.
+    array_parallelism: 6
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  # NOTE: no sweeper.params.model here — the roster comes from the launcher
+  # CLI override (see header).

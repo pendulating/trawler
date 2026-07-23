@@ -1,0 +1,206 @@
+# @package _global_
+# Hydra sweep: JUDGE-FREE VARIANCE run — canonical instruct + SFT
+# per-checkpoint cohort, N=3 repeats per checkpoint.
+#
+# Goal: measure run-to-run variance of the fast, judge-free benchmark
+# results, so cross-checkpoint deltas (e.g. the per-checkpoint longitudinal
+# table) can be read against an empirical noise floor instead of the single
+# GoldCoin-rerun anecdote (temp 0.2 moved Appl. macro-F1 0.9pt on 2/214
+# flips, 2026-07: sub-1pt GoldCoin gaps are noise).
+#
+# Roster: 39 model configs x 3 seeds = 117 cells (SERVER-MODE half).
+#   - 10 x <family>/instruct           (canonical instruct set minus gpt-oss)
+#   - 29 x <family>/sft-canonical-ckptNNN  (per-checkpoint cohort:
+#     171/342/513 per family; gemma-4-12b 171/342 only — ckpt513 still owed
+#     by its follow-up, add it here too when it lands)
+#   gpt-oss (instruct + ckpt86/172/258) is NOT here: server_mode hard-raises
+#   on harmony models (final-channel extraction needs the in-process path).
+#   Those 4 x 3 = 12 cells run in the companion in-process sweep
+#   eval_judgefree_variance_n3_gptoss_2026_07_20.yaml.
+#
+# SERVER MODE: one vLLM server per cell hosts the checkpoint for ALL text
+# benchmarks (goldcoin / confaide / cirl / mmlu all opted into
+# TRAWLER_EVAL_INFER_LAUNCHER, so their inference stages run as CPU jobs
+# routing HTTP) — one engine load per cell instead of four. vlm_geoprivacy
+# keeps its local engine (image inputs) and needs a transient GPU, hence
+# array_parallelism=5: 5 held server GPUs + 1 floating GPU for VLM stages
+# on the 6 free klara GPUs (6-wide would deadlock the VLM stages behind
+# the servers). Engine-kwargs extra_args below are inert for routed
+# benchmarks (the server inherits the family yaml's engine_kwargs) and
+# kept for the identity-guard local-engine fallback + the VLM stage.
+# Server-mode plumbing was repaired 2026-07-19 but never sweep-deployed —
+# the launch script runs a single-cell LoRA smoke test first and aborts
+# the sweep if it fails.
+#
+# Benchmarks: judge-free subset only (benchmark_filter whitelist):
+#   goldcoin (temp 0.2), confaide tier2a/2b (temp 0), cirl = CIRL-729
+#   action benchmark (temp 0, deterministic substring scoring — the
+#   2026-07-21 benchmark swap; NOT the old PrivacyLens-under-CIRL-protocol
+#   probing), vlm_geoprivacy Q7 (temp 0.2, VLM families only), mmlu
+#   (temp 0). PrivacyLens is judged and deliberately absent; simpleqa
+#   stays disabled. The judge sidecar is off — this sweep never touches
+#   the judge server.
+#
+# POST-PARITY-REVIEW ERA (2026-07-21): goldcoin/vlm/confaide metric
+# semantics changed (upstream-parity denominators, forced-wrong headline).
+# Values are NOT comparable with the cancelled pre-review attempt (data
+# moved to multirun/2026-07-21_eval_judgefree_variance_CANCELLED_precirlswap)
+# nor exactly with the 07-17/07-19 canonical sweeps — rep DISPERSION is
+# the transferable quantity.
+#
+# Variance design — what a "repeat" means:
+#   - Every benchmark pins sampling_params.seed in its config (goldcoin 42,
+#     mmlu 42, vlm 1), so naive re-runs of the stochastic benchmarks would
+#     replay the same draws. The sweep therefore sweeps `variance_seed`
+#     (101/102/103) and injects it into the SAMPLED benchmarks (goldcoin,
+#     vlm_geoprivacy) via extra_args — three independent draws per
+#     checkpoint. Seeds deliberately match NO canonical run (42/1), so no
+#     rep is accidentally half-comparable to the main sweeps.
+#   - The greedy (temp-0) benchmarks — confaide, cirl (CIRL-729), mmlu —
+#     ignore the seed; their three reps isolate pure engine nondeterminism
+#     (continuous-batching order, kernel numerics). That split is the
+#     point: sampling variance and engine variance are reported separately.
+#   - Engine kwargs per benchmark are copied verbatim from
+#     eval_sft_per_checkpoint_all_2026_07_19.yaml (measured profiles), so
+#     reps are protocol-identical to the per-checkpoint sweep; confaide runs
+#     tier2_only exactly as there. Reps of one cell differ ONLY in
+#     variance_seed.
+#
+# Sizing: ~25-50 min/cell (ONE server spin-up + a VLM engine load for the
+# qwen/gemma families; openthinker slowest via mmlu). 117 cells at 5-wide
+# ≈ 10-20 h wall clock, plus the 12-cell gpt-oss companion after.
+#
+# Usage (launch AFTER the restart sweep 2026-07-20/15-14-55 drains — both
+# want the same 6 klara GPUs):
+#   export WANDB_GROUP="$(date +%Y-%m-%d)_eval_judgefree_variance/<HH-MM-SS>"  # optional until the
+#   # wandb-parity branch (auto-derived groups) is merged
+#   python -m dagspaces.eval_all.cli --multirun +sweep=eval_judgefree_variance_n3_2026_07_20
+
+experiment:
+  name: eval_judgefree_variance
+
+# The per-rep sampling seed. Swept 101/102/103 below; also serves as the
+# rep identifier in .hydra/overrides.yaml and the results notebook.
+variance_seed: 101
+
+# Judge-free whitelist (include = whitelist; exclude ignored when set).
+benchmark_filter:
+  include:
+    - goldcoin
+    - confaide
+    - cirl
+    - vlm_geoprivacy
+    - mmlu
+
+# Nothing in the roster emits judge manifests — don't launch the sidecar,
+# don't depend on the judge server being up.
+judge_sidecar:
+  enabled: false
+
+# One persistent engine per cell; all other knobs keep the config defaults
+# (port 0 = ephemeral, max_model_len/max_num_seqs/enforce_eager inherit the
+# model yaml for protocol parity, 720-min walltime orphan guard).
+server_mode:
+  enabled: true
+
+benchmarks:
+  confaide:
+    pipeline: confaide_tier2_only
+    extra_args:
+      - model.engine_kwargs.max_model_len=5120
+      - model.engine_kwargs.max_num_seqs=64
+  goldcoin:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=64
+      - sampling_params.seed=${variance_seed}
+  mmlu:
+    extra_args:
+      - model.engine_kwargs.max_model_len=6144
+      - model.engine_kwargs.max_num_seqs=128
+  vlm_geoprivacy:
+    extra_args:
+      - model.engine_kwargs.max_model_len=3072
+      - model.engine_kwargs.max_num_seqs=32
+      - sampling_params.seed=${variance_seed}
+  # cirl: default cirl_eval pipeline (CIRL-729 action generation, temp 0,
+  # judge-free deterministic scoring); engine kwargs inherit the family
+  # yaml (max_tokens 2048 from the dagspace). allow_unreliable_metrics:
+  # models that ignore the strict <think>/<answer> format (e.g. SFT
+  # adapters answering in their trained style — verified NOT a wiring
+  # bug, generations complete with finish=stop) score -1 per the paper's
+  # own protocol. Matt's call 2026-07-21: record those scores — a format
+  # miss speaks to the benchmark, not the model — so the sanity gate
+  # (parseable_rate<0.7 hard-fail) is demoted to a warning and
+  # metrics.json is always written.
+  cirl:
+    extra_args:
+      # + prefix required: the knob is an undeclared escape hatch (struct
+      # mode rejects the bare override — cost one smoke cycle to learn).
+      - +runtime.allow_unreliable_metrics=true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 5, not 6: each cell HOLDS one GPU for its server; the 6th GPU floats
+    # for the local-engine vlm_geoprivacy stages (see header).
+    array_parallelism: 5
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      # Cross product: 39 models x 3 seeds = 117 arms, grouped by model so
+      # a cell's three reps run back-to-back (warm /scratch registry).
+      model: >-
+        qwen3.5-2b/instruct,
+        qwen3.5-2b/sft-canonical-ckpt171,
+        qwen3.5-2b/sft-canonical-ckpt342,
+        qwen3.5-2b/sft-canonical-ckpt513,
+        qwen3.5-4b/instruct,
+        qwen3.5-4b/sft-canonical-ckpt171,
+        qwen3.5-4b/sft-canonical-ckpt342,
+        qwen3.5-4b/sft-canonical-ckpt513,
+        qwen3.5-9b/instruct,
+        qwen3.5-9b/sft-canonical-ckpt171,
+        qwen3.5-9b/sft-canonical-ckpt342,
+        qwen3.5-9b/sft-canonical-ckpt513,
+        gemma-4-e2b/instruct,
+        gemma-4-e2b/sft-canonical-ckpt171,
+        gemma-4-e2b/sft-canonical-ckpt342,
+        gemma-4-e2b/sft-canonical-ckpt513,
+        gemma-4-e4b/instruct,
+        gemma-4-e4b/sft-canonical-ckpt171,
+        gemma-4-e4b/sft-canonical-ckpt342,
+        gemma-4-e4b/sft-canonical-ckpt513,
+        gemma-4-12b/instruct,
+        gemma-4-12b/sft-canonical-ckpt171,
+        gemma-4-12b/sft-canonical-ckpt342,
+        openthinker3-7b/instruct,
+        openthinker3-7b/sft-canonical-ckpt171,
+        openthinker3-7b/sft-canonical-ckpt342,
+        openthinker3-7b/sft-canonical-ckpt513,
+        llama3.1-8b/instruct,
+        llama3.1-8b/sft-canonical-ckpt171,
+        llama3.1-8b/sft-canonical-ckpt342,
+        llama3.1-8b/sft-canonical-ckpt513,
+        harc-llama3.1-8b/instruct,
+        harc-llama3.1-8b/sft-canonical-ckpt171,
+        harc-llama3.1-8b/sft-canonical-ckpt342,
+        harc-llama3.1-8b/sft-canonical-ckpt513,
+        phi-4/instruct,
+        phi-4/sft-canonical-ckpt171,
+        phi-4/sft-canonical-ckpt342,
+        phi-4/sft-canonical-ckpt513
+      variance_seed: 101,102,103

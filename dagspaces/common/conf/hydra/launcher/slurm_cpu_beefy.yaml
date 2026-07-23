@@ -18,6 +18,10 @@ setup:
   - export HYDRA_FULL_ERROR=1
   - source ~/.bashrc
   - source ${oc.env:TRAWLER_VENV_ACTIVATE,/share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate}
+  # Prefer a node-local /scratch mirror of the driver venv when one exists
+  # (exports TRAWLER_STAGE_PYTHON; cold NFS torch/vllm imports cost ~12 min —
+  # see slurm_cpu.yaml).
+  - source ${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}/scripts/activate_stage_venv.sh
   - unset WANDB_DISABLED
   - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
   - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
