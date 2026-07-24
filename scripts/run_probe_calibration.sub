@@ -1,0 +1,42 @@
+#!/bin/bash
+#SBATCH --job-name=probe-calib
+#SBATCH --partition=pierson
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-task=12
+#SBATCH --mem=128G
+#SBATCH --time=04:00:00
+#SBATCH --output=logs/probe-calib-%j.out
+#SBATCH --error=logs/probe-calib-%j.err
+
+# Null-answerability calibration pass for the R-OUTCOME probe pool
+# (m-series data prerequisite job 4; wiki/grpo_redesign/reward-outcome.md step 5).
+#
+# One process, two GPUs on partition pierson:
+#   - Qwen3-Embedding-8B embeds the teacher flow queries on cuda:0, then frees.
+#   - Gemma-4-31B-it answerer (Matt override 2026-07-23; NOT Qwen3.6-27B) loads
+#     with tensor_parallel_size=2 for the null-answerability votes.
+#
+# NCCL_SHM_DISABLE=0 is required for gemma-4-31b at TP=2 (per its model yaml);
+# it comes from server.env via ensure_dotenv() and must not be clobbered.
+
+set -euo pipefail
+
+REPO_DIR="/share/pierson/matt/UAIR"
+cd "$REPO_DIR"
+
+source .venv-vllm025cu129/bin/activate
+echo "Python: $(which python) ($(python --version))"
+nvidia-smi -L || true
+
+export UAIR_VLLM_STREAMING_DISABLE=1
+export TOKENIZERS_PARALLELISM=false
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+
+echo "=== Probe calibration (votes-only; reuses on-disk probe_pools.parquet) ==="
+# Build phase (embed + retrieval) already completed in run 298149 and is
+# deterministic; --votes-only reuses probe_pools.parquet and runs only the
+# answerer votes + stats. Drop the flag to rebuild from scratch.
+python -m scripts.run_probe_calibration --votes-only
+
+echo "=== DONE ==="
+date

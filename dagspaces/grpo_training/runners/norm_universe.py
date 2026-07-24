@@ -12,6 +12,7 @@ from dagspaces.common.orchestrator import (
     StageExecutionContext,
     StageResult,
 )
+from dagspaces.common.stage_utils import sanitize_for_json
 
 from .base import StageRunner
 
@@ -56,7 +57,11 @@ class NormUniverseRunner(StageRunner):
         if json_output_path:
             os.makedirs(os.path.dirname(json_output_path), exist_ok=True)
             with open(json_output_path, "w", encoding="utf-8") as f:
-                json.dump(norm_universes, f, indent=2, ensure_ascii=False)
+                # Norm dicts carry parquet scalars verbatim; a fully non-null
+                # bool column yields numpy.bool_ values json.dump rejects.
+                json.dump(
+                    sanitize_for_json(norm_universes), f, indent=2, ensure_ascii=False
+                )
             print(f"[{self.stage_name}] Saved norm universes to {json_output_path}")
 
         metadata: dict[str, Any] = {

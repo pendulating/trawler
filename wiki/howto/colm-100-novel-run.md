@@ -1,5 +1,17 @@
 # How to run COLM norm + flow extraction on the top-100 fiction corpus
 
+> **HISTORICAL (annotated 2026-07-23).** This page documents the *retired*
+> Qwen3.6-27B top-100 extraction (the `*_qwen36.yaml` pipelines, 27B-sized
+> parallelism, keeper-era `qwen-teacher` corpus). Per the canonical-models
+> decision, the extraction **teacher** for all new / camera-ready work is
+> **Gemma-4-31B-it** (`gemma-4-31b/instruct`) — see
+> [canonical-models.md](../canonical-models.md). The top-100 corpus has since
+> been re-extracted as the **gemma4-teacher** book-level holdout (93 books);
+> the qwen-teacher corpus is retained for reproducibility only and **must not
+> supervise gemma4-based training**. Do not follow this page to produce a new
+> teacher corpus — the model, parallelism, and wall-clock below are all sized
+> for Qwen3.6-27B and would need re-sizing for Gemma-4-31B-it.
+
 End-to-end plan for scaling the COLM norm-extraction flow from the original
 10-novel curated set to the **top-100 fiction corpus** built per
 [build-gutenberg-corpus.md](./build-gutenberg-corpus.md). All wall-clock

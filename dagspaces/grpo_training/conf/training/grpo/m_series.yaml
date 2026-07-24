@@ -1,0 +1,157 @@
+# @package training.grpo
+# ─────────────────────────────────────────────────────────────────────────────
+# m-series GRPO training config (the redesigned modular reward stack).
+#
+# Standalone by design: this file does NOT inherit from
+# online_rground_external.yaml. That file is the keeper-frozen v9-ckpt100 config
+# (byte-reproducible until camera-ready) and carries the legacy 6-weight reward
+# keys the m-series deletes. Per wiki/grpo_redesign/optimizer.md (§"The preset")
+# and migration.md (§"Old → new map"), the m-series is ADDITIVE code — a new
+# training-config group that copies the optimizer preset verbatim and swaps the
+# reward keys for the module schema below.
+#
+# Cell mechanics: a grid cell is fully defined by two keys — reward_auxiliaries
+# and task_mix (wiki/grpo_redesign/ablation-protocol.md §"Cell mechanics").
+# The sweep conf/sweep/grpo_m1_grid.yaml varies ONLY those two + experiment.name.
+# The values here are the `full` cell (both auxiliaries, 0.7/0.3 mix).
+#
+# NOTE (m-series keys not yet consumed by code): the module keys below are the
+# draft contract the forthcoming ModularReward integration (migration.md
+# checklist item 4) will read. They resolve cleanly through Hydra today; the
+# code that consumes them is item 7's downstream work.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ══ OPTIMIZER PRESET — copied VERBATIM from the keeper (online_rground_external
+# ══ .yaml), fixed across every m-series grid cell. Source: optimizer.md §"The
+# ══ preset". Every value below was set by a falsified alternative, not taste.
+
+# Master RNG seed — seeds Python/NumPy/torch and is passed to GRPOConfig
+# (seed + data_seed). The 5-seed protocol varies ONLY this. optimizer.md.
+seed: 42
+
+# G: G=2 gave 60% tied groups (May sweep). optimizer.md.
+num_generations: 8
+# lr 2e-5 with a cosine floor at 30% of peak — the default cosine decayed lr to
+# ~0 before the policy moved (v5/v6). optimizer.md.
+learning_rate: 2.0e-5
+lr_scheduler_type: cosine_with_min_lr
+min_lr_rate: 0.3
+warmup_ratio: 0.1
+# 32 completions = 4 prompts/step at G=8. Keeper batch economics.
+per_device_batch_size: 1
+gradient_accumulation_steps: 32
+# 772 prompts x 1 epoch was too little signal. optimizer.md.
+num_epochs: 3
+max_completion_length: 3072
+gradient_checkpointing: true
+bf16: true
+logging_steps: 10
+save_strategy: steps
+# Pre-breakout checkpoint cadence; held-out behaviour peaks early. optimizer.md.
+save_steps: 50
+
+# KL-to-SFT-ref coefficient. beta=0 + hot lr → entropy runaway 10x, IS collapse
+# (v6); beta=0.02 fixed it single-variable (v7). A stability floor, not an
+# anchor. optimizer.md.
+beta: 0.02
+# DAPO clip-higher. Inert at mu=1 (ratio ≡ 1) but kept so a mu change activates
+# it without a second edit. optimizer.md.
+epsilon_high: 0.28
+# GRPO inner-iteration count mu. mu=2 moved held-out metrics but broke entropy
+# ~step 240 (v8); reverted to 1 (v9). optimizer.md §"Relation to the v13a arm".
+num_iterations: 1
+# THE v1–v4 binding constraint: default sequence_mask zeroed exactly the long
+# extraction gradients; token_truncate clamps per-token instead. optimizer.md.
+vllm_importance_sampling_mode: token_truncate
+# Dr. GRPO: group-std scaling amplifies near-tie judge noise. optimizer.md.
+scale_rewards: "none"
+# DAPO: truncated output fails JSON parse and would reward the short no-flow
+# path. optimizer.md.
+mask_truncated_completions: true
+# loss_type: unset — TRL default "dapo" (no per-response length normalization).
+# optimizer.md lists it as "(TRL default, unset)", so it is deliberately absent.
+# Rollout temperature 1.0 is the TRL default (grpo_training.py forwards no
+# temperature knob); the keeper relies on that default. optimizer.md lists
+# "T=1.0" as the preset value. See DESIGN NOTES re the thinking-flag wording.
+
+# vLLM for the policy model — colocate, 1-GPU cell economics. optimizer.md.
+use_vllm: true
+vllm_mode: colocate
+vllm_tensor_parallel_size: 1
+# 0.45 (NOT the code default 0.3): at gpu_memory_utilization=0.45 (colocated
+# with optimizer+grads) vLLM's KV-cache pre-check fails on qwen3.5-9b unless
+# max_model_length is capped — the keeper's documented value. See DESIGN NOTES:
+# optimizer.md's table prose says "gpu_mem 0.3"; the keeper yaml sets 0.45.
+vllm_gpu_memory_utilization: 0.45
+vllm_enable_sleep_mode: true
+# Matches eval-time engine_kwargs.max_model_len for qwen3.5-9b/*.yaml. Keeper.
+vllm_max_model_length: 16384
+
+# Thinking during GRPO generation. Keeper value = false (stripped pre-scoring).
+# DESIGN NOTES: optimizer.md's table annotates rollout temperature as "thinking
+# on, stripped pre-scoring" — a wording disagreement with the keeper's
+# enable_thinking_grpo: false. Copied verbatim from the keeper (false).
+enable_thinking_grpo: false
+
+# Held-out dev split. DISABLED (0.0) for colocate runs — the in-loop eval's
+# fp32 full-vocab logits OOM against the resident colocate vLLM engine. Keeper.
+dev_fraction: 0.0
+eval_steps: 50
+
+# ══ M-SERIES MODULE KEYS — the modular reward stack. Draft contract consumed by
+# ══ the forthcoming ModularReward integration (migration.md checklist item 4).
+
+# Composition selector: the new modular stack (gate → routing → outcome +
+# auxiliaries with the 2:1 weight rule), NOT the v-era "directional" 6-weight
+# path. Source: migration.md §"Old → new map" (CompositeRewardFunction →
+# ModularReward).
+reward_composition: modular
+
+# Active auxiliaries — subset of {ground, contrast}. THE cell key (with
+# task_mix). The 2:1 weight rule (outcome core = 2x each active auxiliary,
+# auxiliaries equal, normalized to 1) is DERIVED from this list, not tuned.
+# Source: ablation-protocol.md §"Cell mechanics" / §"Weights — resolved".
+reward_auxiliaries: [ground, contrast]
+
+# Task mix — extraction vs judgment-vignette prompt share. THE second cell key
+# (−vignette cell sets {extract: 1.0, vignette: 0.0}). Renames the v-era
+# vignette_ratio. Source: ablation-protocol.md §"Cell mechanics";
+# migration.md (vignette_ratio → task_mix.vignette).
+task_mix: {extract: 0.7, vignette: 0.3}
+
+# Vignette battery construction. Hard floor >=1 minority item per battery,
+# target 2; K=8 with a min_k=4 fallback. Source: data.md §"Battery feasibility"
+# (decision: hard floor >=1 minority, target 2) and task-vignettes.md batteries.
+battery: {k: 8, min_k: 4, minority_floor: 1, minority_target: 2}
+
+# R-OUTCOME probe pool + sampling. pools_path defaults to the built fiction10
+# probe pool (null-answerability calibration pass, 2026-07-24: 0.0% drop, 1,199
+# unique probes over 2,709 chunks). k_max=4 matches the realized K in
+# calibration; p_null is the null-answerability filter threshold. Source:
+# reward-outcome.md; data.md §"Prerequisite job list" item 4.
+probes:
+  pools_path: outputs/2026-07-23_mseries_premeasure/probe_calibration/probe_pools_filtered.parquet
+  k_max: 4
+  p_null: 0.8
+
+# R-OUTCOME answerer client. Cross-family robustness check (+answerer-B) uses a
+# non-Gemma model; the PRIMARY answerer is gemma-4-31b served on VLLM_SERVER_URL.
+# Source: reward-outcome.md (answerer client); ablation-protocol.md D1 revision.
+answerer: {base_url_env: VLLM_SERVER_URL, model: gemma-4-31b}
+
+# A-ABSTAIN reward table (extended to gold-NO extractions). Mirrors the keeper's
+# no_flow_reward(gold): gold=YES→wrong 0.1, gold=NO→correct 0.6, unknown→0.4.
+# Source: reward-abstain.md; migration.md (abstention_score → A-ABSTAIN).
+abstain: {wrong: 0.1, correct: 0.6, unknown: 0.4}
+
+# Stratified prescreen. formula_version=m1 is a new cache namespace (no collision
+# with the v-era keys); the module list + task_mix are also part of the cache
+# key, so every cell gets its own entries. target_n is the pre-registered
+# prompt-set size selected by the stratified screen from the 2,993-chunk pool.
+# The docs pre-register a RANGE (N ≈ 500–800, data.md §"Splits"; not pinned to a
+# single value in ablation-protocol.md), so 600 is chosen here — N=600 is inside
+# the range and near the 500-needs-150-batteries feasibility point (data.md
+# §"Battery feasibility"). Source: prescreen-and-gates.md §"Pre-registered N".
+prescreen:
+  formula_version: m1
+  target_n: 600

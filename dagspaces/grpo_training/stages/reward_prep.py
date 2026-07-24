@@ -102,6 +102,9 @@ def run_reward_prep_stage(
             or ""
         )
         if embedding_model_path:
+            from dagspaces.common.stage_utils import ensure_importable_sentence_transformers
+
+            ensure_importable_sentence_transformers()
             from sentence_transformers import SentenceTransformer
             print(f"[reward_prep] Loading query embedding model: {embedding_model_path}")
             retrieval_model = SentenceTransformer(
@@ -112,6 +115,9 @@ def run_reward_prep_stage(
     else:
         # Fallback: embed universe norms on-the-fly with whatever model is available
         try:
+            from dagspaces.common.stage_utils import ensure_importable_sentence_transformers
+
+            ensure_importable_sentence_transformers()
             from sentence_transformers import SentenceTransformer
             model_name = str(
                 OmegaConf.select(cfg, "embedding_model.model_source", default=None) or OmegaConf.select(cfg, "model.embedding_model_source", default=None)

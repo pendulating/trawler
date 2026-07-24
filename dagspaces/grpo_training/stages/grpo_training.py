@@ -510,6 +510,9 @@ def run_grpo_training_stage(
     context_embedding_model = None
     context_model_name = grpo_cfg.get("context_embedding_model", "all-MiniLM-L6-v2")
     try:
+        from dagspaces.common.stage_utils import ensure_importable_sentence_transformers
+
+        ensure_importable_sentence_transformers()
         from sentence_transformers import SentenceTransformer
         context_embedding_model = SentenceTransformer(context_model_name)
         print(f"[grpo_training] Loaded context embedding model: {context_model_name}")
@@ -731,23 +734,37 @@ def run_grpo_training_stage(
     # v9-ckpt100 keeper checkpoint; True is the corrected fall-through for the
     # per-component ablation. Enabling it changes the composite reward value.
     _confidence_fallthrough = bool(grpo_cfg.get("confidence_fallthrough", False))
-    reward_fn = CompositeRewardFunction(
-        weights=weights,
-        norm_universes=norm_universes,
-        reward_cache=reward_cache,
-        context_embedding_model=context_embedding_model,
-        source_contexts=source_contexts,
-        trace_log_path=trace_log_path,
-        trace_every_n_calls=trace_every,
-        online_rground=online_rground,
-        no_flow_scoring=_nf_scoring,
-        judgment_weights=_judgment_weights,
-        composition=_composition,
-        abstention_penalty=_abstention_penalty,
-        confidence_fallthrough=_confidence_fallthrough,
-    )
-    print(f"[grpo_training] No-flow scoring mode: {_nf_scoring}, "
-          f"reward composition: {_composition}")
+    # m-series dispatch: reward_composition="modular" selects the parallel
+    # ModularReward stack (wiki/grpo_redesign/migration.md item 4). Every other
+    # value — the keeper's "directional", plus "additive"/"gated" — keeps
+    # selecting CompositeRewardFunction byte-for-byte (the config-dispatch
+    # invariant guarded by tests). Additive code: the branch is the only change.
+    from .modular_reward import is_modular_composition
+    _modular = is_modular_composition(_composition)
+    if _modular:
+        from .modular_reward import make_modular_reward_from_cfg
+        reward_fn = make_modular_reward_from_cfg(cfg, grpo_cfg, norm_universes)
+        print(f"[grpo_training] Modular reward stack: "
+              f"auxiliaries={reward_fn.auxiliaries}, reward_core={reward_fn.reward_core}, "
+              f"weights={reward_fn.weights}")
+    else:
+        reward_fn = CompositeRewardFunction(
+            weights=weights,
+            norm_universes=norm_universes,
+            reward_cache=reward_cache,
+            context_embedding_model=context_embedding_model,
+            source_contexts=source_contexts,
+            trace_log_path=trace_log_path,
+            trace_every_n_calls=trace_every,
+            online_rground=online_rground,
+            no_flow_scoring=_nf_scoring,
+            judgment_weights=_judgment_weights,
+            composition=_composition,
+            abstention_penalty=_abstention_penalty,
+            confidence_fallthrough=_confidence_fallthrough,
+        )
+        print(f"[grpo_training] No-flow scoring mode: {_nf_scoring}, "
+              f"reward composition: {_composition}")
     reward_fn.enable_thinking_grpo = enable_thinking_grpo
     print(f"[grpo_training] Reward traces → {trace_log_path} (every {trace_every} calls)")
 
@@ -925,75 +942,108 @@ def run_grpo_training_stage(
     # Contrastive signal is now per-completion dual scoring inside
     # OnlineRGround, so no additive contrastive rows are needed.
     # Legacy contrastive_ratio kept for backward compat but defaults to 0.
-    dataset, raw_prompts = _build_grpo_dataset(
-        chunks_df, tokenizer, ci_prompt_template, enable_thinking_grpo,
-        contrastive_ratio=_contrastive,
-        all_source_ids=all_source_ids,
-        vignettes=vignettes,
-        vignette_ratio=_vignette_ratio,
-        vignette_system_prompt=vig_sys if _vignette_ratio > 0.0 and vignettes else "",
-    )
+    if _modular:
+        # m-series dataset-build hook (migration.md items 1–2, 6): T-EXTRACT
+        # rows carry chunk_id-sampled probes, T-VIGNETTE rows are deontic
+        # batteries; stratified prescreen + realized-mix → training_metadata.json.
+        # The probe-bearing metadata is set on reward_fn in place.
+        from .modular_reward import build_modular_dataset
+        _embed_fn = None
+        if context_embedding_model is not None:
+            _embed_fn = lambda _t: context_embedding_model.encode(  # noqa: E731
+                _t, normalize_embeddings=True
+            )
+        dataset, _modular_meta = build_modular_dataset(
+            cfg, grpo_cfg, chunks_df, norm_universes, reward_fn,
+            tokenizer, ci_prompt_template,
+            output_dir=output_dir, seed=seed, embed_fn=_embed_fn,
+            enable_thinking=enable_thinking_grpo,
+        )
+        # Downstream locals the shared metadata-write path expects.
+        raw_prompts = {}
+        n_contrastive = 0
+        n_vignette_meta = sum(
+            1 for m in reward_fn.prompt_metadata.values()
+            if m.get("task_type") == "vignette"
+        )
+        _vig_pre = {"yes": 0, "no": 0}
+        _n_screened_out = int(
+            _modular_meta.get("prescreen_report", {}).get("n_dropped", 0)
+        )
+        n_gold_pos = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is True)
+        n_gold_neg = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is False)
+        print(f"[grpo_training] Modular dataset: {len(dataset)} rows "
+              f"({n_vignette_meta} vignettes, {n_gold_pos} gold-yes / {n_gold_neg} gold-no extract)")
+    else:
+        dataset, raw_prompts = _build_grpo_dataset(
+            chunks_df, tokenizer, ci_prompt_template, enable_thinking_grpo,
+            contrastive_ratio=_contrastive,
+            all_source_ids=all_source_ids,
+            vignettes=vignettes,
+            vignette_ratio=_vignette_ratio,
+            vignette_system_prompt=vig_sys if _vignette_ratio > 0.0 and vignettes else "",
+        )
 
-    # Build prompt→metadata lookup so the reward function can access
-    # source_id/prompt_id without relying on TRL forwarding dataset columns.
-    # chunk_text stores the raw user prompt (pre-template) so OnlineRGround
-    # can pass clean text to the judge instead of chat-templated text.
-    #
-    # Contrastive rows are already present in the dataset with distinct
-    # formatted prompts (trailing newline in user message), so each row
-    # maps to a unique metadata entry.
-    reward_fn.prompt_metadata = {}
-    n_contrastive = 0
-    for row in dataset:
-        key = row["prompt"]
-        if key not in reward_fn.prompt_metadata:
-            is_contrastive = row.get("is_contrastive", False)
-            if is_contrastive:
-                n_contrastive += 1
-            reward_fn.prompt_metadata[key] = {
-                "source_id": row.get("source_id", ""),
-                "prompt_id": row.get("prompt_id", ""),
-                "is_contrastive": is_contrastive,
-                "contrastive_source": row.get("contrastive_source"),
-                "chunk_text": raw_prompts.get(key, ""),
-                "gold_has_exchange": row.get("gold_has_exchange"),
-                "task_type": row.get("task_type", "ci_extraction"),
-                "gold_judgment": row.get("gold_judgment"),
-                "source_norm_articulation": row.get("source_norm_articulation"),
-            }
-    n_gold_pos = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is True)
-    n_gold_neg = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is False)
-    n_gold_unk = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is None)
-    n_vignette_meta = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("task_type") == "norm_judgment")
-    # Realised vignette force mix BEFORE screening. The v11 steering variable —
-    # sampling from the candidate pool is uniform/force-blind, so the realised
-    # ratio must be measured, not inferred from the pool's ratio.
-    from .prompt_screening import _vignette_gold_counts
-    _vig_pre = _vignette_gold_counts(reward_fn.prompt_metadata.values())
-    print(f"[grpo_training] Reward prompt metadata: {len(reward_fn.prompt_metadata)} entries "
-          f"({n_contrastive} contrastive, {n_vignette_meta} vignettes)")
-    if n_vignette_meta:
-        print(f"[grpo_training] Vignette gold mix (pre-screen): "
-              f"{_vig_pre['yes']} yes : {_vig_pre['no']} no "
-              f"({_vig_pre['yes'] / max(_vig_pre['no'], 1):.2f}:1)")
-    print(f"[grpo_training] Gold labels: {n_gold_pos} has_exchange=True, "
-          f"{n_gold_neg} has_exchange=False, {n_gold_unk} unknown")
+        # Build prompt→metadata lookup so the reward function can access
+        # source_id/prompt_id without relying on TRL forwarding dataset columns.
+        # chunk_text stores the raw user prompt (pre-template) so OnlineRGround
+        # can pass clean text to the judge instead of chat-templated text.
+        #
+        # Contrastive rows are already present in the dataset with distinct
+        # formatted prompts (trailing newline in user message), so each row
+        # maps to a unique metadata entry.
+        reward_fn.prompt_metadata = {}
+        n_contrastive = 0
+        for row in dataset:
+            key = row["prompt"]
+            if key not in reward_fn.prompt_metadata:
+                is_contrastive = row.get("is_contrastive", False)
+                if is_contrastive:
+                    n_contrastive += 1
+                reward_fn.prompt_metadata[key] = {
+                    "source_id": row.get("source_id", ""),
+                    "prompt_id": row.get("prompt_id", ""),
+                    "is_contrastive": is_contrastive,
+                    "contrastive_source": row.get("contrastive_source"),
+                    "chunk_text": raw_prompts.get(key, ""),
+                    "gold_has_exchange": row.get("gold_has_exchange"),
+                    "task_type": row.get("task_type", "ci_extraction"),
+                    "gold_judgment": row.get("gold_judgment"),
+                    "source_norm_articulation": row.get("source_norm_articulation"),
+                }
+        n_gold_pos = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is True)
+        n_gold_neg = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is False)
+        n_gold_unk = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is None)
+        n_vignette_meta = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("task_type") == "norm_judgment")
+        # Realised vignette force mix BEFORE screening. The v11 steering variable —
+        # sampling from the candidate pool is uniform/force-blind, so the realised
+        # ratio must be measured, not inferred from the pool's ratio.
+        from .prompt_screening import _vignette_gold_counts
+        _vig_pre = _vignette_gold_counts(reward_fn.prompt_metadata.values())
+        print(f"[grpo_training] Reward prompt metadata: {len(reward_fn.prompt_metadata)} entries "
+              f"({n_contrastive} contrastive, {n_vignette_meta} vignettes)")
+        if n_vignette_meta:
+            print(f"[grpo_training] Vignette gold mix (pre-screen): "
+                  f"{_vig_pre['yes']} yes : {_vig_pre['no']} no "
+                  f"({_vig_pre['yes'] / max(_vig_pre['no'], 1):.2f}:1)")
+        print(f"[grpo_training] Gold labels: {n_gold_pos} has_exchange=True, "
+              f"{n_gold_neg} has_exchange=False, {n_gold_unk} unknown")
 
-    # --- Variance pre-screening (Phase 2) ---
-    # Sample G completions per prompt from the merged SFT policy and drop
-    # prompts whose group reward std is ~0 — they produce zero-advantage
-    # GRPO groups and only burn generation + judge throughput. Runs before
-    # TRL's colocated vLLM engine exists; its own engine is torn down inside.
-    # reward_fn.prompt_metadata is already populated, so scoring matches
-    # training exactly.
-    from .prompt_screening import prescreen_dataset
-    _n_pre_screen = len(dataset)
-    dataset = prescreen_dataset(
-        dataset, reward_fn, merged_dir, grpo_cfg, output_dir,
-        cache_identity=sft_checkpoint,
-        composite_config_path=base_model_path,
-    )
-    _n_screened_out = _n_pre_screen - len(dataset)
+        # --- Variance pre-screening (Phase 2) ---
+        # Sample G completions per prompt from the merged SFT policy and drop
+        # prompts whose group reward std is ~0 — they produce zero-advantage
+        # GRPO groups and only burn generation + judge throughput. Runs before
+        # TRL's colocated vLLM engine exists; its own engine is torn down inside.
+        # reward_fn.prompt_metadata is already populated, so scoring matches
+        # training exactly.
+        from .prompt_screening import prescreen_dataset
+        _n_pre_screen = len(dataset)
+        dataset = prescreen_dataset(
+            dataset, reward_fn, merged_dir, grpo_cfg, output_dir,
+            cache_identity=sft_checkpoint,
+            composite_config_path=base_model_path,
+        )
+        _n_screened_out = _n_pre_screen - len(dataset)
 
     # --- Held-out dev split (Phase 5a) ---
     # TRL evaluates reward on eval_dataset (generation + reward pass every

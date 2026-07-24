@@ -1,0 +1,41 @@
+#!/bin/bash
+#SBATCH --job-name=sft-force-acc
+#SBATCH --partition=pierson
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=03:00:00
+#SBATCH --output=logs/sft-force-acc-%j.out
+#SBATCH --error=logs/sft-force-acc-%j.err
+
+# Per-force-class deontic accuracy of the two canonical SFT bases on
+# fiction10-gemma4 vignettes (m-series premeasure; task-vignettes.md build item).
+# Runs both models sequentially on one GPU, then aggregates.
+
+set -euo pipefail
+
+REPO_DIR="/share/pierson/matt/UAIR"
+cd "$REPO_DIR"
+
+source .venv-vllm025cu129/bin/activate
+echo "Python: $(which python) ($(python --version))"
+nvidia-smi -L || true
+
+export UAIR_VLLM_STREAMING_DISABLE=1
+export TOKENIZERS_PARALLELISM=false
+
+echo "=== Gemma-4-12B SFT-canonical ==="
+python -m scripts.measure_sft_force_accuracy \
+    --model dagspaces/common/conf/model/gemma-4-12b/sft-canonical.yaml \
+    --model-name gemma-4-12b_sft-canonical
+
+echo "=== Qwen3.5-9B SFT-canonical ==="
+python -m scripts.measure_sft_force_accuracy \
+    --model dagspaces/common/conf/model/qwen3.5-9b/sft-canonical.yaml \
+    --model-name qwen3.5-9b_sft-canonical
+
+echo "=== Aggregate ==="
+python -m scripts.measure_sft_force_accuracy --aggregate
+
+echo "=== DONE ==="
+date

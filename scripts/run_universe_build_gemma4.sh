@@ -93,7 +93,9 @@ python -m dagspaces.grpo_training.cli \
   pipeline.sources.abstracted_norms.path="$EXTRACTION_PARQUET" \
   experiment.name=universe_${CORPUS}_gemma4
 
+# grpo_training's hydra run dir defaults to multirun/ (not outputs/ like
+# historical_norms); check both roots in case HYDRA_RUN_DIR overrides it.
 UNIVERSE=$(ls -t \
-  "$PROJECT_ROOT"/outputs/*_universe_${CORPUS}_gemma4/*/norm_universe_only/outputs/norm_universe/norm_universes.json \
+  "$PROJECT_ROOT"/{outputs,multirun}/*_universe_${CORPUS}_gemma4/*/norm_universe_only/outputs/norm_universe/norm_universes.json \
   2>/dev/null | head -1 || true)
 echo "[universe_build:$CORPUS] DONE. universe: ${UNIVERSE:-NOT FOUND (check step-2 logs)}"

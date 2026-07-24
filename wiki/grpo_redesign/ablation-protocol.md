@@ -24,7 +24,13 @@ training:
 
 Changing either key bumps the prescreen cache signature automatically (both
 are part of the cache key). Cell configs live in one sweep yaml
-(`conf/sweep/grpo_m1_grid.yaml`, to be written with the implementation).
+(`conf/sweep/grpo_m1_grid.yaml` — written 2026-07-24).
+
+**Recorded deviation (2026-07-24):** the `−outcome` cell requires a third
+toggle, `training.grpo.reward_core: false` — R-OUTCOME is core, not a
+member of `reward_auxiliaries`, so no setting of the two cell keys can
+remove it. `reward_core: true` for every other cell; this is the single
+exception to "two keys define a cell," flagged in the grid file header.
 
 ## Weights — resolved (master decision 4)
 
@@ -48,8 +54,11 @@ load-bearing — see the `core` cell for the 1:0 extreme."
 
 ## The grid (7 cells + 2 free baselines)
 
-Run on the canonical policy base (qwen3.5-9b SFT-contentless on
-fiction10-gemma4 flows). Every cell gets the identical eval matrix.
+Run on the canonical policy base — **qwen3.5-9b `sft-canonical`** (the
+2026-07-15 canonical DFT sweep on fiction10-gemma4 flows; the earlier
+"SFT-contentless" naming here predated that sweep — corrected 2026-07-24).
+Every cell gets the identical eval matrix. Execution sequencing, model
+scope, and readiness gating live in [m1-run-plan.md](m1-run-plan.md).
 
 | cell | reward_auxiliaries | vignette mix | pre-registered prediction (falsifiable) |
 |---|---|---|---|
@@ -59,7 +68,7 @@ fiction10-gemma4 flows). Every cell gets the identical eval matrix.
 | `−ground` | [contrast] | 0.3 | ≈ `full` within seed noise (Memory-R1 predicts the quality judge is redundant given outcome). Any consistent drop = the judge carries unique signal worth its cost — report either way. |
 | `−contrast` | [ground] | 0.3 | Benchmarks ≈ `full`; trace diagnostic moves instead: wrong-book grounding score rises (book-specificity erodes without the penalty). |
 | `−vignette` | [ground, contrast] | 0.0 | Judgment-format benchmarks (ConfAIde tier-2, CIRL) degrade vs `full` or v10-style drift re-opens; extraction metrics hold (task-vignettes.md — removal expected to hurt). |
-| `+answerer-B` | (offline) | — | Not a training cell: re-score a sample of `full`'s reward traces with a second answerer (gemma-4-12b-it); Spearman vs primary ≥ 0.8, else the outcome reward is answerer-idiosyncratic (reward-outcome.md D1 check). |
+| `+answerer-B` | (offline) | — | Not a training cell: re-score a sample of `full`'s reward traces with a second answerer (**a non-Gemma model, e.g. Qwen3.6-27B** — revised 2026-07-24 with D1: the primary answerer is now gemma-4-31b, so the robustness check must cross families); Spearman vs primary ≥ 0.8, else the outcome reward is answerer-idiosyncratic (reward-outcome.md D1 check). |
 | `sft` | — | — | baseline row, no training cost |
 | `0-shot` | — | — | baseline row, no training cost |
 

@@ -150,6 +150,9 @@ def run_norm_universe_stage(
         )
 
     print(f"[norm_universe] Loading embedding model: {embedding_model_path}")
+    from dagspaces.common.stage_utils import ensure_importable_sentence_transformers
+
+    ensure_importable_sentence_transformers()
     from sentence_transformers import SentenceTransformer
 
     embed_model = SentenceTransformer(

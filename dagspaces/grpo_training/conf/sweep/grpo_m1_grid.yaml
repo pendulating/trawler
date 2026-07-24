@@ -1,0 +1,100 @@
+# @package _global_
+# ─────────────────────────────────────────────────────────────────────────────
+# m1 grid — the m-series LOO ablation, one sweep yaml (the pre-registration).
+#
+# Source: wiki/grpo_redesign/ablation-protocol.md (cell mechanics, the 2:1
+# weight rule, the frozen cell table) + README.md §"The ablation, concretely".
+#
+# A cell is defined by the two cell keys — reward_auxiliaries and task_mix —
+# and NOTHING ELSE varies across the grid (optimizer preset, data, splits,
+# prescreen policy, servers, seeds are all pinned in training/grpo/m_series.yaml
+# and the shared pipeline). Each cell's experiment.name is grpo_m1_<cell>.
+#
+# Six training cells (the two baselines `sft` / `0-shot` carry no training cost
+# and are eval-only rows, not launched here):
+#
+#   cell        reward_auxiliaries      task_mix.vignette   outcome core
+#   ────        ──────────────────      ─────────────────   ────────────
+#   core        []                      0.3                 on
+#   full        [ground, contrast]      0.3                 on
+#   -outcome    [ground, contrast]      0.3                 OFF   (see note)
+#   -ground     [contrast]              0.3                 on
+#   -contrast   [ground]                0.3                 on
+#   -vignette   [ground, contrast]      0.0                 on
+#
+# NOTE on -outcome (design tension surfaced 2026-07-24): the always-on
+# R-OUTCOME core is NOT a member of reward_auxiliaries, so -outcome (which
+# removes the verifiable core — ablation-protocol.md weight table row
+# "-outcome": outcome absent, ground/contrast 0.50/0.50; README.md §"The
+# ablation": "full minus the outcome core term") is the ONE cell the two cell
+# keys cannot express by themselves. It requires a third toggle, `reward_core`,
+# which is `on` for every other cell. The ModularReward integration
+# (migration.md item 4) must consume `training.grpo.reward_core`. All five
+# other cells are expressed purely by the two cell keys.
+#
+# Cells are aligned heterogeneous tuples (not a cartesian product), so they are
+# encoded as a `_cells` lookup keyed by a single swept `cell` param and pulled
+# in by nested OmegaConf interpolation — the only single-file way to get exactly
+# these six aligned named runs. (The repo's other sweeps are clean cartesian
+# products — seed_variance.yaml, offaxis.yaml — so there is no prior convention
+# for heterogeneous named cells; this follows their launcher/subdir/mode shape.)
+#
+# Run order (ablation-protocol.md §"Run order"; m1-run-plan.md phases C–D):
+# wave 1 = core, full, -outcome, -vignette (branch-invariant); wave 2 fills
+# -ground / -contrast only if full > core. Launch waves as separate multiruns
+# by passing the relevant cell subset, e.g.:
+#   python -m dagspaces.grpo_training.cli --multirun +sweep=grpo_m1_grid \
+#       cell=core,full,minus_outcome,minus_vignette
+# Omitting the cell override runs all six.
+#
+# Prerequisites (export before launch; see sweep/seed_variance.yaml):
+#   NORM_UNIVERSES_PATH, CI_REASONING_PATH, NORM_EMBEDDINGS_PATH (optional),
+#   and the shared gemma-4-31b answerer/judge server (VLLM_SERVER_URL) —
+#   m1-run-plan.md §"GPU budget".
+# ─────────────────────────────────────────────────────────────────────────────
+
+defaults:
+  # qwen3.5-9b sft-canonical — the canonical policy base (the 2026-07-15 DFT
+  # sweep on fiction10-gemma4 flows), ablation-protocol.md §"The grid".
+  - override /pipeline: grpo_only_online_external
+  - override /model: qwen3.5-9b/sft-canonical
+  - override /training/grpo: m_series
+
+# Default cell for a single-run (`--cfg job`) compose; the sweeper overrides it.
+cell: full
+
+# The six aligned cells. Each entry: the two cell keys (auxiliaries + the mix
+# split) plus the -outcome-only `outcome` core toggle and the display name.
+_cells:
+  core:           {auxiliaries: [],                 extract: 0.7, vignette: 0.3, outcome: true,  name: grpo_m1_core}
+  full:           {auxiliaries: [ground, contrast], extract: 0.7, vignette: 0.3, outcome: true,  name: grpo_m1_full}
+  minus_outcome:  {auxiliaries: [ground, contrast], extract: 0.7, vignette: 0.3, outcome: false, name: "grpo_m1_-outcome"}
+  minus_ground:   {auxiliaries: [contrast],         extract: 0.7, vignette: 0.3, outcome: true,  name: "grpo_m1_-ground"}
+  minus_contrast: {auxiliaries: [ground],           extract: 0.7, vignette: 0.3, outcome: true,  name: "grpo_m1_-contrast"}
+  minus_vignette: {auxiliaries: [ground, contrast], extract: 1.0, vignette: 0.0, outcome: true,  name: "grpo_m1_-vignette"}
+
+experiment:
+  name: ${_cells.${cell}.name}
+
+training:
+  grpo:
+    # The -outcome control toggle (on for every cell but minus_outcome). See the
+    # header NOTE — the one key beyond the two cell keys the grid needs.
+    reward_core: ${_cells.${cell}.outcome}
+    # ── the two cell keys (the only reward-shape variation across the grid) ──
+    reward_auxiliaries: ${_cells.${cell}.auxiliaries}
+    task_mix:
+      extract: ${_cells.${cell}.extract}
+      vignette: ${_cells.${cell}.vignette}
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 4 concurrent policy-training lanes — the 4-lane budget (6 GPUs = 4 policy
+    # lanes + 2 for the shared gemma-4-31b answerer/judge server). m1-run-plan.md.
+    array_parallelism: 4
+  sweep:
+    subdir: cell=${cell}
+  sweeper:
+    params:
+      cell: core,full,minus_outcome,minus_ground,minus_contrast,minus_vignette

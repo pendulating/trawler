@@ -89,6 +89,9 @@ def _embed_norms(texts: list[str], model_name: str = "all-MiniLM-L6-v2",
 
     Returns an (N, D) numpy array of L2-normalised embeddings.
     """
+    from dagspaces.common.stage_utils import ensure_importable_sentence_transformers
+
+    ensure_importable_sentence_transformers()
     from sentence_transformers import SentenceTransformer
 
     print(f"[norm_consolidation] Loading embedding model: {model_name}")

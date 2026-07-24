@@ -92,9 +92,12 @@ Noted for the limitations paragraph.
 ## What the answerer sees
 
 The completion's **structured fields only**: the flow tuples
-(subject/sender/recipient/information_type/transmission_principle) and any
-per-flow appropriateness labels. **Not** the free-text reasoning trace, and
-never the source chunk. Rationale:
+(subject/sender/recipient/information_type/transmission_principle/**context**
+— added by decision 2026-07-24: flows and norms are context-relative, so the
+answerer cannot judge a flow without the extraction's context field; it is a
+bounded structured field, covered by `R-VALID`'s length caps like the rest)
+and any per-flow appropriateness labels. **Not** the free-text reasoning
+trace, and never the source chunk. Rationale:
 
 - The artifact under evaluation is the structured extraction (as Memory-R1's
   answer agent reads memory *entries*, not dialogue transcripts).
@@ -144,16 +147,22 @@ the retry + group-neutral fallback keeps failures out of the gradient.
 
 ## Resolved design decisions
 
-**D1 — frozen answerer: Qwen3.6-27B, the existing judge deployment (:8002).**
-Memory-R1's precedent removes the same-family anxiety: their frozen Answer
-Agent *is* the same backbone as the trained Memory Manager — what matters is
-that the counterpart is frozen and capable, not foreign. Reusing the judge
-deployment means zero new infra and one less moving part. Two hard rules:
-(a) the answerer is **identical across every grid cell and every policy
-model** (it is part of the reward definition, like the judge); (b) a
-robustness spot-check with a second answerer (gemma-4-12b-it) on a sample of
-traces is run once, offline, before the grid is trusted — reported in
-[ablation-protocol.md](ablation-protocol.md).
+**D1 — frozen answerer: Gemma-4-31B-it** (REVISED 2026-07-23; the original
+resolution named Qwen3.6-27B and was stale against the canonical-model
+decision — [canonical-models.md](../canonical-models.md): **Gemma-4 is the
+gold-label family**, `gemma-4-31b/instruct` is the teacher AND the judge for
+the camera-ready, and the paper already credits Gemma-4-31B-it on every
+judged column). One family supervises everything: teacher flows, judged
+auxiliaries, and the outcome answerer — no cross-family drift inside the
+reward definition. Memory-R1's precedent removes the same-family anxiety:
+their frozen Answer Agent *is* the same backbone as the trained Memory
+Manager — what matters is that the counterpart is frozen and capable, not
+foreign. Two hard rules: (a) the answerer is **identical across every grid
+cell and every policy model** (it is part of the reward definition, like the
+judge); (b) a robustness spot-check with a second answerer — now a
+**non-Gemma** model (e.g. Qwen3.6-27B) since the primary is Gemma — on a
+sample of traces is run once, offline, before the grid is trusted — reported
+in [ablation-protocol.md](ablation-protocol.md).
 
 **D2 — K = min(4, |filtered pool|), force-stratified, seeded by `chunk_id`.**
 K=4 keeps the call short (~600 in / ~40 out tokens) while making blanket

@@ -6,7 +6,9 @@ rule). Removal = deletion + renormalization; the `−ground` cell.
 
 ## One-liner
 
-One listwise judge call per group: the frozen judge (Qwen3.6-27B, :8002)
+One listwise judge call per group: the frozen judge (**Gemma-4-31B-it** —
+the canonical teacher/judge family, revised 2026-07-23; the Qwen3.6-27B
+deployment reference was stale, see reward-outcome.md D1)
 sees all G completions plus the norms retrieved from the chunk's **own
 book's** universe, and must rank them by how well their extracted flows are
 governed by those norms — rank blended with an absolute grounding score into

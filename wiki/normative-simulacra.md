@@ -68,4 +68,4 @@ At GRPO time, each extracted flow retrieves top-k norms from $\hat{\mathcal{N}}_
 
 Default: **Qwen2.5-72B-Instruct-AWQ** on 2 GPUs with guided decoding for schema validity. Config: `dagspaces/common/conf/model/qwen2.5-72b/awq.yaml`.
 
-Judge model for `R_ground`: **Qwen3.6-27B** (TP=2; served by `scripts/judge_server.sub` or `scripts/launch_auxiliary_servers.sh`; configurable via `JUDGE_MODEL` env var).
+Judge model for `R_ground`: keeper-era (v9–v12a paper runs) used **Qwen3.6-27B** (TP=2; served by `scripts/judge_server.sub` or `scripts/launch_auxiliary_servers.sh`; configurable via `JUDGE_MODEL` env var). **Canonical judge going forward (revised 2026-07-23): Gemma-4-31B-it (`gemma-4-31b/instruct`)** — the gold-label teacher/judge family for all m-series / camera-ready work per [canonical-models.md](canonical-models.md); do not reuse the Qwen3.6-27B judge for new runs.

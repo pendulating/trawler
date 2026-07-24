@@ -76,6 +76,49 @@ def ensure_dotenv() -> None:
     _DOTENV_LOADED = True
 
 
+def ensure_importable_sentence_transformers() -> None:
+    """Stub out a broken torchcodec install so sentence-transformers imports.
+
+    torchcodec raises RuntimeError (not ImportError) at import time when no
+    compatible FFmpeg shared library can be loaded — e.g. klara, where the
+    system FFmpeg 8 needs a newer GLIBCXX than the anaconda-base libstdc++
+    the venv python resolves. sentence-transformers guards its torchcodec
+    import with ``except (ImportError, OSError)`` only, so the RuntimeError
+    escapes and kills any ``import sentence_transformers``. torchcodec is a
+    vllm dependency we cannot remove from the shared venv; it only serves
+    audio/video decoding, which nothing in this project uses.
+
+    Call this before importing sentence_transformers. If torchcodec imports
+    cleanly it is a no-op; if it does not, an empty placeholder module is
+    installed so ``from torchcodec.decoders import ...`` raises
+    ModuleNotFoundError — the same degraded no-audio/video path
+    sentence-transformers takes when torchcodec is absent.
+    """
+    import importlib
+    import importlib.machinery
+    import sys
+    import types
+
+    if "torchcodec" in sys.modules:
+        return
+    try:
+        importlib.import_module("torchcodec")
+    except Exception as exc:
+        # No __path__ on the stub → submodule imports raise
+        # ModuleNotFoundError (an ImportError), which downstream guards catch.
+        # A real __spec__ is required: transformers probes availability via
+        # importlib.util.find_spec, which raises ValueError on a module whose
+        # __spec__ is None.
+        stub = types.ModuleType("torchcodec")
+        stub.__spec__ = importlib.machinery.ModuleSpec("torchcodec", loader=None)
+        sys.modules["torchcodec"] = stub
+        print(
+            "[stage_utils] torchcodec unavailable "
+            f"({type(exc).__name__}: {exc}); stubbed so sentence-transformers "
+            "can import without audio/video support"
+        )
+
+
 def maybe_silence_vllm_logs() -> None:
     """Configure vLLM logger levels according to environment variables.
 

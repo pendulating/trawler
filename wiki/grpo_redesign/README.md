@@ -313,6 +313,9 @@ Status: ☐ to write · ◐ drafted · ☑ done
   mechanics, the 2:1 weight rule, per-cell pre-registered predictions,
   run-order/early-exit logic, seeds + noise bars, eval matrix, reporting
   table, compute envelope
+- ☑ [m1-run-plan.md](m1-run-plan.md) — execution sequencing (2026-07-24):
+  current readiness, model scope (qwen grid + gemma confirmation cell),
+  phases A–G from implementation to transfer
 - ◐ [migration.md](migration.md) — the parallel-stack rule (keeper surfaces
   never edited), old→new map, implementation checklist (7 components), test
   plan incl. a keeper-freeze regression guard, resurrection path,
@@ -321,10 +324,11 @@ Status: ☐ to write · ◐ drafted · ☑ done
 ## Open design decisions (to resolve in subpages)
 
 1. ~~**Frozen answerer choice for `R-OUTCOME`**~~ **RESOLVED**
-   (reward-outcome.md D1): Qwen3.6-27B, the existing judge deployment —
-   Memory-R1's frozen counterpart is same-backbone, so the family concern
-   dissolves; identical answerer across all cells + one offline second-answerer
-   robustness check.
+   (reward-outcome.md D1, **revised 2026-07-23**): **Gemma-4-31B-it** — the
+   canonical teacher/judge family for the camera-ready
+   ([canonical-models.md](../canonical-models.md)); the original Qwen3.6-27B
+   resolution was stale against that decision. Identical answerer across all
+   cells + one offline second-answerer (non-Gemma) robustness check.
 2. ~~**K (probes per chunk) and probe sampling**~~ **RESOLVED**
    (reward-outcome.md D2): K = min(4, pool), force-stratified (both gold
    classes whenever available), seeded by `chunk_id`; plus a
