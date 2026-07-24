@@ -42,13 +42,32 @@ HF_HOME="${HF_HOME:-/share/pierson/matt/.cache/huggingface}"
 # ------------------------------ ENVIRONMENT ------------------------------ #
 cd "$REPO_DIR"
 
-if [ ! -d ".venv-vllm025cu129" ]; then
-    echo "ERROR: .venv-vllm025cu129 not found." >&2
+EMB_VENV="${EMB_VENV:-.venv-vllm025cu129}"
+
+if [ ! -d "$EMB_VENV" ]; then
+    echo "ERROR: $EMB_VENV not found." >&2
     exit 1
 fi
 
-source .venv-vllm025cu129/bin/activate
-echo "Python: $(which python) ($(python --version))"
+# Prefer the node-local /scratch mirror of the venv (same selector the stage
+# launchers and judge_server.sub use — see scripts/activate_stage_venv.sh).
+# Cold torch/vllm imports over NFS cost ~10 min per process; the mirror takes
+# seconds. Falls back to the NFS venv when no matching mirror exists.
+case "$EMB_VENV" in
+  /*) _emb_venv_abs="$EMB_VENV" ;;
+  *)  _emb_venv_abs="$REPO_DIR/$EMB_VENV" ;;
+esac
+export TRAWLER_DRIVER_VENV="${TRAWLER_DRIVER_VENV:-$_emb_venv_abs}"
+source "$REPO_DIR/scripts/activate_stage_venv.sh"
+if [ -z "${TRAWLER_STAGE_PYTHON:-}" ]; then
+    source "$_emb_venv_abs/bin/activate"
+fi
+# Mirror's bin/activate bakes the NFS VIRTUAL_ENV into console-script
+# shebangs, so PATH lookups silently land back on /share (judge_server.sub
+# job 75077 lesson). Bypass PATH: run vllm under the explicit interpreter.
+EMB_PYTHON="${TRAWLER_STAGE_PYTHON:-$_emb_venv_abs/bin/python}"
+EMB_VLLM_SCRIPT="$(dirname "$EMB_PYTHON")/vllm"
+echo "Python: $EMB_PYTHON ($("$EMB_PYTHON" --version))"
 
 export HF_HOME
 export WANDB_MODE=disabled
@@ -80,7 +99,7 @@ mkdir -p "$REPO_DIR/.slurm_jobs/embed-server"
 
 # ----------------------------- LAUNCH SERVER ----------------------------- #
 echo "[$(date)] Launching embedding server..."
-vllm serve "$EMB_MODEL" \
+"$EMB_PYTHON" "$EMB_VLLM_SCRIPT" serve "$EMB_MODEL" \
     --port "$EMB_PORT" \
     --host 0.0.0.0 \
     --tensor-parallel-size 1 \

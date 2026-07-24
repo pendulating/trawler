@@ -488,3 +488,74 @@ def test_active_aux_without_scorer_raises():
     r.prompt_metadata = {"p": extract_meta(True)}
     with pytest.raises(RuntimeError):
         r(prompts=["p"], completions=[extraction()])
+
+
+# ---------------------------------------------------------------------------
+# build_modular_dataset: gold-NO chunks are A-ABSTAIN rows, never excluded
+# (regression: 2026-07-24 wave-1 built 0 gold-no rows — the empty-pool
+# exclusion ate all 126 gold-NO chunks and collapsed the two-sided
+# abstention signal)
+# ---------------------------------------------------------------------------
+class _StubTokenizer:
+    def apply_chat_template(self, messages, tokenize=False,
+                            add_generation_prompt=True, enable_thinking=False):
+        return f"<user>{messages[0]['content']}</user>"
+
+
+def _chunks_df():
+    import pandas as pd
+    return pd.DataFrame([
+        {"chunk_text": "Alice tells Bob a secret.", "source_id": "135",
+         "chunk_id": "c-yes-pool", "has_information_exchange": True},
+        {"chunk_text": "A flow the retriever found no norms for.",
+         "source_id": "135", "chunk_id": "c-yes-nopool",
+         "has_information_exchange": True},
+        {"chunk_text": "A quiet essayistic passage.", "source_id": "135",
+         "chunk_id": "c-goldno", "has_information_exchange": False},
+    ])
+
+
+def _pools_parquet(tmp_path):
+    import pandas as pd
+    pq = tmp_path / "pools.parquet"
+    pd.DataFrame([
+        {"gutenberg_id": "135", "chunk_id": "c-yes-pool", "probe_id": "p1",
+         "gold": "yes", "prompt_text": "Should this be shared?",
+         "norm_index": 0},
+    ]).to_parquet(pq)
+    return str(pq)
+
+
+def test_goldno_chunks_kept_as_probeless_abstain_rows(tmp_path):
+    from dagspaces.grpo_training.stages.modular_reward import build_modular_dataset
+
+    grpo_cfg = {
+        "probes": {"pools_path": _pools_parquet(tmp_path), "k_max": 4},
+        "task_mix": {"extract": 1.0, "vignette": 0.0},
+        "prescreen": {"target_n": 10},
+        "battery": {},
+    }
+    rf = _reward()
+    dataset, metadata = build_modular_dataset(
+        cfg=None, grpo_cfg=grpo_cfg, chunks_df=_chunks_df(),
+        norm_universes={}, reward_fn=rf, tokenizer=_StubTokenizer(),
+        ci_prompt_template="Extract flows: {{chunk_text}}",
+        output_dir=str(tmp_path), seed=0, embed_fn=None,
+    )
+
+    rows = list(dataset)
+    gold_classes = sorted(str(r["gold_has_exchange"]) for r in rows)
+    # gold-NO kept; flow-bearing empty-pool excluded; with-pool kept.
+    assert len(rows) == 2, rows
+    assert gold_classes == ["False", "True"], rows
+
+    # The gold-NO row carries NO probes (A-ABSTAIN needs no server calls).
+    goldno_meta = [m for m in rf.prompt_metadata.values()
+                   if m.get("gold_has_exchange") is False]
+    assert len(goldno_meta) == 1
+    assert goldno_meta[0].get("probes") in ([], None)
+
+    # Exclusion accounting is split, not conflated.
+    assert metadata["n_extract_excluded_empty_pool"] == 1
+    assert metadata["n_src_goldno_chunks"] == 1
+    assert metadata["n_goldno_rows_prescreen_pool"] == 1

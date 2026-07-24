@@ -827,7 +827,8 @@ def build_modular_dataset(
     The dataset-build hook (migration.md checklist items 1–2, 6). Composes:
 
       * **T-EXTRACT** rows — one per fiction chunk with a non-empty probe pool
-        (the 158 empty-pool chunks are excluded; the ``pools_path`` parquet is
+        (flow-bearing chunks with empty probe pools are excluded; gold-NO
+        chunks are KEPT as probe-less A-ABSTAIN rows; the ``pools_path`` parquet is
         the source of truth). Each row carries its ``chunk_id``-sampled probes
         (:func:`attach_probes`) as reward metadata.
       * **T-VIGNETTE** rows — deontic batteries built per book from clustered
@@ -882,6 +883,7 @@ def build_modular_dataset(
     rows: list[dict[str, Any]] = []
     meta: dict[str, dict[str, Any]] = {}
     n_empty_pool = 0
+    n_src_goldno = 0
 
     # --- T-EXTRACT rows -----------------------------------------------------
     for rec in chunks_df.to_dict("records"):
@@ -894,12 +896,22 @@ def build_modular_dataset(
         if gold is None and rec.get("ci_flow_count") is not None:
             gold = int(rec["ci_flow_count"]) > 0
         gold = bool(gold) if gold is not None else None
+        if gold is False:
+            n_src_goldno += 1
 
         pool = pool_by_chunk.get((source_id, chunk_id), [])
         sampled = attach_probes(pool, chunk_id, k_max=k_max)
-        if not sampled:
+        if not sampled and gold is not False:
+            # Flow-bearing (or unknown-gold) chunk whose probe pool is empty:
+            # nothing R-OUTCOME can verify — excluded per reward-outcome.md.
+            # Gold-NO chunks are deliberately NOT excluded here: they never
+            # bear probes by design and are exactly the rows A-ABSTAIN exists
+            # for (scored entirely by the four-entry table, zero server
+            # calls). Conflating the two removed every gold-NO row from the
+            # 2026-07-24 wave-1 prompt set and collapsed the two-sided
+            # abstention signal.
             n_empty_pool += 1
-            continue  # excluded: no probes ⇒ nothing R-OUTCOME can verify
+            continue
 
         user_prompt = ci_prompt_template.replace("{{chunk_text}}", str(chunk_text)).strip()
         formatted = _format_prompt(tokenizer, user_prompt, enable_thinking)
@@ -963,6 +975,21 @@ def build_modular_dataset(
                 }
                 n_batteries += 1
 
+    # --- Build-time invariant (2026-07-24 lesson): the two-sided A-ABSTAIN
+    # signal requires gold-NO rows in the prompt set. If the source corpus has
+    # gold-NO chunks but none survived the build, the exclusion logic has
+    # regressed — fail loudly instead of training a one-sided reward.
+    n_goldno_rows = sum(
+        1 for r in rows if r["task_type"] == "extract" and r["gold_class"] == "no"
+    )
+    if n_src_goldno > 0 and n_goldno_rows == 0:
+        raise ValueError(
+            f"[modular_reward] source corpus has {n_src_goldno} gold-NO chunks "
+            "but the built dataset has ZERO gold-no extract rows — the "
+            "empty-pool exclusion is eating A-ABSTAIN's rows (see "
+            "reward-abstain.md; gold-NO chunks bear no probes by design)."
+        )
+
     # --- Stratified prescreen (mix-preserving; realized mix reported) -------
     task_mix = dict(grpo_cfg.get("task_mix", {}) or {})
     target_n = int((grpo_cfg.get("prescreen", {}) or {}).get("target_n", len(rows)))
@@ -993,6 +1020,8 @@ def build_modular_dataset(
         "task_mix": task_mix,
         "m1_cache_signature": signature,
         "n_extract_excluded_empty_pool": n_empty_pool,
+        "n_src_goldno_chunks": n_src_goldno,
+        "n_goldno_rows_prescreen_pool": n_goldno_rows,
         "n_batteries_built": n_batteries,
         "prescreen_report": report,
     }
@@ -1005,7 +1034,9 @@ def build_modular_dataset(
 
     print(
         f"[modular_reward] Built modular dataset: {len(dataset)} rows "
-        f"(excluded {n_empty_pool} empty-pool chunks, {n_batteries} batteries); "
+        f"(excluded {n_empty_pool} flow-bearing empty-pool chunks; kept "
+        f"{n_goldno_rows}/{n_src_goldno} gold-NO chunks as probe-less "
+        f"A-ABSTAIN rows; {n_batteries} batteries); "
         f"realized task mix {report.get('realized_task_mix')}"
     )
     return dataset, metadata
