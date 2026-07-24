@@ -1071,6 +1071,10 @@ def run_grpo_training_stage(
     # vignette_ratio describes the PRE-screen mix only. Record the realized
     # post-screen count so the paper's mix claim is auditable.
     _train_vignettes = sum(1 for r in dataset if r.get("task_type") == "norm_judgment")
+    # Imported here (not only in the legacy dataset-build branch above) so the
+    # shared post-screen accounting is reachable on the modular path too — the
+    # modular branch never runs the legacy import. Idempotent duplicate import.
+    from .prompt_screening import _vignette_gold_counts
     _vig_post = _vignette_gold_counts(dataset)
     if n_vignette_meta:
         print(f"[grpo_training] Vignettes in final training set: "
@@ -1196,6 +1200,56 @@ def run_grpo_training_stage(
 
     training_args = GRPOConfig(**grpo_config_kwargs)
 
+    # libcudart-stub guard (colocate vLLM init). fla (pulled in transitively when
+    # transformers loads the qwen3.5 gated-delta-rule path during the LoRA merge)
+    # imports tilelang, which dlopens a `libcudart_stub.so`. vLLM's cumem
+    # allocator availability check calls find_loaded_library("libcudart"), whose
+    # substring scan of /proc/self/maps matches the stub first (filename
+    # "libcudart_stub" satisfies the startswith("libcudart") assert) and loads a
+    # runtime missing cudaDeviceReset → AttributeError, killing engine init.
+    # Fix (additive, colocate-only): preload the REAL cuda runtime so it is
+    # resident in maps, and wrap find_loaded_library to skip any "_stub" shadow.
+    # No-op for models that never import tilelang (e.g. gemma-4). FLA_TILELANG=0
+    # already disables tilelang *kernels*; this closes the *import-time* dlopen.
+    if bool(grpo_cfg.get("use_vllm", True)):
+        try:
+            import ctypes as _ctypes
+            _ctypes.CDLL("libcudart.so.12", mode=_ctypes.RTLD_GLOBAL)
+        except Exception as _e:
+            print(f"[grpo_training] libcudart preload skipped: {_e}")
+        try:
+            from vllm.utils import system_utils as _vsu
+
+            _orig_find_loaded_library = _vsu.find_loaded_library
+
+            def _find_loaded_library_skip_stub(lib_name: str):
+                try:
+                    with open("/proc/self/maps") as _f:
+                        for _line in _f:
+                            if lib_name in _line and "_stub" not in _line:
+                                _start = _line.index("/")
+                                _path = _line[_start:].strip()
+                                _fname = _path.split("/")[-1]
+                                if _fname.rpartition(".so")[0].startswith(lib_name):
+                                    return _path
+                except OSError:
+                    pass
+                return _orig_find_loaded_library(lib_name)
+
+            _vsu.find_loaded_library = _find_loaded_library_skip_stub
+            # cuda_wrapper binds the symbol at its module top (`from ... import
+            # find_loaded_library`); patch that reference too if already imported.
+            import sys as _sys
+
+            _cw = _sys.modules.get(
+                "vllm.distributed.device_communicators.cuda_wrapper"
+            )
+            if _cw is not None and hasattr(_cw, "find_loaded_library"):
+                _cw.find_loaded_library = _find_loaded_library_skip_stub
+            print("[grpo_training] Installed libcudart-stub guard for colocate vLLM init")
+        except Exception as _e:
+            print(f"[grpo_training] Warning: libcudart-stub guard not installed: {_e}")
+
     # Qwen3.5 is natively multimodal. TRL loads the CausalLM (text-only) for
     # training, but vLLM needs the composite Qwen3_5Config (with vision_config)
     # to initialize the full model from merged_dir.  Monkey-patch to reload
@@ -1234,8 +1288,35 @@ def run_grpo_training_stage(
                     _LLM.__init__ = _orig_LLM
 
             VLLMGeneration._init_vllm = _patched_init_vllm
+
+            # Colocate weight-sync name remap (vLLM 0.25 composite VLM arch).
+            # TRL's sync_weights pushes the text training model's params (loaded
+            # as Qwen3_5ForCausalLM → names `model.*` / `lm_head.*`) one-by-one
+            # into the vLLM engine model, which is the COMPOSITE
+            # Qwen3_5ForConditionalGeneration (the composite-config patch above).
+            # That composite nests the text stack under `language_model.`
+            # (`self.language_model = Qwen3_5ForCausalLM(prefix="language_model")`),
+            # so a bare `model.layers.…` name has no target and load_weights
+            # raises "no module or parameter named 'model'". Patch
+            # _push_param_to_vllm (runs at SYNC time, engine awake — the engine
+            # model is asleep/None right after _init_vllm, so patching the model
+            # object there is unreliable) to prefix text names into the composite
+            # namespace. Deterministic + self-validating: a wrong name still
+            # raises (vLLM checks every name), so this cannot silently mis-route.
+            # Vision params are never pushed (LoRA is text-only), so untouched.
+            _orig_push = VLLMGeneration._push_param_to_vllm
+
+            def _push_param_to_vllm_lm_prefix(self_vllm, name, param):
+                if self_vllm.mode == "colocate" and (
+                    name.startswith("model.") or name.startswith("lm_head.")
+                ):
+                    name = "language_model." + name
+                return _orig_push(self_vllm, name, param)
+
+            VLLMGeneration._push_param_to_vllm = _push_param_to_vllm_lm_prefix
             print(f"[grpo_training] Patched TRL vLLM init for Qwen3.5 "
-                  f"(composite config from {_original_model_source})")
+                  f"(composite config from {_original_model_source}) + "
+                  f"colocate weight-sync remap (model.*/lm_head.* → language_model.*)")
         except Exception as e:
             print(f"[grpo_training] Warning: failed to patch TRL vLLM init: {e}")
 

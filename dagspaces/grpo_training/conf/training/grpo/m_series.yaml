@@ -137,7 +137,12 @@ probes:
 # R-OUTCOME answerer client. Cross-family robustness check (+answerer-B) uses a
 # non-Gemma model; the PRIMARY answerer is gemma-4-31b served on VLLM_SERVER_URL.
 # Source: reward-outcome.md (answerer client); ablation-protocol.md D1 revision.
-answerer: {base_url_env: VLLM_SERVER_URL, model: gemma-4-31b}
+# `model` MUST equal the served model id vLLM was launched with (the request's
+# `model` field is matched exactly — a friendly alias like "gemma-4-31b" 404s).
+# The answerer and R-GROUND judge are ONE deployment / two roles (m1-run-plan.md
+# §"GPU budget"), so this tracks judge_model.model_source (the served path,
+# JUDGE_MODEL_PATH) — they cannot diverge by construction.
+answerer: {base_url_env: VLLM_SERVER_URL, model: "${judge_model.model_source}"}
 
 # A-ABSTAIN reward table (extended to gold-NO extractions). Mirrors the keeper's
 # no_flow_reward(gold): gold=YES→wrong 0.1, gold=NO→correct 0.6, unknown→0.4.
