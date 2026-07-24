@@ -85,6 +85,32 @@ FIELD_CAP_TOKENS = 64
 # (reward-outcome.md "Failure handling"; reward-ground.md "Failure fallback").
 GROUP_NEUTRAL = 0.5
 
+# Floor for a VALID, gold-YES, flow-bearing (normal-path) completion's composite
+# score. reward-abstain.md pins the ordering invariant
+# invalid(0) < wrong-abstention(0.1) < unverifiable(0.4) < correct-abstention(0.6):
+# a schema-valid extraction must never score at or below the invalid gate (0),
+# nor lose to a wrong abstention (0.1), else abstaining dominates engaging on
+# gold-YES chunks — exactly the over-abstention the table exists to prevent.
+# EM alone can reach 0.0 for a valid-but-useless extraction (all probes wrong),
+# which in the core cell (weight 1.0) ties the invalid floor and is beaten by
+# 0.1. This floor binds ONLY in that pathological case; it sits strictly in
+# (wrong-abstention 0.1, unverifiable 0.4) so engaging beats wrong-abstaining
+# while a useless gold-YES extraction still ranks below a neutral gold-NO one.
+# The EM gradient is preserved wherever the composite already exceeds it.
+# (Design choice 2026-07-24 — the docs assert the invariant but not its
+# enforcement; value/mechanism are a knob, not load-bearing at exactness.)
+VALID_PATH_FLOOR = 0.15
+
+
+def _is_embedding_abort(exc: BaseException) -> bool:
+    """True if exc is EmbeddingClient's fail-loud corpus-wide abort (clients.py).
+
+    Matched by its stable contract signature rather than a custom type, so no
+    shared-plumbing edit is needed. Distinguishes a persistent-outage abort
+    (must crash) from an ordinary transient scorer error (group-neutral).
+    """
+    return isinstance(exc, RuntimeError) and "aborting instead of training" in str(exc)
+
 _MODULAR = "modular"
 _AUX_NAMES: tuple[str, ...] = ("ground", "contrast")
 
@@ -400,6 +426,16 @@ class ModularReward:
         try:
             scores = scorer(completions=texts, prompts=prompts, metadata_list=metas)
         except Exception as exc:  # deliberate neutrality, never noise
+            if _is_embedding_abort(exc):
+                # The embedding client's deliberate fail-loud abort (raised
+                # after N consecutive outages, clients.py) means grounding
+                # retrieval is broken corpus-wide — training through it would
+                # silently corrupt every aux score. Propagate: a persistent
+                # embedding outage must crash the run, not neutralize the
+                # auxiliary (which would silently delete ground/contrast for
+                # the rest of training). Restores the keeper's fail-loud
+                # contract on the modular path (2026-07-24).
+                raise
             print(f"[modular_reward] WARNING {kind} scorer failed for group: {exc}")
             return [GROUP_NEUTRAL] * n, True
         if scores is None or len(list(scores)) != n:
@@ -495,7 +531,9 @@ class ModularReward:
                 for kind in self.auxiliaries:
                     if kind in w:
                         r += w[kind] * aux_term[kind].get(i, GROUP_NEUTRAL)
-                scores[i] = r
+                # Ordering-invariant floor: a valid gold-YES extraction never
+                # falls to/below the invalid gate or a wrong abstention.
+                scores[i] = max(r, VALID_PATH_FLOOR)
                 acc.observe_direction(gate_pass_flows[i], metas[i])
 
             # group_spread: within-group std of the outcome term (advantage carrier).
@@ -550,6 +588,13 @@ class ModularReward:
                 per_completion_em[i] = GROUP_NEUTRAL
                 continue
             flows = gate_pass_flows.get(i, [])
+            # extraction_token_len drift diagnostic (reward-outcome.md): total
+            # answerer-visible field tokens per extraction — a content-stuffing
+            # canary (the field caps are the actual defense).
+            acc.extraction_lens.append(
+                sum(_field_token_len(v) for f in flows for v in dict(f).values())
+                if isinstance(flows, list) else 0
+            )
             result = self.answerer.answer_probes(flows, probe_texts)
             if result.get("failed"):
                 group_failed = True
@@ -596,6 +641,7 @@ class _MetricAccumulator:
         self.cannot_determine = 0
         self.n_probe_slots = 0
         self.group_spreads: list[float] = []
+        self.extraction_lens: list[int] = []  # answerer-visible field token count
         # vignette
         self.vig_antithesis: list[float] = []
         self.vig_hedge: list[float] = []
@@ -695,6 +741,10 @@ class _MetricAccumulator:
                 out["reward/outcome/group_spread"] = sum(self.group_spreads) / len(
                     self.group_spreads
                 )
+            if self.extraction_lens:
+                out["reward/outcome/extraction_token_len"] = sum(
+                    self.extraction_lens
+                ) / len(self.extraction_lens)
 
         # vignette/*
         if self.vig_antithesis:
@@ -884,6 +934,8 @@ def build_modular_dataset(
     meta: dict[str, dict[str, Any]] = {}
     n_empty_pool = 0
     n_src_goldno = 0
+    n_src_probeable = 0  # gold-YES/unknown chunks (should carry probes)
+    n_probe_rows = 0     # extract rows that actually got probes attached
 
     # --- T-EXTRACT rows -----------------------------------------------------
     for rec in chunks_df.to_dict("records"):
@@ -898,9 +950,13 @@ def build_modular_dataset(
         gold = bool(gold) if gold is not None else None
         if gold is False:
             n_src_goldno += 1
+        else:
+            n_src_probeable += 1
 
         pool = pool_by_chunk.get((source_id, chunk_id), [])
         sampled = attach_probes(pool, chunk_id, k_max=k_max)
+        if sampled:
+            n_probe_rows += 1
         if not sampled and gold is not False:
             # Flow-bearing (or unknown-gold) chunk whose probe pool is empty:
             # nothing R-OUTCOME can verify — excluded per reward-outcome.md.
@@ -931,11 +987,16 @@ def build_modular_dataset(
             "probes": sampled,
             "chunk_id": chunk_id,
             "source_id": source_id,
+            # The R-GROUND / R-CONTRAST judge prompts render {{chunk_text}} as
+            # the source passage; without it the judge grounds flows-vs-norms
+            # blind to the passage (2026-07-24 review F1). Carry it here.
+            "chunk_text": str(chunk_text),
         }
 
     # --- T-VIGNETTE rows ----------------------------------------------------
     battery_cfg = grpo_cfg.get("battery", {}) or {}
     n_batteries = 0
+    battery_compositions: list[dict[str, Any]] = []
     if embed_fn is not None:
         for source_id, norms in norm_universes.items():
             book_norms = list(norms)
@@ -974,6 +1035,9 @@ def build_modular_dataset(
                     "source_id": str(source_id),
                 }
                 n_batteries += 1
+                battery_compositions.append(
+                    {"battery_id": bat["battery_id"], **bat["composition"]}
+                )
 
     # --- Build-time invariant (2026-07-24 lesson): the two-sided A-ABSTAIN
     # signal requires gold-NO rows in the prompt set. If the source corpus has
@@ -988,6 +1052,22 @@ def build_modular_dataset(
             "but the built dataset has ZERO gold-no extract rows — the "
             "empty-pool exclusion is eating A-ABSTAIN's rows (see "
             "reward-abstain.md; gold-NO chunks bear no probes by design)."
+        )
+
+    # Symmetric guard (2026-07-24 review): the outcome core needs probe-bearing
+    # gold-YES rows. If the source has probeable (gold-YES/unknown) chunks but
+    # NONE got probes attached, the (source_id, chunk_id) ↔ (gutenberg_id,
+    # chunk_id) join silently missed (namespace or dtype drift) and every
+    # flow-bearing chunk fell into n_empty_pool — leaving an all-abstain
+    # dataset with no error. Fail loudly rather than train a coreless run.
+    if n_src_probeable > 0 and n_probe_rows == 0:
+        raise ValueError(
+            f"[modular_reward] source has {n_src_probeable} probeable "
+            f"(gold-YES/unknown) chunks but ZERO got probes attached "
+            f"(n_empty_pool={n_empty_pool}). The probe-pool join "
+            "((source_id, chunk_id) vs the parquet's (gutenberg_id, chunk_id)) "
+            "silently missed — check chunk_id dtype and the gutenberg_id→"
+            "source_id rename. R-OUTCOME would train on nothing."
         )
 
     # --- Stratified prescreen (mix-preserving; realized mix reported) -------
@@ -1022,7 +1102,11 @@ def build_modular_dataset(
         "n_extract_excluded_empty_pool": n_empty_pool,
         "n_src_goldno_chunks": n_src_goldno,
         "n_goldno_rows_prescreen_pool": n_goldno_rows,
+        "n_src_probeable_chunks": n_src_probeable,
+        "n_probe_bearing_rows": n_probe_rows,
         "n_batteries_built": n_batteries,
+        # Per-battery polarity counts (task-vignettes.md principle-6 accounting).
+        "battery_compositions": battery_compositions,
         "prescreen_report": report,
     }
     try:

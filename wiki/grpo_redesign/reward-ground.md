@@ -52,7 +52,10 @@ rubric is two criteria:
 
 - **Retrieval:** k = 3 norms per flow from the own-book universe,
   Qwen3-Embedding-8B + cosine (the same retriever/embeddings the probe
-  builder uses).
+  builder uses). The m1 run pins this at k = 3 (`rank_top_k: 3` in
+  `m_series.yaml`); the keeper listwise path used k = 5 (the code default),
+  so keeper ground scores are not numerically comparable on this axis
+  (2026-07-24).
 - **Listwise scoring** (production since 2026-06): one judge call per group;
   strict ranking (no ties) + an absolute grounding score per candidate;
   `s_i = w_r·(n−rank_i)/(n−1) + (1−w_r)·grounding_i`, `rank_weight` w_r = 0.5.

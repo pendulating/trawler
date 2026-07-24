@@ -559,3 +559,120 @@ def test_goldno_chunks_kept_as_probeless_abstain_rows(tmp_path):
     assert metadata["n_extract_excluded_empty_pool"] == 1
     assert metadata["n_src_goldno_chunks"] == 1
     assert metadata["n_goldno_rows_prescreen_pool"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Ordering-invariant floor (2026-07-24 review A): a valid gold-YES extraction
+# never scores at/below the invalid gate (0) or loses to a wrong abstention
+# (0.1). VALID_PATH_FLOOR sits in (0.1, 0.4).
+# ---------------------------------------------------------------------------
+from dagspaces.grpo_training.stages.modular_reward import (  # noqa: E402
+    VALID_PATH_FLOOR,
+    _is_embedding_abort,
+)
+
+
+def test_valid_extraction_all_wrong_probes_floored_above_abstention():
+    # core cell, answerer says "yes" but gold is "no" ⇒ EM = 0 for the extraction.
+    prompts = ["ext", "abs"]
+    completions = [extraction(), no_flow()]
+    meta = {
+        "ext": extract_meta(True, probes=[probe("no", "p1")]),  # gold-YES, EM=0
+        "abs": extract_meta(True),                              # gold-YES no-flow → 0.1
+    }
+    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"))
+    r.prompt_metadata = meta
+    scores = r(prompts=prompts, completions=completions)
+    assert scores[0] == pytest.approx(VALID_PATH_FLOOR)  # not 0.0
+    assert 0.1 < VALID_PATH_FLOOR < 0.4
+    assert scores[0] > scores[1]  # engaging beats wrong-abstaining
+    # gate failure still scores strictly below the floor.
+    assert r(prompts=["bad"], completions=["not json"],
+             )[0] == pytest.approx(0.0)
+
+
+def test_valid_floor_does_not_depress_good_extractions():
+    # EM = 1 must stay 1.0 (floor only binds when composite < floor).
+    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"))
+    r.prompt_metadata = {"e": extract_meta(True, probes=[probe("yes", "p1")])}
+    assert r(prompts=["e"], completions=[extraction()])[0] == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Embedding fail-loud abort propagates; ordinary aux error neutralizes
+# (2026-07-24 review C).
+# ---------------------------------------------------------------------------
+def _raising_aux(exc):
+    def _scorer(*, completions, prompts, metadata_list):
+        raise exc
+    return _scorer
+
+
+def test_embedding_abort_propagates_not_neutralized():
+    abort = RuntimeError(
+        "[EmbeddingClient] 3 consecutive ... aborting instead of training on zeroed R_ground"
+    )
+    r = _reward(auxiliaries=("ground",), answerer=FakeAnswerer(answer="yes"),
+                ground_scorer=_raising_aux(abort))
+    r.prompt_metadata = {"e": extract_meta(True, probes=[probe("yes", "p1")])}
+    with pytest.raises(RuntimeError, match="aborting instead of training"):
+        r(prompts=["e"], completions=[extraction()])
+
+
+def test_ordinary_aux_error_still_group_neutral():
+    r = _reward(auxiliaries=("ground",), answerer=FakeAnswerer(answer="yes"),
+                ground_scorer=_raising_aux(ValueError("transient judge hiccup")))
+    r.prompt_metadata = {"e": extract_meta(True, probes=[probe("yes", "p1")])}
+    scores = r(prompts=["e"], completions=[extraction()])  # must not raise
+    assert len(scores) == 1
+
+
+def test_is_embedding_abort_predicate():
+    assert _is_embedding_abort(RuntimeError("... aborting instead of training ..."))
+    assert not _is_embedding_abort(RuntimeError("some other runtime error"))
+    assert not _is_embedding_abort(ValueError("aborting instead of training"))
+
+
+# ---------------------------------------------------------------------------
+# Symmetric probe-survival guard + chunk_text threading (2026-07-24 review)
+# ---------------------------------------------------------------------------
+def test_probe_join_miss_raises_symmetric_guard(tmp_path):
+    # Pool whose chunk_id does NOT match any source chunk → every gold-YES
+    # chunk falls to empty-pool → zero probe-bearing rows → must raise.
+    import pandas as pd
+    from dagspaces.grpo_training.stages.modular_reward import build_modular_dataset
+    pq = tmp_path / "pools.parquet"
+    pd.DataFrame([
+        {"gutenberg_id": "135", "chunk_id": "NO-SUCH-CHUNK", "probe_id": "p1",
+         "gold": "yes", "prompt_text": "Q?", "norm_index": 0},
+    ]).to_parquet(pq)
+    grpo_cfg = {
+        "probes": {"pools_path": str(pq), "k_max": 4},
+        "task_mix": {"extract": 1.0, "vignette": 0.0},
+        "prescreen": {"target_n": 10}, "battery": {},
+    }
+    with pytest.raises(ValueError, match="ZERO got probes attached"):
+        build_modular_dataset(
+            cfg=None, grpo_cfg=grpo_cfg, chunks_df=_chunks_df(),
+            norm_universes={}, reward_fn=_reward(), tokenizer=_StubTokenizer(),
+            ci_prompt_template="Extract: {{chunk_text}}",
+            output_dir=str(tmp_path), seed=0, embed_fn=None,
+        )
+
+
+def test_extract_meta_carries_chunk_text(tmp_path):
+    from dagspaces.grpo_training.stages.modular_reward import build_modular_dataset
+    grpo_cfg = {
+        "probes": {"pools_path": _pools_parquet(tmp_path), "k_max": 4},
+        "task_mix": {"extract": 1.0, "vignette": 0.0},
+        "prescreen": {"target_n": 10}, "battery": {},
+    }
+    rf = _reward()
+    build_modular_dataset(
+        cfg=None, grpo_cfg=grpo_cfg, chunks_df=_chunks_df(),
+        norm_universes={}, reward_fn=rf, tokenizer=_StubTokenizer(),
+        ci_prompt_template="Extract: {{chunk_text}}",
+        output_dir=str(tmp_path), seed=0, embed_fn=None,
+    )
+    ex = [m for m in rf.prompt_metadata.values() if m.get("task_type") == "extract"]
+    assert ex and all(m.get("chunk_text") for m in ex)  # non-empty passage carried

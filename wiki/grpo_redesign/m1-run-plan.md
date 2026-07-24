@@ -142,6 +142,47 @@ Trainer risk was retired in phase B lane 2; the cell itself runs in wave 2
 (or immediately after) once the winning cell is unambiguous. Reported as a
 transfer row, not a grid row.
 
+**2026-07-24 — TP=2 colocate lane wired (Phase-G trainer unblock).** The m0
+lane-2 smoke found gemma-4-12b loads/merges/builds the modular dataset with
+zero gemma-specific errors but OOMs the 1-GPU colocate lane at the vLLM
+sleep/wake boundary — weights-bound (~24 GB training + ~24 GB engine on one
+48 GB A6000; identical OOM across gpu_mem 0.45→0.30 and max_len 16384→8192).
+Fix wired (all additive; keeper surfaces untouched): (1) a model-agnostic
+`disable_custom_all_reduce` injection into TRL's colocate `vllm.LLM.__init__`
+(`grpo_training.py`) — MANDATORY at TP>1 on this PCIe/P2P-disabled cluster,
+mirroring `common/vllm_inference.py`; TP=2 itself already reaches TRL via
+`GRPOConfig.vllm_tensor_parallel_size`. (2) `conf/training/grpo/m_series_2gpu.yaml`
+composing `m_series` + TP=2 + the all-reduce knob + gemma memory profile
+(gpu_mem 0.40, max_len 16384); the existing `slurm_train_2x` launcher (2 GPUs,
+pierson, PCIe NCCL env) is reused. TP=2 halves the engine weight shard to
+~12 GB/GPU, dropping the wake peak to ~36 GB. (3) A gemma-4 weight-sync branch:
+**analysis shows gemma needs NO manual `_push_param_to_vllm` prefix** — unlike
+qwen, `AutoModelForCausalLM` returns the full composite
+`Gemma4UnifiedForConditionalGeneration` (names already `model.language_model.*`,
+tied embeddings ⇒ no `lm_head`), and vLLM's Gemma4Unified `hf_to_vllm_mapper`
+already maps `model.language_model.`→`language_model.model.`. Copying qwen's
+prefix would double-prefix and break it. The branch instead validates the
+composite and installs a one-shot sync diagnostic (names passed through). Full
+`tests/grpo_training/` green (548). **Smoke (job 364491)** confirmed all three
+patches fire — merge loads the composite `Gemma4UnifiedForConditionalGeneration`,
+modular stack `auxiliaries=[], reward_core=True, weights={'outcome': 1.0}`,
+MiniLM embedder loads LOCALLY (the down klara:8001 embedding server does NOT
+block the core-only recipe), and the run reached "Starting GRPO" — but then TRL
+raised `tensor_parallel_size (2) must divide world size (1) evenly`. **This is
+the real Phase-G plumbing gap:** TRL colocate vLLM at TP>1 requires the
+accelerate world size to equal the TP degree, i.e. the trainer must run as
+`tp` distributed PROCESSES, not one. Fixed by a 4th additive piece mirroring
+the SFT DDP path: `runners/grpo_training.py` now spawns
+`accelerate launch --num_processes <tp>` (via new
+`stages/_grpo_accelerate_entry.py`) whenever TP>1 colocate + ≥tp GPUs, so
+world_size==tp; the single-GPU keeper path stays the byte-identical direct
+call (gated on TP>1). The stage's LoRA-merge disk writes are made rank-local
+when `WORLD_SIZE>1` (barrier-free, since the torch PG isn't up pre-trainer).
+Re-submitted as a second smoke (`_phaseG_gemma2gpu_smoke2`). **Verdict pending
+the re-run** — see the session report for the job id and train-past-step-0
+read; residual multi-rank race points (prescreen cache, reward_traces append)
+are noted there as follow-ups if they surface.
+
 ## Standing rules (inherited, not new)
 
 - Gates before eval spend (`scripts/check_grpo_promotion_gates.py`).

@@ -144,6 +144,11 @@ probes:
 # JUDGE_MODEL_PATH) — they cannot diverge by construction.
 answerer: {base_url_env: VLLM_SERVER_URL, model: "${judge_model.model_source}"}
 
+# R-GROUND / R-CONTRAST retrieval breadth. reward-ground.md / reward-contrast.md
+# specify k=3 norms; pinned here (the code default is 5, the keeper listwise
+# lineage value). Set to match the redesign spec (2026-07-24 review); reversible.
+rank_top_k: 3
+
 # A-ABSTAIN reward table (extended to gold-NO extractions). Mirrors the keeper's
 # no_flow_reward(gold): gold=YES→wrong 0.1, gold=NO→correct 0.6, unknown→0.4.
 # Source: reward-abstain.md; migration.md (abstention_score → A-ABSTAIN).

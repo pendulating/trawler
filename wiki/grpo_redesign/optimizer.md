@@ -22,10 +22,10 @@ was set by a falsified alternative, not taste. TRL 0.29.1.
 | `loss_type` | `"dapo"` (TRL default, unset) | no per-response length normalization |
 | `mask_truncated_completions` | true | truncated output fails JSON parse and would reward the short no-flow path |
 | `vllm_importance_sampling_mode` | `token_truncate` | v5: default `sequence_mask` zeroed exactly the long-extraction gradients (THE v1–v4 binding constraint) |
-| rollout temperature | 1.0 (thinking on, stripped pre-scoring) | exploration; greedy at eval (Memory-R1 discipline) |
+| rollout temperature | 1.0 (thinking **off** during GRPO rollouts — `enable_thinking_grpo: false`; think-blocks are stripped at scoring regardless; verified 2026-07-24) | exploration; greedy at eval (Memory-R1 discipline) |
 | `save_steps` | 50 | pre-breakout checkpoint cadence |
 | seed | 42 (single master seed; the 5-seed protocol varies only this) | seed-variance study |
-| vLLM | colocate, gpu_mem 0.3, sleep mode | 1-GPU cell economics |
+| vLLM | colocate, gpu_mem 0.45, sleep mode | 1-GPU cell economics (gpu_mem verified against online_rground_external.yaml + m_series.yaml, 2026-07-24) |
 
 The m-series training config is one new yaml (`training/grpo/m_series.yaml`)
 that carries this block verbatim plus the module keys — it must **not**

@@ -51,6 +51,17 @@ class TestAxis:
         assert set(FORCE_TO_GOLD).issubset(set(dd.AXIS))
         assert set(dd.AXIS) - set(FORCE_TO_GOLD) == {"permitted"}
 
+    def test_axis_sign_agrees_with_force_to_gold_polarity(self):
+        # AXIS is a parallel literal to FORCE_TO_GOLD (not derived); pin their
+        # POLARITY agreement so a future sign flip in one map is caught
+        # (2026-07-24 review J2 — membership alone did not guard this).
+        for force, gold in FORCE_TO_GOLD.items():
+            axis = dd.AXIS[force]
+            if gold == "yes":
+                assert axis > 0, f"{force}: gold=yes but axis={axis}"
+            elif gold == "no":
+                assert axis < 0, f"{force}: gold=no but axis={axis}"
+
 
 class TestItemScoreTable:
     @pytest.mark.parametrize("model", _FORCES)

@@ -248,3 +248,53 @@ class TestKeeperFrozenCodeSurfaces:
         from dagspaces.grpo_training.stages.online_rground import OnlineRGround
 
         assert OnlineRGround is not None
+
+
+# ── m-series ↔ keeper optimizer-preset parity ────────────────────────────────
+# optimizer.md: the m-series copies the keeper's optimizer preset VERBATIM.
+# Nothing pinned that until now — a silent edit to m_series.yaml's beta would
+# have passed CI (2026-07-24 review F3). These keys must match the keeper's
+# frozen values; the reward-shape keys (reward_composition, rank_top_k, weights,
+# rground_app_*, vignette_ratio, ...) legitimately DIFFER and are excluded.
+OPTIMIZER_PRESET_KEYS = [
+    "seed", "num_generations", "learning_rate", "lr_scheduler_type",
+    "min_lr_rate", "warmup_ratio", "per_device_batch_size",
+    "gradient_accumulation_steps", "num_epochs", "max_completion_length",
+    "gradient_checkpointing", "bf16", "logging_steps", "save_strategy",
+    "save_steps", "beta", "epsilon_high", "num_iterations",
+    "vllm_importance_sampling_mode", "scale_rewards", "mask_truncated_completions",
+    "use_vllm", "vllm_mode", "vllm_gpu_memory_utilization",
+    "vllm_enable_sleep_mode", "vllm_max_model_length", "enable_thinking_grpo",
+    "dev_fraction", "eval_steps",
+]
+
+
+@pytest.fixture(scope="module")
+def mseries_grpo():
+    import os
+    os.environ.setdefault("EMBEDDING_SERVER_URL", "http://keeper-guard.invalid")
+    os.environ.setdefault("JUDGE_SERVER_URL", "http://keeper-guard.invalid")
+    os.environ.setdefault("VLLM_SERVER_URL", "http://keeper-guard.invalid")
+    with initialize_config_dir(config_dir=str(CONF_DIR), version_base="1.3"):
+        cfg = compose(config_name="config", overrides=["training/grpo=m_series"])
+    return cfg.training.grpo
+
+
+class TestMSeriesOptimizerParity:
+    @pytest.mark.parametrize("key", OPTIMIZER_PRESET_KEYS)
+    def test_optimizer_preset_matches_keeper(self, mseries_grpo, key):
+        actual = OmegaConf.select(mseries_grpo, key)
+        expected = FROZEN[key]
+        assert actual == expected, (
+            f"m_series.yaml optimizer key '{key}' is {actual!r} but the keeper "
+            f"(optimizer.md 'copied verbatim') has {expected!r}. Either the "
+            f"m-series preset drifted from the keeper, or this divergence is "
+            f"intentional and belongs in the reward-shape exclusion list."
+        )
+
+    def test_reward_composition_is_modular(self, mseries_grpo):
+        assert mseries_grpo.reward_composition == "modular"
+
+    def test_rank_top_k_pinned_to_three(self, mseries_grpo):
+        # Deliberate divergence from the keeper's 5 (reward-ground.md k=3).
+        assert mseries_grpo.rank_top_k == 3

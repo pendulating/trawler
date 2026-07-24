@@ -53,9 +53,11 @@ From the vignette universe (default: the grounding universe — see
    threshold, so "marriage negotiations" and "arranging a marriage" pool.
    Cluster granularity is a build-time report field, not a training knob.
 2. **Compose** batteries of K = 8 items from one cluster: **both polarities
-   present whenever the cluster has them**, with at least 2 minority-polarity
-   items (target minority share ≥ 25%, bounded by pool — realized composition
-   reported). Clusters with 4 ≤ n < 8 eligible norms form smaller batteries
+   present whenever the cluster has them**, with a hard floor of ≥1 minority
+   item (target 2), bounded by pool — realized composition reported. This is
+   the resolved decision in [data.md](data.md) ("hard floor ≥1 minority item
+   per battery, target 2"), which the code implements as `minority_floor: 1` /
+   `minority_target: 2` (2026-07-24). Clusters with 4 ≤ n < 8 eligible norms form smaller batteries
    (variable K, score is a mean so scale is unaffected); clusters with n < 4
    are skipped.
 3. **Scenario per item** via the shared builder (`_generate_vignettes`,
@@ -163,14 +165,23 @@ in `training_metadata.json` / `prescreen_report.json`; per-force accuracy and
 antithesis rate stream to W&B under `vignette/*` (`antithesis_frac` is the
 new headline forensic — it should be rare and falling).
 
+*Caption on `antithesis_frac` (2026-07-24):* the forensic counts polarity
+**flips** (axis sign product < 0, i.e. `axis(model)·axis(gold) < 0` in
+`deontic_distance.py`), which includes the cross-polarity distance-2 cell
+(recommended ↔ discouraged) that scores `s_i = 0.0` — reward-*neutral*, not
+negative. So the metric name and the per-item reward diverge on exactly that
+cell. This is intentional: the reward is pure axis-distance, the forensic is
+pure polarity sign; the caption just prevents misreading the metric.
+
 ## Universe choice and balance — decoupled
 
 The v11 lever conflated *which universe* with *what balance*; on Gemma-4 data
 the conflation no longer works (top100 8.5% vs fiction10 7.3% prohibited).
 The redesign separates them:
 
-- **Balance** is a property of battery composition (step 2 above: ≥25%
-  minority polarity per battery, bounded by pool), not of corpus choice.
+- **Balance** is a property of battery composition (step 2 above: ≥1
+  minority item per battery, target 2, bounded by pool — 2026-07-24, matching
+  the construction section and Config keys), not of corpus choice.
 - **Universe** defaults to **the grounding universe** — same book set as
   `T-EXTRACT` and `R-OUTCOME`, one artifact fewer, and `−vignette` stays a
   pure task ablation. `VIGNETTE_NORM_UNIVERSES_PATH` survives as an override
@@ -189,8 +200,12 @@ The redesign separates them:
 - **Split discipline:** batteries only from training books; held-out books
   contribute no batteries, probes, or chunks ([data.md](data.md)).
 - **Leak test (migration test plan):** automated assertion that no battery
-  `prompt_text` contains a source articulation token sequence or any force
-  word — the PrivacyLens canary pattern.
+  **scenario text** contains a source articulation token sequence or any force
+  word — the PrivacyLens canary pattern. The guarantee is scoped to scenario
+  text only: force words legitimately appear in the *instruction* portion of
+  the prompt (the force vocabulary the model must choose among), so the
+  anti-leak contract binds `scenario_text` — which is exactly what the code's
+  test asserts on (`tests/grpo_training/test_batteries.py`; 2026-07-24).
 
 ## `−vignette` LOO cell — pre-registered prediction
 
@@ -217,6 +232,11 @@ training:
     task_mix: {extract: 0.7, vignette: 0.3}  # −vignette cell: vignette: 0
     battery:
       k: 8                    # items per battery (4..8 realized, pool-bound)
-      minority_share: 0.25    # per-battery minority-polarity floor
+      min_k: 4                # min eligible norms for a cluster to form a battery
+      minority_floor: 1       # hard floor: >=1 minority-polarity item per battery
+      minority_target: 2      # target minority items (bounded by pool)
+      # minority_share (0.25) was never implemented — the code reads integer
+      # counts (min_k / minority_floor / minority_target), not a share;
+      # schema above matches m_series.yaml (2026-07-24).
       # context clustering threshold fixed at build; reported, not swept
 ```

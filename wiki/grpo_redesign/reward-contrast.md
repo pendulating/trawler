@@ -46,7 +46,8 @@ like every other auxiliary. `contrastive_ratio` (legacy additive wrong-source
   text as query, same retriever); the judge assigns each completion an
   absolute grounding score against those norms — **no ranking** (ranks are
   meaningless across universes; this was already the v9 convention for the
-  wrong pass).
+  wrong pass). The m1 run pins k = 3 (`rank_top_k: 3` in `m_series.yaml`);
+  the keeper listwise path used the code default k = 5 (2026-07-24).
 - `r_contrast = 1 − grounding_wrong ∈ [0,1]`.
 - **Failure fallback:** judge-failed group → uniform 0.5, same convention as
   every judged module; `reward/contrast/judge_failed_group_frac`.

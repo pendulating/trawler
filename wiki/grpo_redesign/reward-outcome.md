@@ -208,6 +208,13 @@ without being a reward term.
 - `cannot_determine_frac` — the hedge-mass successor metric
 - `answerer_failed_frac`, `null_filter_drop_rate`, `extraction_token_len`
 
+**Streaming note (2026-07-24):** `extraction_token_len` streams to W&B (the
+drift diagnostic in the anti-gaming table — added to the code now).
+`null_filter_drop_rate` does **not** stream to W&B: the null-answerability
+filter is a no-op online (0.0% drop, verified in the 2026-07-24 calibration
+pass — see [data.md](data.md)), so it is recorded once in
+`training_metadata.json` at build time rather than per-step to W&B.
+
 ## Pre-registered predictions for the `core` cell (draft — finalize in ablation-protocol.md)
 
 1. `group_spread` > 0 in ≥90% of groups from step 1 (probes discriminate
