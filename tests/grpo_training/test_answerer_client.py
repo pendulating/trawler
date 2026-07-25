@@ -389,3 +389,46 @@ def test_make_answerer_from_cfg_attr_style():
 def test_endpoint_normalizes_trailing_v1():
     client = AnswererClient("http://host:8000/v1", "m")
     assert client._endpoint == "http://host:8000/v1/chat/completions"
+
+
+# ---------------------------------------------------------------------------
+# em_macro — class-balanced EM (P2 fix, 2026-07-25). The training probe set is
+# 88.2% gold-yes, so micro-EM hands a blanket answer ~0.88; macro prices it 0.5
+# wherever both classes are present.
+# ---------------------------------------------------------------------------
+def test_em_macro_prices_blanket_yes_at_half():
+    golds = ["yes", "yes", "yes", "no"]          # 75% yes, both classes present
+    blanket = ["yes"] * 4
+    assert AnswererClient.em(blanket, golds) == pytest.approx(0.75)
+    assert AnswererClient.em_macro(blanket, golds) == pytest.approx(0.5)
+
+
+def test_em_macro_blanket_no_also_half():
+    golds = ["yes", "yes", "yes", "no"]
+    assert AnswererClient.em_macro(["no"] * 4, golds) == pytest.approx(0.5)
+
+
+def test_em_macro_equals_micro_when_single_class():
+    # Single-class rows must be unchanged — no penalty for corpus composition.
+    golds = ["yes", "yes", "yes"]
+    for ans in (["yes"] * 3, ["yes", "no", "yes"], ["cannot_determine"] * 3):
+        assert AnswererClient.em_macro(ans, golds) == pytest.approx(
+            AnswererClient.em(ans, golds)
+        )
+
+
+def test_em_macro_perfect_and_zero():
+    golds = ["yes", "no"]
+    assert AnswererClient.em_macro(["yes", "no"], golds) == pytest.approx(1.0)
+    assert AnswererClient.em_macro(["no", "yes"], golds) == pytest.approx(0.0)
+
+
+def test_em_macro_cannot_determine_still_scores_zero():
+    # The tooth is untouched: cannot_determine earns nothing in its class.
+    golds = ["yes", "no"]
+    assert AnswererClient.em_macro(["cannot_determine", "no"], golds) == pytest.approx(0.5)
+    assert AnswererClient.em_macro(["cannot_determine"] * 2, golds) == pytest.approx(0.0)
+
+
+def test_em_macro_empty_golds():
+    assert AnswererClient.em_macro([], []) == pytest.approx(0.0)

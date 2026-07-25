@@ -31,7 +31,9 @@ without editing it.
 
 from __future__ import annotations
 
+import json as _json
 import math
+import os as _os
 from collections.abc import Mapping, Sequence
 from typing import Any, Callable
 
@@ -335,6 +337,9 @@ class ModularReward:
         abstain: Mapping[str, float] | None = None,
         prompt_metadata: dict[str, dict[str, Any]] | None = None,
         field_cap_tokens: int = FIELD_CAP_TOKENS,
+        trace_log_path: str = "",
+        trace_every_n_calls: int = 1,
+        trace_max_bytes: int = 200_000_000,
     ):
         self.auxiliaries = [a for a in _AUX_NAMES if a in set(auxiliaries)]
         self.reward_core = bool(reward_core)
@@ -354,6 +359,61 @@ class ModularReward:
         self.last_metrics: dict[str, float] = {}
         # Set by grpo_training.py for trace continuity; unused by scoring.
         self.enable_thinking_grpo: bool | None = None
+        # ---- reward traces (parity with the keeper's reward_traces.jsonl) ----
+        # Until 2026-07-25 the modular path wrote NO traces while
+        # grpo_training.py printed "Reward traces → …" for both branches, so
+        # the m1 wave produced none despite claiming to. Traces are the
+        # forensics substrate the ablation protocol reports from, and the only
+        # way to recompute alternative scorings (e.g. micro- vs macro-EM) after
+        # the fact. Failures here are swallowed: tracing must never perturb a run.
+        self._trace_path = str(trace_log_path or "")
+        self._trace_every = max(1, int(trace_every_n_calls))
+        self._trace_max_bytes = int(trace_max_bytes)
+        self._call_count = 0
+        self._trace_writes = 0
+        # Per-call scratch: completion index -> {probe_ids, golds, answers}.
+        self._probe_io: dict[int, dict[str, Any]] = {}
+
+    # ---- reward traces ---------------------------------------------------
+    def _should_trace(self) -> bool:
+        if not self._trace_path:
+            return False
+        return (self._call_count == 0) or (self._call_count % self._trace_every == 0)
+
+    def _log_trace(self, entries: list[dict[str, Any]]) -> None:
+        """Append trace rows as JSONL. Never raises — tracing is observational."""
+        if not self._trace_path or not entries:
+            return
+        try:
+            _os.makedirs(_os.path.dirname(self._trace_path), exist_ok=True)
+            with open(self._trace_path, "a", encoding="utf-8") as f:
+                for entry in entries:
+                    f.write(_json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+            self._maybe_truncate_trace()
+        except Exception:
+            pass
+
+    def _maybe_truncate_trace(self) -> None:
+        """Keep the trace file bounded (mirrors the keeper's policy): when it
+        exceeds ``_trace_max_bytes``, keep the newest half on whole-line
+        boundaries. Checked every 100 writes so the cost stays negligible."""
+        self._trace_writes += 1
+        if self._trace_writes % 100:
+            return
+        try:
+            if _os.path.getsize(self._trace_path) <= self._trace_max_bytes:
+                return
+            keep = self._trace_max_bytes // 2
+            with open(self._trace_path, "rb") as f:
+                f.seek(-keep, _os.SEEK_END)
+                tail = f.read()
+            tail = tail[tail.index(b"\n") + 1 :]
+            with open(self._trace_path, "wb") as f:
+                f.write(tail)
+            print(f"[modular_reward] reward_traces.jsonl exceeded "
+                  f"{self._trace_max_bytes} bytes — truncated to newest half")
+        except Exception:
+            pass
 
     # ---- helpers ---------------------------------------------------------
     @staticmethod
@@ -466,6 +526,7 @@ class ModularReward:
         # flow-bearing extractions — the only rows the outcome/aux path scores).
         normal_groups: dict[str, list[int]] = {}
         gate_pass_flows: dict[int, list] = {}  # i -> parsed flows for the answerer
+        route: dict[int, dict[str, Any]] = {}  # i -> trace detail (observational)
 
         for i in range(n):
             meta = metas[i]
@@ -473,6 +534,7 @@ class ModularReward:
 
             if task_type == "vignette":
                 scores[i] = self._score_vignette(texts[i], meta, acc)
+                route[i] = {"task_type": "vignette", "route": "vignette"}
                 continue
 
             # T-EXTRACT.
@@ -481,6 +543,8 @@ class ModularReward:
             if not gate.passed:
                 acc.gate_fail += 1
                 scores[i] = 0.0
+                route[i] = {"task_type": "extract", "route": "gate_fail",
+                            "gate_reason": gate.reason}
                 continue
 
             gold = meta.get("gold_has_exchange")
@@ -489,11 +553,15 @@ class ModularReward:
             table = self._abstain_score(gold, gate.no_flow)
             if table is not None:
                 scores[i] = table
+                route[i] = {"task_type": "extract", "route": "abstain_table",
+                            "gold_has_exchange": gold, "no_flow": gate.no_flow}
                 continue
 
             # Normal path (gold-YES, valid, flow-bearing).
             normal_groups.setdefault(keys[i], []).append(i)
             gate_pass_flows[i] = gate.flows
+            route[i] = {"task_type": "extract", "route": "scored",
+                        "gold_has_exchange": gold, "n_flows": len(gate.flows)}
 
         # ---- score the normal-path groups -------------------------------
         outcome_term: dict[int, float] = {}
@@ -544,6 +612,40 @@ class ModularReward:
 
         self.last_metrics = acc.build(self)
         _push_metrics(self.last_metrics)
+
+        # ---- reward traces (observational; never perturbs scoring) ---------
+        if self._should_trace():
+            rows = []
+            for i in range(n):
+                meta = metas[i]
+                det = route.get(i, {})
+                row = {
+                    "call": self._call_count,
+                    "reward_composition": "modular",
+                    "auxiliaries": list(self.auxiliaries),
+                    "reward_core": self.reward_core,
+                    "weights": self.weights,
+                    "prompt_key": keys[i],
+                    "chunk_id": meta.get("chunk_id"),
+                    "source_id": meta.get("source_id"),
+                    "score": scores[i],
+                    **det,
+                }
+                if det.get("route") == "scored":
+                    row["outcome_term"] = outcome_term.get(i)
+                    row["aux_terms"] = {
+                        k: aux_term[k].get(i) for k in self.auxiliaries
+                    }
+                    row.update(self._probe_io.get(i, {}))
+                elif det.get("route") == "vignette":
+                    row["battery_id"] = meta.get("battery_id")
+                    row["gold_forces"] = [
+                        g.get("gold_force") for g in (meta.get("gold_items") or [])
+                    ]
+                rows.append(row)
+            self._log_trace(rows)
+        self._call_count += 1
+        self._probe_io = {}
         return scores
 
     # ---- component scorers ----------------------------------------------
@@ -600,8 +702,18 @@ class ModularReward:
                 group_failed = True
                 continue
             answers = result.get("answers", [])
-            per_completion_em[i] = AnswererClient.em(answers, golds)
+            # Class-balanced EM (2026-07-25): the training probe set is 88.2%
+            # gold-yes, so micro-EM hands a blanket-"yes" extraction 0.882.
+            # Macro prices it at 0.5 wherever both classes are present.
+            per_completion_em[i] = AnswererClient.em_macro(answers, golds)
             acc.observe_probes(answers, golds)
+            # Retain answers+golds so alternative scorings (micro-EM, per-class,
+            # re-derived gold) stay recoverable from traces after the fact.
+            self._probe_io[i] = {
+                "probe_ids": [p.get("probe_id") for p in probes],
+                "golds": list(golds),
+                "answers": list(answers),
+            }
 
         if group_failed:
             acc.answerer_failed += len(group)
@@ -800,6 +912,8 @@ def make_modular_reward_from_cfg(
     answerer: AnswererClient | None = None,
     ground_scorer: AuxScorer | None = None,
     contrast_scorer: AuxScorer | None = None,
+    trace_log_path: str = "",
+    trace_every_n_calls: int = 1,
 ) -> ModularReward:
     """Build a :class:`ModularReward` from the m-series config keys.
 
@@ -833,6 +947,8 @@ def make_modular_reward_from_cfg(
         ground_scorer=ground_scorer,
         contrast_scorer=contrast_scorer,
         abstain=abstain,
+        trace_log_path=trace_log_path,
+        trace_every_n_calls=trace_every_n_calls,
     )
 
 

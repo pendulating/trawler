@@ -676,3 +676,69 @@ def test_extract_meta_carries_chunk_text(tmp_path):
     )
     ex = [m for m in rf.prompt_metadata.values() if m.get("task_type") == "extract"]
     assert ex and all(m.get("chunk_text") for m in ex)  # non-empty passage carried
+
+
+# ---------------------------------------------------------------------------
+# Reward traces (2026-07-25). The modular path wrote NO traces while
+# grpo_training.py printed "Reward traces → …" for both branches, so the m1
+# wave produced none despite claiming to. Traces are the forensics substrate
+# and the only way to recompute alternative scorings post-hoc.
+# ---------------------------------------------------------------------------
+def _read_traces(path):
+    with open(path) as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def test_traces_written_for_every_route(tmp_path):
+    trace = tmp_path / "reward_traces.jsonl"
+    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"),
+                trace_log_path=str(trace))
+    r.prompt_metadata = {
+        "scored": extract_meta(True, probes=[probe("yes", "p1")]),
+        "abst":   extract_meta(False),
+        "bad":    extract_meta(True),
+    }
+    r(prompts=["scored", "abst", "bad"],
+      completions=[extraction(), no_flow(), "not json at all"])
+
+    rows = _read_traces(trace)
+    assert len(rows) == 3
+    routes = {row["route"] for row in rows}
+    assert routes == {"scored", "abstain_table", "gate_fail"}
+    for row in rows:
+        assert row["reward_composition"] == "modular"
+        assert "score" in row and isinstance(row["score"], (int, float))
+
+
+def test_trace_scored_row_retains_probe_io_for_posthoc_rescoring(tmp_path):
+    # answers+golds must survive so micro-EM (or any re-derived gold) can be
+    # recomputed from traces without re-running the answerer.
+    trace = tmp_path / "reward_traces.jsonl"
+    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"),
+                trace_log_path=str(trace))
+    r.prompt_metadata = {"p": extract_meta(
+        True, probes=[probe("yes", "p1"), probe("no", "p2")])}
+    r(prompts=["p"], completions=[extraction()])
+
+    row = next(x for x in _read_traces(trace) if x["route"] == "scored")
+    assert row["golds"] == ["yes", "no"]
+    assert row["answers"] == ["yes", "yes"]
+    assert row["probe_ids"] == ["p1", "p2"]
+    # macro-EM of one right / one wrong across two classes = 0.5
+    assert row["outcome_term"] == pytest.approx(0.5)
+
+
+def test_traces_disabled_when_no_path(tmp_path):
+    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"))
+    r.prompt_metadata = {"p": extract_meta(True)}
+    r(prompts=["p"], completions=[extraction()])  # must not raise
+    assert not list(tmp_path.iterdir())
+
+
+def test_trace_failure_never_breaks_scoring(tmp_path):
+    # Unwritable path: scoring must still return normally.
+    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"),
+                trace_log_path="/nonexistent-dir/deep/reward_traces.jsonl")
+    r.prompt_metadata = {"p": extract_meta(True)}
+    out = r(prompts=["p"], completions=[extraction()])
+    assert len(out) == 1

@@ -330,6 +330,36 @@ class AnswererClient:
                 matches += 1
         return matches / len(golds)
 
+    @staticmethod
+    def em_macro(answers: list[str], golds: list[str]) -> float:
+        """Class-balanced EM: mean of per-gold-class EM over the classes present.
+
+        The production scoring rule since 2026-07-25. Micro-averaged EM
+        (:meth:`em`) is dominated by the corpus's force skew: the realized
+        training probe set is **88.2% gold-yes**, so a blanket-"yes" answer
+        scores micro-EM 0.882 — the anti-gaming claim in reward-outcome.md
+        ("blanket labels ⇒ EV ≤ base rate") is technically true but the base
+        rate is nearly the maximum, which is no defense at all.
+
+        Averaging per class first prices a blanket answer at **0.5** on any row
+        carrying both gold classes, restoring the intended asymmetry: acing one
+        class while zeroing the other earns the midpoint, not the skew. Rows
+        with a single class present are unchanged (macro == micro), so this
+        never penalizes a row for the corpus's composition — it only removes
+        the free lunch where discrimination is actually measurable.
+
+        ``cannot_determine`` still scores 0 within its class (the tooth is
+        untouched).
+        """
+        if not golds:
+            return 0.0
+        by_class: dict[str, list[float]] = {}
+        for ans, gold in zip(answers, golds):
+            by_class.setdefault(gold, []).append(1.0 if ans == gold else 0.0)
+        if not by_class:
+            return 0.0
+        return sum(sum(v) / len(v) for v in by_class.values()) / len(by_class)
+
 
 # ----------------------------------------------------------------------
 # Config wiring (thin)
