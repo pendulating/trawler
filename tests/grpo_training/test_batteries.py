@@ -287,3 +287,51 @@ class TestDeterminism:
         assert b_a[0]["battery_id"] != b_b[0]["battery_id"]
         assert b_a[0]["gutenberg_id"] == "1342"
         assert b_b[0]["gutenberg_id"] == "9999"
+
+
+# ---------------------------------------------------------------------------
+# Scenario template regression (2026-07-25): the act must ALWAYS be rendered.
+# The old shared template preferred condition_of_application over norm_act, so
+# 99.1% of battery scenarios dropped the act and asked for a 5-way force on a
+# scenario with no action in it.
+# ---------------------------------------------------------------------------
+def _norm(**over):
+    n = {"norm_subject": "a wife", "norm_act": "disclose her husband's business affairs",
+         "condition_of_application": "unless the husband authorizes such a disclosure",
+         "context": "marriage", "normative_force": "prohibited",
+         "governs_info_flow": True, "norm_articulation": "A wife should not disclose."}
+    n.update(over)
+    return n
+
+
+def test_scenario_always_contains_the_act():
+    s = B._scenario_text(_norm())
+    assert "disclose her husband's business affairs" in s
+    assert "is in a situation where" not in s  # the dropped-act branch is gone
+
+
+def test_scenario_keeps_condition_as_trailing_qualifier():
+    s = B._scenario_text(_norm())
+    assert s.endswith("unless the husband authorizes such a disclosure.")
+    assert ", unless" in s  # bare comma join, no connector
+
+
+def test_scenario_handles_prepositional_condition():
+    # The connector heuristic produced "in circumstances where during ..."; the
+    # bare comma must compose for prepositional conditions too.
+    s = B._scenario_text(_norm(condition_of_application="during formal court proceedings"))
+    assert s.endswith(", during formal court proceedings.")
+    assert "where during" not in s
+
+
+def test_scenario_without_condition_is_still_well_formed():
+    s = B._scenario_text(_norm(condition_of_application=""))
+    assert s == ("In a setting involving marriage, a wife is considering whether to "
+                 "disclose her husband's business affairs.")
+
+
+def test_scenario_never_renders_articulation_or_force_word():
+    s = B._scenario_text(_norm())
+    assert "should not" not in s
+    for stem in ("prohibit", "oblig", "recommend", "discourag"):
+        assert stem not in s.lower()

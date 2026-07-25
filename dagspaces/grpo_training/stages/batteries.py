@@ -56,18 +56,55 @@ _INSTRUCTION_TAIL = (
 
 
 def _scenario_text(norm: dict) -> str:
-    """The per-item scenario: the shared probe template minus its yes/no suffix.
+    """The per-item scenario a battery asks the policy to assign a force to.
 
-    Reuses :func:`probes.template_probe` (rather than duplicating the scenario
-    assembly), then strips the trailing fixed question — a battery item asks for
-    a 5-way force in the instruction, not an inline yes/no. The anti-leak
-    properties of the shared template carry over unchanged.
+    Self-contained since 2026-07-25 (previously derived from
+    ``probes.template_probe`` by stripping its yes/no suffix). The shared
+    template preferred ``condition_of_application`` over ``norm_act``
+    (``if condition: "is in a situation where {condition}"``), and on this
+    corpus 99.1% of eligible norms carry both — so **99.1% of battery scenarios
+    dropped the act entirely** and asked the policy to assign a five-way deontic
+    force to a scenario containing no action:
+
+        "In a setting involving professional conduct, an author of non-fiction
+         is in a situation where when presenting accounts of events as true."
+
+    Now the act is ALWAYS rendered and the condition is retained as a trailing
+    qualifier, comma-joined verbatim with no connector. The bare comma composes
+    correctly for clause conditions ("when …", "unless …") and prepositional
+    ones ("during formal court proceedings") alike; a connector heuristic was
+    tried and produced "in circumstances where *during* formal court
+    proceedings".
+
+    The condition is KEPT here (unlike the probe path, where it is dropped):
+    a vignette scenario is the *object of judgment* rather than something that
+    must correspond to an extraction, so there is no reason to strip content,
+    and the condition is often what makes the force determinate.
+
+    ANTI-LEAK: ``norm_articulation`` is never rendered and the template adds no
+    force word of its own; field-borne leaks are caught downstream by
+    :func:`probes.probe_leaks`, which ``build_batteries`` applies per scenario.
+    Known residual risk (see reward-outcome-v2-proposal.md): acts extracted from
+    directional norms are sometimes phrased directionally ("ensure …",
+    "avoid …"), which no force-word filter catches.
     """
-    full = probes.template_probe(norm)
-    suffix = probes._QUESTION_SUFFIX
-    if full.endswith(suffix):
-        return full[: -len(suffix)].rstrip()
-    return full.strip()
+    context = str(norm.get("context") or "").strip()
+    subject = str(norm.get("norm_subject") or "a person").strip()
+    act = str(norm.get("norm_act") or "share this information").strip()
+    condition = str(norm.get("condition_of_application") or "").strip()
+
+    parts: list[str] = []
+    if context:
+        parts.append(f"In a setting involving {context},")
+    parts.append(subject)
+    parts.append(f"is considering whether to {act.rstrip('.')}")
+    scenario = " ".join(parts).rstrip(".")
+
+    if condition:
+        cond = condition.rstrip(".")
+        cond = cond[0].lower() + cond[1:]
+        scenario = f"{scenario}, {cond}"
+    return scenario + "."
 
 
 def _norm_force(norm: dict) -> str:
