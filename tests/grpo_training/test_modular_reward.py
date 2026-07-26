@@ -220,6 +220,10 @@ def test_gate_strips_think_block():
 # A-ABSTAIN routing table (all rows, incl. unknown gold)
 # ---------------------------------------------------------------------------
 def _reward(auxiliaries=(), reward_core=True, answerer=None, **kw):
+    # The class default is core_mode="direct" (R-DIRECT). These legacy tests
+    # exercise the retained frozen-answerer core, which is kept only so the
+    # negative result in reward-direct-spec.md stays reproducible.
+    kw.setdefault("core_mode", "outcome")
     return ModularReward(
         auxiliaries=auxiliaries,
         reward_core=reward_core,
@@ -318,6 +322,7 @@ def test_full_cell_combines_outcome_and_auxiliaries():
     r = ModularReward(
         auxiliaries=["ground", "contrast"],
         reward_core=True,
+        core_mode="outcome",   # legacy core, retained for the negative result
         answerer=FakeAnswerer(answer="yes"),
         ground_scorer=const_aux(0.8),
         contrast_scorer=const_aux(0.4),
@@ -567,6 +572,7 @@ def test_goldno_chunks_kept_as_probeless_abstain_rows(tmp_path):
 # (0.1). VALID_PATH_FLOOR sits in (0.1, 0.4).
 # ---------------------------------------------------------------------------
 from dagspaces.grpo_training.stages.modular_reward import (  # noqa: E402
+    GROUP_NEUTRAL,
     VALID_PATH_FLOOR,
     _is_embedding_abort,
 )
@@ -742,3 +748,101 @@ def test_trace_failure_never_breaks_scoring(tmp_path):
     r.prompt_metadata = {"p": extract_meta(True)}
     out = r(prompts=["p"], completions=[extraction()])
     assert len(out) == 1
+
+
+# ---------------------------------------------------------------------------
+# R-DIRECT — the norm classifies the flow (2026-07-25, reward-direct-spec.md).
+# No model in the scoring loop: gold is injected via direct_gold_fn.
+# ---------------------------------------------------------------------------
+def _flow(appropriateness=None, **over):
+    f = {"sender": "a", "recipient": "b", "subject": "c",
+         "information_type": "d", "transmission_principle": "e"}
+    if appropriateness is not None:
+        f["appropriateness"] = appropriateness
+    f.update(over)
+    return f
+
+
+def _direct(gold_by_info, **kw):
+    """ModularReward in direct mode; gold looked up by the flow's info type."""
+    def gold_fn(flow, source_id):
+        return gold_by_info.get(flow.get("information_type"), (None, 0.0))
+    return ModularReward(
+        auxiliaries=kw.pop("auxiliaries", ()), reward_core=True,
+        core_mode="direct", direct_gold_fn=gold_fn,
+        abstain={"wrong": 0.1, "correct": 0.6, "unknown": 0.4}, **kw)
+
+
+def _completion(*flows):
+    return json.dumps({"reasoning": "r", "has_information_exchange": True,
+                       "flows": list(flows)})
+
+
+def test_direct_exact_match_scores_one():
+    r = _direct({"d": ("appropriate", 0.3)})
+    r.prompt_metadata = {"p": extract_meta(True)}
+    s = r(prompts=["p"], completions=[_completion(_flow("appropriate"))])
+    assert s[0] == pytest.approx(1.0)
+
+
+def test_direct_opposite_label_scores_zero_but_floored():
+    r = _direct({"d": ("inappropriate", 0.3)})
+    r.prompt_metadata = {"p": extract_meta(True)}
+    s = r(prompts=["p"], completions=[_completion(_flow("appropriate"))])
+    # 0.0 from the module, lifted to the ordering-invariant floor.
+    assert s[0] == pytest.approx(VALID_PATH_FLOOR)
+
+
+def test_direct_hedge_priced_at_the_floor_not_rewarded():
+    # 'ambiguous' must not beat committing — the tooth inherited from R-OUTCOME.
+    r = _direct({"d": ("appropriate", 0.3)})
+    r.prompt_metadata = {"p": extract_meta(True)}
+    hedged = r(prompts=["p"], completions=[_completion(_flow("ambiguous"))])[0]
+    missing = r(prompts=["p"], completions=[_completion(_flow())])[0]
+    committed = r(prompts=["p"], completions=[_completion(_flow("appropriate"))])[0]
+    assert hedged == pytest.approx(missing)
+    assert hedged < committed
+
+
+def test_direct_macro_prices_blanket_label_at_half():
+    # One flow of each gold class; a blanket 'appropriate' gets 1 and 0 -> 0.5.
+    r = _direct({"d": ("appropriate", 0.3), "z": ("inappropriate", 0.3)})
+    r.prompt_metadata = {"p": extract_meta(True)}
+    s = r(prompts=["p"], completions=[
+        _completion(_flow("appropriate"), _flow("appropriate", information_type="z"))])
+    assert s[0] == pytest.approx(0.5)
+
+
+def test_direct_unscored_flows_ignored_not_penalised():
+    # 'permitted'/unretrievable flows return gold None and must not dilute.
+    r = _direct({"d": ("appropriate", 0.3)})   # 'z' has no gold
+    r.prompt_metadata = {"p": extract_meta(True)}
+    s = r(prompts=["p"], completions=[
+        _completion(_flow("appropriate"), _flow("inappropriate", information_type="z"))])
+    assert s[0] == pytest.approx(1.0)
+
+
+def test_direct_no_scorable_flows_is_group_neutral():
+    r = _direct({})           # nothing retrievable
+    r.prompt_metadata = {"p": extract_meta(True)}
+    s = r(prompts=["p"], completions=[_completion(_flow("appropriate"))])
+    assert s[0] == pytest.approx(GROUP_NEUTRAL)
+
+
+def test_direct_metrics_stream_per_class():
+    r = _direct({"d": ("appropriate", 0.7), "z": ("inappropriate", 0.1)})
+    r.prompt_metadata = {"p": extract_meta(True)}
+    r(prompts=["p"], completions=[
+        _completion(_flow("appropriate"), _flow("appropriate", information_type="z"))])
+    m = r.last_metrics
+    assert m["reward/direct/agreement_by_class/appropriate"] == pytest.approx(1.0)
+    assert m["reward/direct/agreement_by_class/inappropriate"] == pytest.approx(0.0)
+    assert m["reward/direct/antithesis_frac"] == pytest.approx(0.5)
+    assert m["diag/retrieval_margin"] == pytest.approx(0.4)
+
+
+def test_direct_requires_injected_gold_fn():
+    r = ModularReward(reward_core=True, core_mode="direct")
+    r.prompt_metadata = {"p": extract_meta(True)}
+    with pytest.raises(RuntimeError, match="no direct_gold_fn"):
+        r(prompts=["p"], completions=[_completion(_flow("appropriate"))])

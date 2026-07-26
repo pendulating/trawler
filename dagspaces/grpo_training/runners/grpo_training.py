@@ -21,9 +21,12 @@ Online R_ground auxiliary servers (embedding + judge) support two modes:
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
+import sys
+import tempfile
 import time
 from typing import Any
 
@@ -478,16 +481,47 @@ class GRPOTrainingRunner(StageRunner):
             if judge_server_url:
                 os.environ["GRPO_JUDGE_SERVER_URL"] = judge_server_url
 
-            run_grpo_training_stage(
-                sft_checkpoint=sft_checkpoint,
-                chunks_path=chunks_path,
-                norm_universes_path=norm_universes_path or "",
-                output_dir=checkpoint_dir,
-                cfg=cfg,
-                embeddings_dir=embeddings_dir or "",
-                reward_cache_path=reward_cache_path or "",
-                vignette_norm_universes_path=vignette_norm_universes_path or "",
-            )
+            # TP>1 colocate REQUIRES a multi-process launch: TRL's colocate vLLM
+            # asserts accelerate world_size % vllm_tensor_parallel_size == 0
+            # (VLLMGeneration._init_vllm), so a single-process call with TP=2
+            # dies with "tensor_parallel_size (2) must divide world size (1)".
+            # Mirror the SFT DDP path (SFTTrainingRunner._run_with_accelerate):
+            # spawn `accelerate launch --num_processes <tp>` so world_size==tp and
+            # the colocate TP group is well-formed. Gated on TP>1 AND >1 visible
+            # GPU, so the single-GPU keeper path is byte-identical (direct call).
+            _tp = int(grpo_cfg.get("vllm_tensor_parallel_size", 1) or 1)
+            _colocate = grpo_cfg.get("vllm_mode", "colocate") == "colocate"
+            _use_vllm = bool(grpo_cfg.get("use_vllm", True))
+            import torch as _torch
+            _n_gpus_visible = _torch.cuda.device_count()
+            if _use_vllm and _colocate and _tp > 1 and _n_gpus_visible >= _tp:
+                self._run_grpo_with_accelerate(
+                    sft_checkpoint=sft_checkpoint,
+                    chunks_path=chunks_path,
+                    norm_universes_path=norm_universes_path or "",
+                    checkpoint_dir=checkpoint_dir,
+                    cfg=cfg,
+                    embeddings_dir=embeddings_dir or "",
+                    reward_cache_path=reward_cache_path or "",
+                    vignette_norm_universes_path=vignette_norm_universes_path or "",
+                    num_processes=_tp,
+                )
+            else:
+                if _use_vllm and _colocate and _tp > 1:
+                    print(f"[grpo_training] WARNING: vllm_tensor_parallel_size="
+                          f"{_tp} but only {_n_gpus_visible} GPU(s) visible; "
+                          f"falling back to single-process (TP will fail in TRL). "
+                          f"Request >={_tp} GPUs via hydra/launcher=slurm_train_{_tp}x.")
+                run_grpo_training_stage(
+                    sft_checkpoint=sft_checkpoint,
+                    chunks_path=chunks_path,
+                    norm_universes_path=norm_universes_path or "",
+                    output_dir=checkpoint_dir,
+                    cfg=cfg,
+                    embeddings_dir=embeddings_dir or "",
+                    reward_cache_path=reward_cache_path or "",
+                    vignette_norm_universes_path=vignette_norm_universes_path or "",
+                )
         finally:
             _shutdown_server(vllm_server_proc)
             _shutdown_server(embedding_server_proc)
@@ -508,3 +542,70 @@ class GRPOTrainingRunner(StageRunner):
             outputs={"checkpoint": checkpoint_dir},
             metadata=metadata,
         )
+
+    def _run_grpo_with_accelerate(
+        self,
+        *,
+        sft_checkpoint: str,
+        chunks_path: str,
+        norm_universes_path: str,
+        checkpoint_dir: str,
+        cfg: Any,
+        embeddings_dir: str,
+        reward_cache_path: str,
+        vignette_norm_universes_path: str,
+        num_processes: int,
+    ) -> None:
+        """Launch GRPO via `accelerate launch` for TP>1 colocate (world_size=tp).
+
+        Mirrors SFTTrainingRunner._run_with_accelerate. Serializes the resolved
+        config to a temp JSON and runs _grpo_accelerate_entry.py under accelerate
+        so TRL's colocate vLLM sees world_size == vllm_tensor_parallel_size.
+        """
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, prefix="grpo_cfg_"
+        ) as f:
+            json.dump(cfg_dict, f)
+            cfg_path = f.name
+
+        entry_script = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..", "stages", "_grpo_accelerate_entry.py",
+        ))
+
+        cmd = [
+            sys.executable, "-m", "accelerate.commands.launch",
+            "--num_processes", str(num_processes),
+            "--num_machines", "1",
+            "--mixed_precision", "bf16",
+            entry_script,
+            "--sft_checkpoint", sft_checkpoint,
+            "--chunks_path", chunks_path,
+            "--norm_universes_path", norm_universes_path,
+            "--output_dir", checkpoint_dir,
+            "--cfg_path", cfg_path,
+            "--embeddings_dir", embeddings_dir,
+            "--reward_cache_path", reward_cache_path,
+            "--vignette_norm_universes_path", vignette_norm_universes_path,
+        ]
+
+        print(f"[grpo_training] TP={num_processes} colocate: launching "
+              f"{num_processes}-process DDP via accelerate (world_size="
+              f"{num_processes} = vllm_tensor_parallel_size)")
+        print(f"[grpo_training] Command: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(cmd, env=os.environ.copy(),
+                                    stdout=sys.stdout, stderr=sys.stderr)
+        finally:
+            try:
+                os.unlink(cfg_path)
+            except OSError:
+                pass
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"accelerate launch (GRPO TP={num_processes}) failed with "
+                f"return code {result.returncode}"
+            )

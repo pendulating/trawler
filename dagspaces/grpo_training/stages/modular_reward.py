@@ -309,6 +309,17 @@ def attach_probes(
 # uniform GROUP_NEUTRAL (never raises into the gradient).
 AuxScorer = Callable[..., Sequence[float]]
 
+#: (flow, source_id) -> (gold appropriateness | None, retrieval margin).
+#: None gold => the flow is unscored (permitted/unknown force, or no norm
+#: retrieved). Injected so ModularReward stays free of embedding plumbing;
+#: the production adapter lives in aux_scorers.make_direct_gold_fn.
+DirectGoldFn = Callable[[dict, str], "tuple[str | None, float]"]
+
+#: How the policy's own appropriateness label is normalised before comparison.
+#: Anything that is not a decisive commitment is a hedge and scores 0 — the
+#: tooth inherited from R-OUTCOME: hedging must never beat committing.
+_DECISIVE_LABELS = ("appropriate", "inappropriate")
+
 
 class ModularReward:
     """The modular reward callable (TRL reward-function shape).
@@ -336,6 +347,8 @@ class ModularReward:
         *,
         auxiliaries: Sequence[str] = (),
         reward_core: bool = True,
+        core_mode: str = "direct",
+        direct_gold_fn: "DirectGoldFn | None" = None,
         answerer: AnswererClient | None = None,
         ground_scorer: AuxScorer | None = None,
         contrast_scorer: AuxScorer | None = None,
@@ -348,7 +361,14 @@ class ModularReward:
     ):
         self.auxiliaries = [a for a in _AUX_NAMES if a in set(auxiliaries)]
         self.reward_core = bool(reward_core)
+        # "direct"  — R-DIRECT: the norm classifies the flow; score the policy's
+        #             own appropriateness label against it. No model in the loop.
+        # "outcome" — the legacy frozen-answerer core. Retained only so the
+        #             negative result stays reproducible (reward-direct-spec.md);
+        #             not used by any proposed keeper config.
+        self.core_mode = str(core_mode)
         self.weights = compute_module_weights(self.auxiliaries, self.reward_core)
+        self._direct_gold_fn = direct_gold_fn
         self.answerer = answerer
         self._ground_scorer = ground_scorer
         self._contrast_scorer = contrast_scorer
@@ -577,12 +597,16 @@ class ModularReward:
             g_prompts = [keys[i] for i in group]
             g_metas = [metas[i] for i in group]
 
-            # R-OUTCOME (only when the core is active).
-            if self.reward_core and self.answerer is not None:
+            # Verifiable core.
+            if self.reward_core and self.core_mode == "direct":
+                for i in group:
+                    val = self._score_direct(gate_pass_flows.get(i, []), metas[i], acc)
+                    outcome_term[i] = GROUP_NEUTRAL if val is None else val
+            elif self.reward_core and self.answerer is not None:
                 self._score_outcome_group(
                     group, gate_pass_flows, metas, outcome_term, acc
                 )
-            elif self.reward_core:  # core active but no answerer wired
+            elif self.reward_core:  # core active but nothing wired
                 for i in group:
                     outcome_term[i] = GROUP_NEUTRAL
 
@@ -666,6 +690,55 @@ class ModularReward:
         result = score_battery(parsed, gold_items)
         acc.observe_vignette(result)
         return float(result["r_vig"])
+
+    def _score_direct(
+        self, flows: list, meta: dict, acc: "_MetricAccumulator"
+    ) -> float | None:
+        """R-DIRECT: the norm classifies the flow; score the policy's own label.
+
+        Per flow: retrieve the governing norm (k=1) and derive the flow's
+        appropriateness from force x act_polarity; compare to the policy's own
+        ``appropriateness`` label. Exact match 1.0; opposite 0.0; hedge
+        (``ambiguous`` / missing / unrecognised) 0.0 — hedging must never beat
+        committing. ``permitted``/unknown force and unretrievable flows are
+        UNSCORED (they neither earn nor lose).
+
+        Returns the macro-average over the gold classes present, so a blanket
+        label scores 0.5 on any completion carrying both classes instead of
+        riding the corpus skew. Returns None when nothing was scorable — the
+        caller then applies GROUP_NEUTRAL for this term only.
+        """
+        if self._direct_gold_fn is None:
+            raise RuntimeError(
+                "core_mode='direct' but no direct_gold_fn was injected "
+                "(make_modular_reward_from_cfg wires the production adapter)"
+            )
+        source_id = str(meta.get("source_id", ""))
+        by_class: dict[str, list[float]] = {}
+        n_unscored = 0
+        for flow in flows if isinstance(flows, list) else []:
+            if not isinstance(flow, dict):
+                continue
+            gold, margin = self._direct_gold_fn(flow, source_id)
+            if gold is None:
+                n_unscored += 1
+                continue
+            label = str(flow.get("appropriateness") or "").strip().lower()
+            if label not in _DECISIVE_LABELS:
+                acc.direct_hedge += 1
+                hit = 0.0
+            else:
+                hit = 1.0 if label == gold else 0.0
+                if hit == 0.0:
+                    acc.direct_antithesis += 1
+            by_class.setdefault(gold, []).append(hit)
+            acc.direct_by_class.setdefault(gold, []).append(hit)
+            acc.direct_margins.append(float(margin))
+            acc.direct_scored += 1
+        acc.direct_unscored += n_unscored
+        if not by_class:
+            return None
+        return sum(sum(v) / len(v) for v in by_class.values()) / len(by_class)
 
     def _score_outcome_group(
         self,
@@ -759,6 +832,13 @@ class _MetricAccumulator:
         self.n_probe_slots = 0
         self.group_spreads: list[float] = []
         self.extraction_lens: list[int] = []  # answerer-visible field token count
+        # direct core
+        self.direct_scored = 0
+        self.direct_unscored = 0
+        self.direct_hedge = 0
+        self.direct_antithesis = 0
+        self.direct_by_class: dict[str, list[float]] = {}
+        self.direct_margins: list[float] = []
         # vignette
         self.vig_antithesis: list[float] = []
         self.vig_hedge: list[float] = []
@@ -863,6 +943,23 @@ class _MetricAccumulator:
                     self.extraction_lens
                 ) / len(self.extraction_lens)
 
+        # reward/direct/*
+        if self.direct_scored:
+            tot = self.direct_scored
+            allv = [v for vs in self.direct_by_class.values() for v in vs]
+            out["reward/direct/agreement_mean"] = sum(allv) / len(allv)
+            for cls, vs in self.direct_by_class.items():
+                out[f"reward/direct/agreement_by_class/{cls}"] = sum(vs) / len(vs)
+            out["reward/direct/hedge_frac"] = self.direct_hedge / tot
+            out["reward/direct/antithesis_frac"] = self.direct_antithesis / tot
+            out["reward/direct/unscored_flow_frac"] = (
+                self.direct_unscored / (tot + self.direct_unscored)
+            )
+            if self.direct_margins:
+                out["diag/retrieval_margin"] = (
+                    sum(self.direct_margins) / len(self.direct_margins)
+                )
+
         # vignette/*
         if self.vig_antithesis:
             out["vignette/antithesis_frac"] = sum(self.vig_antithesis) / len(
@@ -915,6 +1012,7 @@ def make_modular_reward_from_cfg(
     norm_universes: dict[str, list] | None = None,
     *,
     answerer: AnswererClient | None = None,
+    direct_gold_fn: "DirectGoldFn | None" = None,
     ground_scorer: AuxScorer | None = None,
     contrast_scorer: AuxScorer | None = None,
     trace_log_path: str = "",
@@ -945,9 +1043,17 @@ def make_modular_reward_from_cfg(
             cfg, grpo_cfg, norm_universes or {}, active_aux
         )
 
+    core_mode = str(grpo_cfg.get("core_mode", "direct") or "direct")
+    if direct_gold_fn is None and reward_core and core_mode == "direct":
+        from .aux_scorers import make_direct_gold_fn
+
+        direct_gold_fn = make_direct_gold_fn(cfg, grpo_cfg, norm_universes or {})
+
     return ModularReward(
         auxiliaries=auxiliaries,
         reward_core=reward_core,
+        core_mode=core_mode,
+        direct_gold_fn=direct_gold_fn,
         answerer=answerer,
         ground_scorer=ground_scorer,
         contrast_scorer=contrast_scorer,

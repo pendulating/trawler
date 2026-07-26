@@ -149,6 +149,15 @@ answerer: {base_url_env: VLLM_SERVER_URL, model: "${judge_model.model_source}"}
 # lineage value). Set to match the redesign spec (2026-07-24 review); reversible.
 rank_top_k: 3
 
+# Verifiable core (reward-direct-spec.md, 2026-07-25). "direct" = R-DIRECT: the
+# governing norm classifies each extracted flow (force x act_polarity) and the
+# reward is agreement with the policy's own appropriateness label — no answerer,
+# no judge, no server call. "outcome" selects the retired frozen-answerer core,
+# kept only so the negative result stays reproducible (handed the prohibiting
+# norm verbatim it still called ~83% of prohibited flows appropriate; total
+# learnable signal +0.042 macro).
+core_mode: direct
+
 # A-ABSTAIN reward table (extended to gold-NO extractions). Mirrors the keeper's
 # no_flow_reward(gold): gold=YES→wrong 0.1, gold=NO→correct 0.6, unknown→0.4.
 # Source: reward-abstain.md; migration.md (abstention_score → A-ABSTAIN).

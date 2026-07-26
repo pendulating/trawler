@@ -522,3 +522,112 @@ def make_aux_scorers(
             json_schema=schema,
         )
     return ground_scorer, contrast_scorer
+
+
+def _build_retrieval(cfg, grpo_cfg, norm_universes, embedding_client, norm_retriever):
+    """EmbeddingClient + NormRetriever for R-DIRECT, built like make_aux_scorers.
+
+    Kept as a separate constructor rather than refactoring make_aux_scorers:
+    the aux path is live, working code and this is the lower-risk seam. Both
+    resolve the same env/config keys, so a divergence would show up as a URL or
+    model-name mismatch, not silently wrong retrieval.
+    """
+    if embedding_client is None:
+        emb_port = int(_cfg_get(grpo_cfg, "embedding_server_port", 8001))
+        embedding_url = (
+            str(_cfg_get(grpo_cfg, "embedding_server_url", "") or "")
+            or os.environ.get("GRPO_EMBEDDING_SERVER_URL", "")
+            or os.environ.get("EMBEDDING_SERVER_URL", "")
+            or f"http://localhost:{emb_port}"
+        )
+        emb_model_name = ""
+        try:
+            from omegaconf import OmegaConf
+
+            emb_model_name = str(
+                OmegaConf.select(cfg, "embedding_model.model_source", default=None)
+                or OmegaConf.select(cfg, "model.embedding_model_source", default=None)
+                or ""
+            )
+        except Exception:
+            pass
+        embedding_client = EmbeddingClient(
+            base_url=embedding_url, model_name=emb_model_name or "default"
+        )
+    if norm_retriever is None:
+        norm_retriever = NormRetriever(
+            norm_universes=norm_universes,
+            embeddings_dir=str(_cfg_get(grpo_cfg, "embeddings_dir", "") or ""),
+            embedding_client=embedding_client,
+            top_k=2,          # R-DIRECT needs top-1 + the runner-up for margin
+        )
+    return embedding_client, norm_retriever
+
+
+# ===========================================================================
+# R-DIRECT gold adapter (2026-07-25, reward-direct-spec.md)
+# ===========================================================================
+def make_direct_gold_fn(
+    cfg,
+    grpo_cfg,
+    norm_universes: dict,
+    *,
+    embedding_client=None,
+    norm_retriever=None,
+):
+    """Build the ``(flow, source_id) -> (gold, margin)`` callable for R-DIRECT.
+
+    The norm CLASSIFIES the flow: retrieve the governing norm by flow-text
+    similarity (**k=1**) over the chunk's own book universe, then derive the
+    flow's appropriateness from force x act_polarity
+    (:func:`deontic.flow_appropriateness`). Returns ``(None, 0.0)`` when the
+    force is non-directional or nothing is retrievable — such flows are UNSCORED
+    rather than penalised.
+
+    ``margin`` is top-1 minus top-2 cosine: a **class-neutral** retrieval
+    confidence signal streamed as ``diag/retrieval_margin``. Deliberately a
+    diagnostic, never a filter — polarity-based gating was measured to delete
+    95% of the minority class (reward-direct-spec.md).
+
+    **act_polarity must already be present on the universe norms** (merged by
+    ``scripts/apply_act_polarity.py``). Norms lacking it fall back to
+    "performing" inside ``flow_appropriateness``, which preserves pre-fix
+    semantics — such a universe must not be trusted as gold, since 19% of
+    labels invert.
+    """
+    import json as _json
+
+    import numpy as _np
+
+    from .deontic import flow_appropriateness
+
+    emb_client, retriever = _build_retrieval(
+        cfg, grpo_cfg, norm_universes, embedding_client, norm_retriever
+    )
+
+    def gold_fn(flow: dict, source_id: str):
+        try:
+            query = _flow_to_query(_flatten_flow(flow))
+            vec = _np.asarray(emb_client.encode_batch([query]), dtype=_np.float32)[0]
+            n = float(_np.linalg.norm(vec))
+            if n > 0:
+                vec = vec / n
+            raw, sims = retriever.retrieve(
+                vec, str(source_id), return_scores=True, top_k=2
+            )
+            norms = _json.loads(raw) if isinstance(raw, str) else (raw or [])
+        except Exception:
+            return None, 0.0
+        if not norms:
+            return None, 0.0
+        top = norms[0]
+        if not isinstance(top, dict) or top.get("governs_info_flow") is not True:
+            return None, 0.0
+        margin = float(sims[0] - sims[1]) if len(sims) > 1 else float(sims[0] if sims else 0.0)
+        gold = flow_appropriateness(
+            str(top.get("normative_force") or ""),
+            top.get("act_polarity"),
+        )
+        return gold, margin
+
+    return gold_fn

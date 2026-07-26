@@ -1,0 +1,54 @@
+# @package training.grpo
+# ─────────────────────────────────────────────────────────────────────────────
+# m-series GRPO on the TP=2 colocate lane (gemma-4-12b confirmation cell).
+#
+# Purpose: the Phase-G gemma-4-12b transfer cell (wiki/grpo_redesign/m1-run-plan.md
+# §"Phase G"). gemma-4-12b OOMs the 1-GPU colocate lane at the vLLM sleep/wake
+# boundary — the m0 smoke measured ~24 GB training weights + ~24 GB engine weights
+# resident together on one 48 GB A6000 (weights-bound: identical OOM at
+# gpu_memory_utilization 0.45→0.30 and max_model_len 16384→8192). Tensor-parallel
+# TP=2 halves the ENGINE weight shard to ~12 GB/GPU, so the wake-time peak drops to
+# ~24 GB (train, always resident) + ~12 GB (engine shard) ≈ 36 GB, clearing the OOM.
+#
+# ADDITIVE: this file only overlays the launcher/engine knobs on m_series — the
+# reward/optimizer surface is inherited verbatim so the confirmation cell is the
+# SAME recipe as the qwen grid winner, differing only in base model + GPU topology.
+# The cell keys (reward_auxiliaries, task_mix) are still set on the CLI exactly as
+# for the 1-GPU grid; this file changes NEITHER.
+#
+# Usage (Phase-G confirmation cell — set the winning cell's two keys on the CLI):
+#   EMBEDDING_SERVER_URL=... VLLM_SERVER_URL=http://klara:8002 JUDGE_MODEL_PATH=... \
+#   python -m dagspaces.grpo_training.cli \
+#     pipeline=grpo_only_online_external \
+#     model=gemma-4-12b/sft-canonical \
+#     training/grpo=m_series_2gpu \
+#     hydra/launcher=slurm_train_2x \
+#     training.grpo.reward_auxiliaries='[...winning cell...]' \
+#     'training.grpo.task_mix={extract: 0.7, vignette: 0.3}'
+# ─────────────────────────────────────────────────────────────────────────────
+
+defaults:
+  - m_series
+  - _self_
+
+# ── TP=2 colocate topology (the ONLY functional change vs m_series) ──
+# Reaches TRL's VLLMGeneration(tensor_parallel_size=...) via GRPOConfig
+# (grpo_training.py colocate block; GRPOConfig.vllm_tensor_parallel_size field).
+vllm_tensor_parallel_size: 2
+
+# MANDATORY at TP>1 on this cluster: PCIe A6000s with P2P disabled cluster-wide
+# (server.env / slurm_train_2x NCCL_P2P_DISABLE=1). vLLM's custom all-reduce probe
+# crashes at engine init otherwise (`custom_all_reduce.cuh 'invalid argument'`, the
+# 2026-07-24 probe-calibration precedent). GRPOConfig has NO field for this knob, so
+# grpo_training.py injects it into vllm.LLM.__init__ during VLLMGeneration._init_vllm
+# (see the "disable vLLM custom all-reduce" block). Defaults on at TP>1; pinned here
+# for provenance. Mirrors dagspaces/common/vllm_inference.py (TP>1 → disable_car).
+vllm_disable_custom_all_reduce: true
+
+# ── gemma-4-12b memory profile on 2× A6000 (48 GB, PCIe) ──
+# 0.40 keeps the engine (weights ~12 GB/GPU at TP=2 + KV) near ~19 GB, leaving the
+# ~24 GB always-resident training base ~5 GB wake-time headroom. gemma-4 KV is lean
+# (0.39 MB/token, halved per GPU at TP=2), so 16384 max_model_len still fits the KV
+# pool. Retune here first if the smoke OOMs — the wake boundary is the binding case.
+vllm_gpu_memory_utilization: 0.40
+vllm_max_model_length: 16384
