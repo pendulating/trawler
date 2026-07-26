@@ -33,7 +33,7 @@ from collections.abc import Callable, Sequence
 import numpy as np
 
 from . import probes
-from .deontic import FORCE_TO_GOLD
+from .deontic import FORCE_TO_GOLD, canonical_force, flow_appropriateness
 
 # The output-schema instruction. The five force option words live HERE (allowed
 # in the instruction, never in a scenario) — the anti-leak contract binds the
@@ -120,14 +120,43 @@ def _context(norm: dict) -> str:
 
 
 def _is_eligible(norm: dict) -> bool:
-    """Battery eligibility: governs_info_flow ∧ decisive force ∧ non-empty context."""
+    """Battery eligibility: governs_info_flow ∧ gradient force ∧ non-empty context.
+
+    Uses the FULL five-point gradient — ``permitted`` included (decision
+    2026-07-25). Excluding it made one of the five answers the policy must
+    choose from *never correct*, so the optimal policy learned "never say
+    permitted" — a property of our battery construction, not of the books'
+    norms. Worse, ``permitted`` is axis 0, the exact centre of the scale, so
+    the exclusion removed every case where the centre is the right answer while
+    leaving it fully available as a wrong one.
+
+    Safe from a hedging exploit: a blanket-"permitted" policy scores 0.184 on
+    the current pool, and permitted golds are ~2.8% of available items, so this
+    cannot open a hedge loophole. What the policy now learns about permitted is
+    a *frequency from the corpus* rather than an absolute we imposed.
+    """
     if norm.get("governs_info_flow") is not True:
         return False
-    if _norm_force(norm) not in probes.DECISIVE_FORCES:
+    if canonical_force(_norm_force(norm)) is None:
         return False
     if not _context(norm):
         return False
     return True
+
+
+def _polarity(norm: dict) -> str | None:
+    """"yes"/"no" side of the gradient for battery composition balancing.
+
+    Derived from :func:`deontic.flow_appropriateness` so ``permitted`` counts
+    as the appropriate ("yes") side, consistent with the standing gradient.
+    Act polarity is deliberately NOT applied here: the battery asks for the
+    NORM's force, not the flow's appropriateness, so a "refrain from…" act is
+    still an obligation to refrain and belongs on the side its force names.
+    """
+    app = flow_appropriateness(_norm_force(norm), None)
+    if app is None:
+        return None
+    return "yes" if app == "appropriate" else "no"
 
 
 def _cosine_matrix(embeddings: np.ndarray) -> np.ndarray:
@@ -285,8 +314,12 @@ def build_batteries(
             continue
         rng = _seeded_rng(str(gutenberg_id), cid)
 
-        yes_idx = [i for i in clean if FORCE_TO_GOLD.get(_norm_force(book_norms[i])) == "yes"]
-        no_idx = [i for i in clean if FORCE_TO_GOLD.get(_norm_force(book_norms[i])) == "no"]
+        # Composition polarity follows the gradient (permitted -> appropriate
+        # -> the "yes" side), while the item's GOLD stays the 5-way force. The
+        # two are different questions: polarity balances the battery, the force
+        # is what the policy must answer.
+        yes_idx = [i for i in clean if _polarity(book_norms[i]) == "yes"]
+        no_idx = [i for i in clean if _polarity(book_norms[i]) == "no"]
 
         seq = 0
         while len(yes_idx) + len(no_idx) >= min_k:

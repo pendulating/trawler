@@ -335,3 +335,36 @@ def test_scenario_never_renders_articulation_or_force_word():
     assert "should not" not in s
     for stem in ("prohibit", "oblig", "recommend", "discourag"):
         assert stem not in s.lower()
+
+
+# ---------------------------------------------------------------------------
+# permitted is part of the gradient (decision 2026-07-25). Excluding it made
+# one of the five available answers never correct, teaching "never say
+# permitted" — an artifact of battery construction, not of the books.
+# ---------------------------------------------------------------------------
+def test_permitted_norm_is_battery_eligible():
+    assert B._is_eligible(_norm(normative_force="permitted"))
+
+
+def test_permitted_counts_on_the_appropriate_side_for_composition():
+    # Composition polarity follows the gradient; the ITEM's gold stays the
+    # 5-way force. These are different questions.
+    assert B._polarity(_norm(normative_force="permitted")) == "yes"
+    assert B._polarity(_norm(normative_force="obligatory")) == "yes"
+    assert B._polarity(_norm(normative_force="prohibited")) == "no"
+    assert B._polarity(_norm(normative_force="discouraged")) == "no"
+
+
+def test_permitted_item_keeps_permitted_as_its_gold_force():
+    embed = lambda xs: __import__("numpy").ones((len(xs), 3))
+    norms = [_norm(normative_force=f, norm_act=f"act {i}")
+             for i, f in enumerate(
+                 ["permitted", "obligatory", "prohibited", "recommended"])]
+    clusters = B.cluster_contexts([n["context"] for n in norms], embed)
+    bats = B.build_batteries(norms, "1342", clusters, k=8, min_k=4)
+    forces = [it["gold_force"] for b in bats for it in b["items"]]
+    assert "permitted" in forces
+
+
+def test_unknown_force_still_excluded():
+    assert not B._is_eligible(_norm(normative_force="gently frowned upon"))
