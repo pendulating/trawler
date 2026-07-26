@@ -302,7 +302,19 @@ def build_batteries(
         if not _is_eligible(norm):
             continue
         cid = cluster_ids[idx]
-        if probes.probe_leaks(_scenario_text(norm), norm):
+        # Pass the fields the scenario renders: the articulation restates the
+        # same norm, so act/subject/context overlap is by construction, not a
+        # leak. Without this, 63.6% of scenarios were dropped for containing
+        # their own act.
+        if probes.probe_leaks(
+            _scenario_text(norm), norm,
+            rendered_fields=(
+                str(norm.get("norm_act") or ""),
+                str(norm.get("norm_subject") or ""),
+                str(norm.get("context") or ""),
+                str(norm.get("condition_of_application") or ""),
+            ),
+        ):
             leak_by_cluster[cid] = leak_by_cluster.get(cid, 0) + 1
             continue
         clusters.setdefault(cid, []).append(idx)

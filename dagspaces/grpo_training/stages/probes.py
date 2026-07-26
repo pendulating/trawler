@@ -59,6 +59,25 @@ _FORCE_STEMS: tuple[str, ...] = (
     "permiss",
 )
 
+# Whole-word force vocabulary (2026-07-26). The stem-prefix match above is
+# retained for the v1 path but is too blunt: it fired on `permission`
+# ("ask permission" — a social act), `obligation(s)` ("social obligations" —
+# duties, not deontic force), `recommendation` ("a letter of recommendation")
+# and the verbs `discourage` / `recommend`, which are ACTS rather than
+# statements of the norm's force. A leak is the scenario telling the model what
+# force GOVERNS the act; only the adjectival/participial forms do that.
+_FORCE_WORDS: frozenset[str] = frozenset({
+    "obligatory", "obligated", "obliged", "required", "mandatory",
+    "prohibited", "forbidden", "banned", "impermissible",
+    # noun forms that name a deontic status directly. Kept because they do not
+    # occur in this corpus (free insurance); the excluded nouns -- obligation,
+    # permission, recommendation -- were MEASURED false positives (15 / 33 / 4).
+    "prohibition", "prohibitions",
+    "permitted", "permissible", "allowed",
+    "discouraged", "disfavoured", "disfavored",
+    "recommended", "advised", "encouraged",
+})
+
 # Minimum contiguous run of articulation tokens that counts as a leak
 # (PrivacyLens canary pattern: a verbatim span of the withheld source text).
 _LEAK_NGRAM = 6
@@ -180,34 +199,54 @@ def template_probe(norm: dict) -> str:
     return f"{scenario} {_QUESTION_SUFFIX}"
 
 
-def probe_leaks(prompt_text: str, norm: dict) -> bool:
+def probe_leaks(prompt_text: str, norm: dict, rendered_fields: Sequence[str] | None = None) -> bool:
     """True if the prompt leaks the answer.
 
-    Two leak channels (PrivacyLens canary pattern):
-      1. any force word (a token starting with a Raz force stem), or
-      2. a contiguous run of >= ``_LEAK_NGRAM`` tokens from the withheld
-         ``norm_articulation`` appearing verbatim in the prompt.
+    Two channels (PrivacyLens canary pattern):
+
+    1. **Force word** — a whole-word match against :data:`_FORCE_WORDS`. Only
+       adjectival/participial forms count: those state what force governs the
+       act. Noun and verb forms (``permission``, ``obligation``,
+       ``recommendation``, ``discourage``) are ordinary content and were
+       responsible for 59 false-positive drops under the old stem-prefix match.
+
+    2. **Articulation span** — a contiguous run of >= ``_LEAK_NGRAM`` tokens
+       from the withheld ``norm_articulation``, *excluding* anything already
+       present in ``rendered_fields``.
+
+       ``rendered_fields`` is the crux (2026-07-26). The articulation is the
+       same norm restated as a sentence, so it necessarily shares wording with
+       the fields a scenario is built from — 63.6% of battery scenarios tripped
+       channel 2 purely because they render ``norm_act``, which is exactly what
+       they are supposed to do. Passing the rendered fields makes the check ask
+       the right question: did articulation-specific content — above all the
+       force — reach the prompt *beyond* what we deliberately included? Callers
+       that render nothing norm-derived can omit it and keep the strict check.
     """
     prompt_toks = _tokens(prompt_text)
 
-    # Channel 1: force word.
-    for tok in prompt_toks:
-        if any(tok.startswith(stem) for stem in _FORCE_STEMS):
-            return True
+    # Channel 1: whole-word force vocabulary.
+    if any(tok in _FORCE_WORDS for tok in prompt_toks):
+        return True
 
-    # Channel 2: verbatim articulation span.
+    # Channel 2: articulation span not accounted for by the rendered fields.
     art_toks = _tokens(_articulation(norm))
-    if len(art_toks) >= _LEAK_NGRAM:
-        prompt_windows = {
-            tuple(prompt_toks[i : i + _LEAK_NGRAM])
-            for i in range(len(prompt_toks) - _LEAK_NGRAM + 1)
-        }
-        for i in range(len(art_toks) - _LEAK_NGRAM + 1):
-            if tuple(art_toks[i : i + _LEAK_NGRAM]) in prompt_windows:
-                return True
-
+    if len(art_toks) < _LEAK_NGRAM:
+        return False
+    allowed: set[tuple] = set()
+    for field in rendered_fields or ():
+        ft = _tokens(field)
+        for i in range(len(ft) - _LEAK_NGRAM + 1):
+            allowed.add(tuple(ft[i : i + _LEAK_NGRAM]))
+    prompt_windows = {
+        tuple(prompt_toks[i : i + _LEAK_NGRAM])
+        for i in range(len(prompt_toks) - _LEAK_NGRAM + 1)
+    }
+    for i in range(len(art_toks) - _LEAK_NGRAM + 1):
+        span = tuple(art_toks[i : i + _LEAK_NGRAM])
+        if span in prompt_windows and span not in allowed:
+            return True
     return False
-
 
 def build_probe_pool(
     reference_flows: list[dict],

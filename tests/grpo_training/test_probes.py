@@ -151,11 +151,25 @@ class TestTemplateAndLeak:
         assert p.probe_leaks(p.template_probe(n), n) is True
 
     @pytest.mark.parametrize("word", [
-        "obligatory", "obligation", "recommended", "recommendation",
-        "prohibited", "prohibition", "discouraged", "permitted", "permissible",
+        "obligatory", "obligated", "obliged", "required", "mandatory",
+        "prohibited", "prohibition", "forbidden", "banned", "impermissible",
+        "permitted", "permissible", "allowed",
+        "discouraged", "recommended", "advised", "encouraged",
     ])
-    def test_all_force_words_detected(self, word):
+    def test_force_words_detected(self, word):
+        """Adjectival/participial forms state what force GOVERNS the act."""
         assert p.probe_leaks(f"Something {word} happened. Answer yes or no.", _norm()) is True
+
+    @pytest.mark.parametrize("word", [
+        "obligation", "obligations",     # "social obligations" — duties, 15 FPs
+        "permission",                    # "ask permission" — an act, 33 FPs
+        "recommendation", "recommendations",  # "letter of recommendation", 4 FPs
+        "discourage", "recommend", "permit",  # verbs/nouns = acts, not forces
+    ])
+    def test_content_words_are_not_force_leaks(self, word):
+        """Noun/verb forms are ordinary content. The old stem-prefix match
+        dropped 59 legitimate scenarios on these (measured 2026-07-26)."""
+        assert p.probe_leaks(f"Something about a {word} here. Answer yes or no.", _norm()) is False
 
     def test_articulation_six_token_run_is_a_leak(self):
         art = "the patriarch shall not disclose the daughter secrets to any suitor"

@@ -196,7 +196,7 @@ class TestBuildStructure:
     def test_eligibility_filters(self):
         book = [
             _yes("keep-1"),
-            _bn("permit", "permitted"),            # non-decisive → excluded
+            _bn("permit", "permitted"),            # permitted IS eligible (gradient)
             _bn("nongov", "prohibited", governs=False),  # not governing → excluded
             _bn("nocontext", "prohibited", context=""),  # empty context → excluded
             _no("keep-2"),
@@ -206,7 +206,9 @@ class TestBuildStructure:
         bats = B.build_batteries(book, "1342", [0] * len(book), k=8, min_k=4)
         assert len(bats) == 1
         subjects = {book[it["norm_index"]]["norm_subject"] for it in bats[0]["items"]}
-        assert subjects == {"keep-1", "keep-2", "keep-3", "keep-4"}
+        # permitted is part of the five-point gradient (decision 2026-07-25), so
+        # it belongs in batteries; only non-governing / context-less are dropped.
+        assert subjects == {"keep-1", "keep-2", "keep-3", "keep-4", "permit"}
 
 
 # --------------------------------------------------------------------------- #
