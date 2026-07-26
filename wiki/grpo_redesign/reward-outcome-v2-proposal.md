@@ -127,7 +127,54 @@ similarity, and the top-1/top-2 margin — recorded per probe as a diagnostic
 established property. Top-1 lands *below* the 10.8% pool base rate, consistent
 with retrieval being roughly uninformative about direction. The true rate is an
 **output** of a working pipeline, reported in `training_metadata.json` — never
-an input. Nothing in v2 may be calibrated to an assumed skew.
+an input. Nothing in v2 may be calibrated to an assumed skew. **This warning was
+immediately vindicated — see the act-polarity fix below.**
+
+### Act polarity — gold was inverted on 19% of norms (fixed 2026-07-25)
+
+`FORCE_TO_APPROPRIATENESS` assumes `norm_act` is phrased affirmatively. When
+the act is an abstention ("refrain from discussing a family's finances",
+"withhold news of a death"), the force applies to the *refraining*, so the
+judgment of the underlying flow **inverts**: a norm that OBLIGES refraining
+makes the disclosure **inappropriate**, while the mapping returned
+"appropriate". Confirmed on real norms, e.g. act *"refrain from engaging in
+casual or social conversation"* + force `recommended` → mapping said
+"appropriate" for a flow the norm exists to suppress.
+
+Fix (option 2 of three, chosen 2026-07-25): an explicit
+`RazNormTuple.act_polarity: Literal["performing","refraining"]` required of the
+teacher, plus `deontic.flow_appropriateness(force, act_polarity)` — added
+*beside* `FORCE_TO_APPROPRIATENESS` (a keeper surface), never modifying it.
+`act_polarity=None` falls back to "performing", so pre-fix universes keep their
+old semantics rather than silently changing meaning — **but such universes must
+not be trusted as gold until backfilled.**
+
+Backfilled over all 2,789 eligible fiction10-gemma4 norms
+(`scripts/backfill_act_polarity.py`, artifact
+`outputs/2026-07-25_act_polarity_backfill/`; deterministic, resumable,
+versioned):
+
+| | appropriate | inappropriate |
+|---|---|---|
+| before (force only) | 2,487 (89.2%) | 302 (10.8%) |
+| **after (force × polarity)** | 2,000 (71.7%) | **789 (28.3%)** |
+
+**529 norms (19.0%) are `refraining`-phrased ⇒ 19.0% of all gold labels were
+inverted.** Effect on the probe pools:
+
+| | before | after |
+|---|---|---|
+| sampled probe golds (yes/no) | 88.2 / 11.8 | **67.3 / 32.7** |
+| chunks with ≥1 gold-no probe | 31.0% | **63.8%** |
+| chunks where macro-EM bites (both classes) | 29.1% | **55.7%** |
+| blanket-"yes" micro-EM (gaming floor) | 0.882 | **0.673** |
+
+So the 9:1 skew that motivated macro-EM and adaptive stratification was
+substantially an **artifact of this bug**, not a property of the corpus. Both
+mechanisms are still worth keeping (2.5:1 is still skewed, and macro-EM is
+rate-agnostic by construction), but the discriminative surface roughly doubles
+and the gaming floor drops by 0.21. Any v2 validation must use polarity-corrected
+gold; numbers computed before 2026-07-25 are on inverted labels for ~1 in 5 items.
 
 ### Scoring
 

@@ -293,3 +293,47 @@ class TestHedgeProhibitTier:
         # v12a does not push the (already-hot) no_flow rate toward extraction.
         assert d.candidate_appropriateness_multiplier(
             "no flows", "prohibited", **self._V12A) == pytest.approx(0.7)
+
+
+# ---------------------------------------------------------------------------
+# flow_appropriateness: force x act_polarity (2026-07-25).
+# FORCE_TO_APPROPRIATENESS assumes norm_act is phrased affirmatively; when the
+# act is an abstention ("refrain from disclosing"), the force applies to the
+# refraining and the FLOW judgment inverts. Backfill measured 19.0% of
+# fiction10-gemma4 eligible norms as 'refraining' -> 19.0% of golds inverted.
+# ---------------------------------------------------------------------------
+from dagspaces.grpo_training.stages.deontic import (  # noqa: E402
+    FORCE_TO_APPROPRIATENESS,
+    flow_appropriateness,
+)
+
+
+class TestFlowAppropriateness:
+    def test_performing_matches_the_plain_mapping(self):
+        assert flow_appropriateness("obligatory", "performing") == "appropriate"
+        assert flow_appropriateness("recommended", "performing") == "appropriate"
+        assert flow_appropriateness("prohibited", "performing") == "inappropriate"
+        assert flow_appropriateness("discouraged", "performing") == "inappropriate"
+
+    def test_refraining_inverts_every_decisive_force(self):
+        # "must refrain from disclosing" => the DISCLOSURE is inappropriate.
+        assert flow_appropriateness("obligatory", "refraining") == "inappropriate"
+        assert flow_appropriateness("recommended", "refraining") == "inappropriate"
+        # "must not refrain" => the disclosure is expected.
+        assert flow_appropriateness("prohibited", "refraining") == "appropriate"
+        assert flow_appropriateness("discouraged", "refraining") == "appropriate"
+
+    def test_missing_polarity_preserves_pre_fix_semantics(self):
+        # Universes built before the field existed must not silently change
+        # meaning; they are simply untrustworthy until backfilled.
+        for force in ("obligatory", "recommended", "prohibited", "discouraged"):
+            assert flow_appropriateness(force, None) == FORCE_TO_APPROPRIATENESS[force]
+
+    def test_non_directional_force_returns_none(self):
+        for pol in ("performing", "refraining", None):
+            assert flow_appropriateness("permitted", pol) is None
+            assert flow_appropriateness("", pol) is None
+            assert flow_appropriateness(None, pol) is None
+
+    def test_case_and_whitespace_tolerant(self):
+        assert flow_appropriateness("  Obligatory ", " Refraining ") == "inappropriate"

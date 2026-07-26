@@ -198,6 +198,22 @@ class RazNormTuple(BaseModel):
             "NEVER reference specific characters or scene-specific plot events."
         ),
     )
+    act_polarity: Literal["performing", "refraining"] = Field(
+        ...,
+        description=(
+            "Whether norm_act names the regulated action itself ('performing') "
+            "or names the WITHHOLDING of it ('refraining'). This describes how "
+            "the act is PHRASED and is INDEPENDENT of normative_force — the same "
+            "expectation can be written either way: 'discuss a family's finances' "
+            "+ prohibited, OR 'refrain from discussing a family's finances' + "
+            "obligatory. Required to derive whether the underlying information "
+            "flow is appropriate: a norm that obliges REFRAINING from a "
+            "disclosure makes that disclosure INappropriate, not appropriate "
+            "(added 2026-07-25 — without it, force->appropriateness silently "
+            "inverts the gold on refraining-phrased acts). Tag what was actually "
+            "written in norm_act."
+        ),
+    )
     condition_of_application: str | None = Field(
         None,
         description=(

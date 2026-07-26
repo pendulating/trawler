@@ -47,6 +47,42 @@ FORCE_TO_GOLD = {
 NEUTRAL_CONSISTENCY = 0.5
 
 
+def flow_appropriateness(force: str | None, act_polarity: str | None) -> str | None:
+    """Appropriateness of the FLOW a norm governs, accounting for act polarity.
+
+    ``FORCE_TO_APPROPRIATENESS`` assumes ``norm_act`` names the action
+    affirmatively. When the act is phrased as an abstention ("refrain from
+    disclosing…", "avoid mentioning…"), the force applies to the *refraining*,
+    so the mapping inverts: a norm that OBLIGES refraining makes the underlying
+    disclosure **inappropriate**. Ignoring this silently flips the gold label
+    (found 2026-07-25; see reward-outcome-v2-proposal.md).
+
+    ============  =========================  =========================
+    act_polarity  force                      flow judgment
+    ============  =========================  =========================
+    performing    obligatory / recommended   appropriate
+    performing    prohibited / discouraged   inappropriate
+    refraining    obligatory / recommended   **inappropriate**
+    refraining    prohibited / discouraged   **appropriate**
+    ============  =========================  =========================
+
+    Returns None when the force carries no direction ("permitted"/unknown).
+    ``act_polarity`` of None is treated as "performing" — the pre-2026-07-25
+    behaviour — so callers reading universes built before the field existed
+    keep the old semantics rather than silently changing meaning; those
+    universes must be backfilled before their gold is trusted.
+
+    Kept separate from ``FORCE_TO_APPROPRIATENESS`` (a keeper surface) rather
+    than modifying it: the constant is what the v9 lineage consumes.
+    """
+    base = FORCE_TO_APPROPRIATENESS.get(str(force).strip().lower()) if force else None
+    if base is None:
+        return None
+    if str(act_polarity or "performing").strip().lower() == "refraining":
+        return "inappropriate" if base == "appropriate" else "appropriate"
+    return base
+
+
 def expected_appropriateness(force: str | None) -> str | None:
     """Expected appropriateness label for a flow governed by ``force``.
 
