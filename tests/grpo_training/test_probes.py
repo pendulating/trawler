@@ -431,8 +431,17 @@ class TestBuildFlowProbePool:
         assert len(pool) == 2
         assert all(p["norm_index"] == 0 for p in pool)
 
-    def test_non_directional_force_excluded(self):
-        pool, stats = build_flow_probe_pool([_flow()], [_n(force="permitted")],
+    def test_permitted_is_scorable_as_appropriate(self):
+        # Decision 2026-07-25: a permission is not a violation, so a permitted
+        # flow is APPROPRIATE and probe-eligible (it used to be excluded).
+        pool, _ = build_flow_probe_pool([_flow()], [_n(force="permitted")],
+                                        self._retriever(0))
+        assert len(pool) == 1
+        assert pool[0]["gold"] == "yes"
+        assert pool[0]["appropriateness"] == "appropriate"
+
+    def test_unknown_force_excluded(self):
+        pool, stats = build_flow_probe_pool([_flow()], [_n(force="")],
                                             self._retriever(0))
         assert pool == [] and stats["n_non_directional"] == 1
 

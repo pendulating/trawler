@@ -60,13 +60,15 @@ def flow_appropriateness(force: str | None, act_polarity: str | None) -> str | N
     ============  =========================  =========================
     act_polarity  force                      flow judgment
     ============  =========================  =========================
+    (any)         permitted                  appropriate  (never inverts)
     performing    obligatory / recommended   appropriate
     performing    prohibited / discouraged   inappropriate
     refraining    obligatory / recommended   **inappropriate**
     refraining    prohibited / discouraged   **appropriate**
     ============  =========================  =========================
 
-    Returns None when the force carries no direction ("permitted"/unknown).
+    "permitted" maps to **appropriate** (a permission is not a violation) and
+    never inverts. None is returned only for an unknown/missing force.
     ``act_polarity`` of None is treated as "performing" — the pre-2026-07-25
     behaviour — so callers reading universes built before the field existed
     keep the old semantics rather than silently changing meaning; those
@@ -75,7 +77,21 @@ def flow_appropriateness(force: str | None, act_polarity: str | None) -> str | N
     Kept separate from ``FORCE_TO_APPROPRIATENESS`` (a keeper surface) rather
     than modifying it: the constant is what the v9 lineage consumes.
     """
-    base = FORCE_TO_APPROPRIATENESS.get(str(force).strip().lower()) if force else None
+    f = str(force).strip().lower() if force else ""
+    if not f:
+        return None
+    # "permitted" is the NEUTRAL point of the deontic axis, and a permission is
+    # not a violation: a flow the norms permit IS appropriate (2026-07-25). The
+    # exclusion of "permitted" in FORCE_TO_APPROPRIATENESS is correct for a
+    # *direction multiplier* (it carries no ought), but wrong for an
+    # *appropriateness classifier* (it carries an explicit allowance).
+    #
+    # It also must NOT invert under act polarity: "you may refrain from
+    # disclosing" does not forbid disclosing — a permission inverted is still a
+    # permission, never a prohibition. Only the decisive forces flip.
+    if f == "permitted":
+        return "appropriate"
+    base = FORCE_TO_APPROPRIATENESS.get(f)
     if base is None:
         return None
     if str(act_polarity or "performing").strip().lower() == "refraining":

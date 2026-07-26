@@ -61,8 +61,14 @@ unchanged.
 1. Retrieve the governing norm — `flow_to_query(flow)` against the chunk's own
    book universe, **k = 1** (top-1 similarity).
 2. `gold = deontic.flow_appropriateness(force, act_polarity)` →
-   `appropriate` / `inappropriate`; `permitted`/unknown → the flow is
-   **unscored** (no directional expectation; it neither earns nor loses).
+   `appropriate` / `inappropriate`. **`permitted` → appropriate** (decision
+   2026-07-25): a permission is not a violation, so a flow the norms permit is
+   appropriate. It is polarity-**invariant** — "you may refrain from disclosing"
+   does not forbid disclosing, and inverting a permission would manufacture a
+   prohibition. Only an unknown/missing force leaves a flow **unscored** (it
+   neither earns nor loses). Measured effect: scorable flow-governing norms go
+   2,789 → **2,870 (100%)** with class balance essentially unchanged
+   (74.6/25.4 → **72.5/27.5**) — more coverage, no new skew.
 3. Compare to the policy's own `appropriateness` label for that flow:
    - exact match → **1.0**
    - opposite → **0.0**

@@ -329,11 +329,19 @@ class TestFlowAppropriateness:
         for force in ("obligatory", "recommended", "prohibited", "discouraged"):
             assert flow_appropriateness(force, None) == FORCE_TO_APPROPRIATENESS[force]
 
-    def test_non_directional_force_returns_none(self):
+    def test_permitted_is_appropriate_and_never_inverts(self):
+        # A permission is not a violation: a flow the norms permit IS
+        # appropriate (decision 2026-07-25). And "you may refrain from
+        # disclosing" does not forbid disclosing — inverting a permission
+        # would manufacture a prohibition, so permitted is polarity-invariant.
         for pol in ("performing", "refraining", None):
-            assert flow_appropriateness("permitted", pol) is None
+            assert flow_appropriateness("permitted", pol) == "appropriate"
+
+    def test_unknown_force_returns_none(self):
+        for pol in ("performing", "refraining", None):
             assert flow_appropriateness("", pol) is None
             assert flow_appropriateness(None, pol) is None
+            assert flow_appropriateness("not_a_force", pol) is None
 
     def test_case_and_whitespace_tolerant(self):
         assert flow_appropriateness("  Obligatory ", " Refraining ") == "inappropriate"
