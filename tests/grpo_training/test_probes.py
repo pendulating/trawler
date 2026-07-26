@@ -352,3 +352,133 @@ class TestNullFilter:
     def test_threshold_boundary_is_drop(self):
         pool = _pool(1, 0)
         assert p.apply_null_filter(pool, {"y0": 0.8}, p_null=0.8) == []
+
+
+# ===========================================================================
+# v2 — flow-anchored probes (2026-07-25)
+# ===========================================================================
+from dagspaces.grpo_training.stages.probes import (  # noqa: E402
+    build_flow_probe_pool,
+    flow_probe_leaks,
+    sample_flow_probes,
+    template_flow_probe,
+)
+
+
+def _flow(**over):
+    f = {"sender": "Dr. Bob", "recipient": "the insurer", "subject": "Alice",
+         "information_type": "HIV status", "transmission_principle": "without consent",
+         "context": "medical treatment"}
+    f.update(over)
+    return f
+
+
+def _n(force="prohibited", **over):
+    n = {"norm_subject": "a physician", "norm_act": "disclose a diagnosis to an insurer",
+         "context": "medical treatment", "normative_force": force,
+         "governs_info_flow": True, "gutenberg_id": "1342",
+         "norm_articulation": "A physician must not disclose."}
+    n.update(over)
+    return n
+
+
+class TestTemplateFlowProbe:
+    def test_contains_context_and_referring_expression(self):
+        t = template_flow_probe(_flow())
+        assert "medical treatment" in t and "HIV status" in t
+        assert t.endswith("Is this flow appropriate? Answer yes or no.")
+
+    def test_withholds_judgment_relevant_fields(self):
+        # sender / recipient / transmission_principle must come from the
+        # EXTRACTION, not the probe — else the probe is self-answering.
+        t = template_flow_probe(_flow())
+        for withheld in ("Dr. Bob", "the insurer", "without consent"):
+            assert withheld not in t
+
+    def test_context_is_mandatory(self):
+        # Without a context the appropriateness question is ill-posed, not hard.
+        assert template_flow_probe(_flow(context="")) == ""
+
+    def test_falls_back_to_subject_when_no_information_type(self):
+        assert "Alice" in template_flow_probe(_flow(information_type=""))
+
+    def test_flow_probe_leaks_detects_withheld_field(self):
+        assert flow_probe_leaks("… the insurer … appropriate?", _flow())
+        assert not flow_probe_leaks(template_flow_probe(_flow()), _flow())
+
+
+class TestBuildFlowProbePool:
+    def _retriever(self, idx):
+        return lambda q, k: [idx]
+
+    def test_gold_uses_polarity_corrected_appropriateness(self):
+        norms = [_n(force="obligatory", norm_act="refrain from disclosing")]
+        # performing => obligatory means "do it" => appropriate => yes
+        pool, _ = build_flow_probe_pool([_flow()], norms, self._retriever(0),
+                                        polarity_lookup={"0": "performing"})
+        assert pool[0]["gold"] == "yes"
+        # refraining => obligation to refrain => the FLOW is inappropriate => no
+        pool, _ = build_flow_probe_pool([_flow()], norms, self._retriever(0),
+                                        polarity_lookup={"0": "refraining"})
+        assert pool[0]["gold"] == "no"
+        assert pool[0]["appropriateness"] == "inappropriate"
+
+    def test_one_probe_per_flow_anchored_to_top1(self):
+        norms = [_n(), _n(force="obligatory")]
+        pool, _ = build_flow_probe_pool(
+            [_flow(), _flow(information_type="billing records")],
+            norms, lambda q, k: [0], polarity_lookup={})
+        assert len(pool) == 2
+        assert all(p["norm_index"] == 0 for p in pool)
+
+    def test_non_directional_force_excluded(self):
+        pool, stats = build_flow_probe_pool([_flow()], [_n(force="permitted")],
+                                            self._retriever(0))
+        assert pool == [] and stats["n_non_directional"] == 1
+
+    def test_ill_posed_flow_excluded(self):
+        pool, stats = build_flow_probe_pool([_flow(context="")], [_n()],
+                                            self._retriever(0))
+        assert pool == [] and stats["n_ill_posed"] == 1
+
+    def test_non_governing_norm_excluded(self):
+        pool, stats = build_flow_probe_pool(
+            [_flow()], [_n(governs_info_flow=False)], self._retriever(0))
+        assert pool == [] and stats["n_no_norm"] == 1
+
+    def test_duplicate_probe_text_deduped(self):
+        pool, _ = build_flow_probe_pool([_flow(), _flow()], [_n()],
+                                        self._retriever(0))
+        assert len(pool) == 1
+
+
+class TestSampleFlowProbes:
+    def _pool(self, n_yes, n_no):
+        p = [{"gold": "yes", "prompt_text": f"y{i}"} for i in range(n_yes)]
+        p += [{"gold": "no", "prompt_text": f"n{i}"} for i in range(n_no)]
+        return p
+
+    def test_minority_class_always_represented(self):
+        # 1 minority among 20 — a uniform sample would usually miss it.
+        s = sample_flow_probes(self._pool(20, 1), "c1", k_max=4)
+        assert any(p["gold"] == "no" for p in s)
+        assert any(p["gold"] == "yes" for p in s)
+
+    def test_minority_is_adaptive_not_hardcoded_to_no(self):
+        # When 'yes' is the rarer class it is the one reserved — nothing
+        # assumes a global skew.
+        s = sample_flow_probes(self._pool(1, 20), "c1", k_max=4)
+        assert any(p["gold"] == "yes" for p in s)
+
+    def test_k_is_min_of_kmax_and_pool(self):
+        assert len(sample_flow_probes(self._pool(1, 1), "c1", k_max=4)) == 2
+        assert len(sample_flow_probes(self._pool(10, 10), "c1", k_max=4)) == 4
+
+    def test_deterministic_by_chunk_id(self):
+        pool = self._pool(6, 6)
+        a = sample_flow_probes(pool, "chunk-A", k_max=4)
+        b = sample_flow_probes(pool, "chunk-A", k_max=4)
+        assert [p["prompt_text"] for p in a] == [p["prompt_text"] for p in b]
+
+    def test_empty_pool(self):
+        assert sample_flow_probes([], "c1") == []

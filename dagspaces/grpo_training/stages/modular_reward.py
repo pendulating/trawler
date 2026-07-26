@@ -77,6 +77,11 @@ CAPPED_FIELDS: tuple[str, ...] = (
     "transmission_principle",
     "context",
     "appropriateness",
+    # v2 (2026-07-25): norms_invoked became answerer-visible, so it joins the
+    # anti-content-stuffing cap. `appropriateness` stays capped although it is
+    # no longer sent — capping a field the answerer cannot see costs nothing
+    # and keeps the gate's contract stable if the whitelist changes again.
+    "norms_invoked",
 )
 
 # Per-flow field token cap (reward-valid.md: "order-of-64 tokens/field").

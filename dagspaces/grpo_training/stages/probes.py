@@ -370,3 +370,183 @@ def apply_null_filter(
             continue
         kept.append(p)
     return kept
+
+
+# ===========================================================================
+# v2 — FLOW-ANCHORED probes (2026-07-25)
+# ===========================================================================
+# v1 templated the probe from a retrieved NORM and asked "should this be
+# shared?". Three measured defects (reward-outcome-v2-proposal.md):
+#   1. the template dropped norm_act on 99.2% of probes -> contentless questions
+#   2. CI formulates prescription as APPROPRIATENESS OF A FLOW; the Raz force is
+#      the input to that classification, not the question
+#   3. no correspondence: the probe described a norm-derived hypothetical while
+#      the answerer was shown the chunk's flows — different situations, so even
+#      a teacher-perfect extraction was not evidence about the probe
+#
+# v2 inverts the anchoring: the probe is built from a REFERENCE FLOW (something
+# the extraction actually contains) and the norm supplies only the gold label
+# via deontic.flow_appropriateness (force x act_polarity). Context is MANDATORY
+# — appropriateness in CI is defined only relative to a context, so a
+# context-free probe is ill-posed rather than merely hard.
+#
+# The answer vocabulary stays yes/no deliberately: the CI framing lives in the
+# QUESTION ("is this flow appropriate?"), so no change to the answerer client's
+# parsing/normalisation is needed, and gold maps appropriate->yes.
+
+_FLOW_PROBE_SUFFIX = "Is this flow appropriate? Answer yes or no."
+
+#: Judgment-relevant flow fields the probe must NOT contain — the answerer has
+#: to get these from the extraction, otherwise the probe is self-answering and
+#: the reward measures nothing about extraction quality.
+_WITHHELD_FROM_PROBE = ("sender", "recipient", "transmission_principle")
+
+
+def flow_referring_expression(flow: dict, referring_field: str = "information_type") -> str:
+    """The minimal handle naming WHICH flow the probe asks about.
+
+    Deliberately not a full description: the probe must identify the flow while
+    leaving the judgment-relevant fields (sender / recipient / transmission
+    principle) to be supplied by the completion's extraction.
+    """
+    val = str(flow.get(referring_field) or "").strip()
+    return val or str(flow.get("subject") or "").strip()
+
+
+def template_flow_probe(flow: dict, referring_field: str = "information_type") -> str:
+    """Probe text for one reference flow; "" when it cannot be well-posed.
+
+    Requires BOTH a context and a referring expression — without a context the
+    question is ill-posed (the same disclosure flips polarity across contexts);
+    without a referring expression it does not identify a flow.
+    """
+    context = str(flow.get("context") or "").strip()
+    ref = flow_referring_expression(flow, referring_field)
+    if not context or not ref:
+        return ""
+    return (
+        f"In the context of {context}, consider the flow in which "
+        f"{ref} is shared. {_FLOW_PROBE_SUFFIX}"
+    )
+
+
+def flow_probe_leaks(prompt_text: str, flow: dict) -> bool:
+    """True if the probe hands over a field the extraction is meant to supply.
+
+    Complements :func:`probe_leaks` (force words / articulation spans): here the
+    leak channel is the *flow's own* judgment-relevant fields appearing in the
+    probe, which would let the answerer judge without the extraction.
+    """
+    low = prompt_text.lower()
+    for field in _WITHHELD_FROM_PROBE:
+        val = str(flow.get(field) or "").strip().lower()
+        if len(val) >= 4 and val in low:
+            return True
+    return False
+
+
+def build_flow_probe_pool(
+    reference_flows: list[dict],
+    book_norms: list[dict],
+    retrieve_top_k: Callable[[str, int], Sequence[int]],
+    *,
+    polarity_lookup: Mapping[str, str] | None = None,
+    referring_field: str = "information_type",
+) -> tuple[list[dict], dict]:
+    """Build one probe per reference flow; gold from its top-1 governing norm.
+
+    ``k = 1`` is deliberate and not a knob. Top-3 polarity agreement was
+    measured to be a base-rate artifact on this corpus (the universe is ~89%
+    appropriate-polarity, so any neighbourhood is appropriate-dominated):
+    agreement-gating deleted 95% of the minority class and majority-vote would
+    systematically flip `inappropriate` labels. k=1 is the only scheme that
+    preserves the Forbid signal.
+
+    ``polarity_lookup`` maps ``str(norm_index) -> "performing"|"refraining"``
+    (the act-polarity backfill artifact). Missing entries fall back to
+    "performing" inside :func:`deontic.flow_appropriateness`, which preserves
+    pre-fix semantics — such a pool must not be trusted as gold.
+    """
+    from .deontic import flow_appropriateness
+
+    pool: list[dict] = []
+    seen_text: set[str] = set()
+    stats = {"n_no_norm": 0, "n_non_directional": 0,
+             "n_ill_posed": 0, "n_leak_skipped": 0}
+
+    for flow in reference_flows:
+        idxs = list(retrieve_top_k(flow_to_query(flow), 1))
+        idxs = [i for i in idxs if 0 <= i < len(book_norms)]
+        if not idxs:
+            stats["n_no_norm"] += 1
+            continue
+        idx = int(idxs[0])
+        norm = book_norms[idx]
+        if norm.get("governs_info_flow") is not True:
+            stats["n_no_norm"] += 1
+            continue
+
+        polarity = (polarity_lookup or {}).get(str(idx))
+        appropriateness = flow_appropriateness(_force_str(norm), polarity)
+        if appropriateness is None:          # permitted / unknown: no direction
+            stats["n_non_directional"] += 1
+            continue
+        gold = "yes" if appropriateness == "appropriate" else "no"
+
+        prompt_text = template_flow_probe(flow, referring_field)
+        if not prompt_text:
+            stats["n_ill_posed"] += 1
+            continue
+        if probe_leaks(prompt_text, norm) or flow_probe_leaks(prompt_text, flow):
+            stats["n_leak_skipped"] += 1
+            continue
+        if prompt_text in seen_text:
+            continue
+        seen_text.add(prompt_text)
+
+        pool.append({
+            "probe_id": probe_id(str(norm.get("gutenberg_id", "")), norm),
+            "norm_index": idx,
+            "norm": norm,
+            "gold": gold,
+            "appropriateness": appropriateness,
+            "act_polarity": polarity or "performing",
+            "prompt_text": prompt_text,
+        })
+
+    return pool, stats
+
+
+def sample_flow_probes(
+    pool: list[dict], chunk_id: str, k_max: int = 4
+) -> list[dict]:
+    """K = min(k_max, |pool|), minority-class-first, seeded by ``chunk_id``.
+
+    Adaptive rather than calibrated: the minority class is whichever gold is
+    rarer *in this pool*, so nothing assumes a global skew (the 9:1 rate we
+    designed around turned out to be largely an act-polarity artifact). When
+    both classes are present the sample contains both, which is also the
+    condition under which macro-EM has any purchase.
+    """
+    if not pool:
+        return []
+    k = min(int(k_max), len(pool))
+    rng = random.Random(int(hashlib.sha1(str(chunk_id).encode()).hexdigest(), 16) % (2**32))
+
+    by_gold: dict[str, list[dict]] = {}
+    for p in pool:
+        by_gold.setdefault(p["gold"], []).append(p)
+    if len(by_gold) < 2:
+        chosen = rng.sample(pool, k)
+    else:
+        minority = min(by_gold, key=lambda g: len(by_gold[g]))
+        majority = next(g for g in by_gold if g != minority)
+        chosen = [rng.choice(by_gold[minority])]
+        if k >= 2:
+            chosen.append(rng.choice(by_gold[majority]))
+        remaining = [p for p in pool if p not in chosen]
+        rng.shuffle(remaining)
+        chosen.extend(remaining[: max(0, k - len(chosen))])
+
+    order = {id(p): i for i, p in enumerate(pool)}
+    return sorted(chosen, key=lambda p: order[id(p)])

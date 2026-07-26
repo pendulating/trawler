@@ -108,11 +108,16 @@ def test_call_shape_and_structured_fields_only():
         # context IS whitelisted (decision 2026-07-24): flows and norms are
         # context-relative, so the answerer needs the extraction's context.
         "context": "a hospital ward at midnight",
+        # v2 (2026-07-25): norms_invoked IS whitelisted — the policy's claimed
+        # governing RULE, which the answerer applies to derive a verdict.
+        "norms_invoked": ["medical confidentiality"],
+        # appropriateness is the VERDICT and is now WITHHELD: showing it lets
+        # the answerer read the answer off a label, collapsing R-OUTCOME into
+        # direct label matching (v9's m-DIRECTION).
         "appropriateness": "inappropriate",
         # Free-text / smuggling channels that must NEVER be serialized:
         "reasoning": "SECRETLEAK the chunk says he should not share",
         "chunk_text": "FULLCHUNKTEXT ...",
-        "norms_invoked": ["confidentiality"],
     }
     client, sess = make_client(['{"answers": ["no"]}'])
     client.answer_probes([flow], ["Should this be shared?"])
@@ -120,13 +125,14 @@ def test_call_shape_and_structured_fields_only():
     assert posted_system(sess) == ANSWERER_SYSTEM
     user = posted_user(sess)
 
-    # Structured fields present.
+    # Structured fields present (incl. the claimed governing rule).
     for val in ("Alice", "Dr. Bob", "the insurer", "HIV status",
-                "with consent", "inappropriate", "hospital ward"):
+                "with consent", "hospital ward", "medical confidentiality"):
         assert val in user
-    # Reasoning / chunk / norms never serialized.
+    # The VERDICT must never reach the answerer (v2 anti-circularity), nor may
+    # free-text / chunk-text smuggling channels.
     for leaked in ("SECRETLEAK", "reasoning",
-                   "FULLCHUNKTEXT", "chunk_text", "confidentiality"):
+                   "FULLCHUNKTEXT", "chunk_text", "inappropriate"):
         assert leaked not in user, f"{leaked!r} leaked into answerer input"
 
     # Parse the EXTRACTION JSON and assert the flow dict is whitelist-exact.
@@ -135,7 +141,7 @@ def test_call_shape_and_structured_fields_only():
     extraction = json.loads(m.group(1))
     assert set(extraction["flows"][0].keys()) == {
         "subject", "sender", "recipient", "information_type",
-        "transmission_principle", "context", "appropriateness",
+        "transmission_principle", "context", "norms_invoked",
     }
 
     # Q-line + reply-line shape.

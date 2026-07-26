@@ -74,7 +74,19 @@ _STRUCTURED_FIELDS: tuple[str, ...] = (
     "information_type",
     "transmission_principle",
     "context",
-    "appropriateness",
+    # v2 (2026-07-25): the policy's claimed governing RULE is shown; its
+    # VERDICT is not. Appropriateness cannot be judged without the governing
+    # norms — a model judging from weights alone is doing zero-shot normative
+    # grounding, which is what SFT already provides and what GRPO exists to
+    # replace. So the answerer is given the rule the policy invoked and must
+    # DERIVE the verdict; gold comes from the book's actual governing norm.
+    # Showing `appropriateness` would let it read the answer off a label,
+    # collapsing R-OUTCOME into v9's m-DIRECTION (direct label matching) — the
+    # very thing the redesign claims to subsume.
+    # Division of labour: R-GROUND scores fidelity (do the invoked norms match
+    # the retrieved ones); R-OUTCOME scores consequence (does the invoked norm
+    # yield the right judgment).
+    "norms_invoked",
 )
 
 _VALID_ANSWERS = ("yes", "no", "cannot_determine")
