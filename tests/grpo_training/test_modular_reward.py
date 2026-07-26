@@ -846,3 +846,38 @@ def test_direct_requires_injected_gold_fn():
     r.prompt_metadata = {"p": extract_meta(True)}
     with pytest.raises(RuntimeError, match="no direct_gold_fn"):
         r(prompts=["p"], completions=[_completion(_flow("appropriate"))])
+
+
+# ---------------------------------------------------------------------------
+# Discrimination metrics (2026-07-26). The two per-class recalls are
+# conditioned on disjoint gold subsets and do NOT sum to 1; any
+# non-discriminating policy sums to exactly 1.0 (J=0, bal-acc=0.5).
+# ---------------------------------------------------------------------------
+def test_blanket_label_scores_zero_discrimination():
+    r = _direct({"d": ("appropriate", 0.3), "z": ("inappropriate", 0.3)})
+    r.prompt_metadata = {"p": extract_meta(True)}
+    r(prompts=["p"], completions=[
+        _completion(_flow("appropriate"), _flow("appropriate", information_type="z"))])
+    m = r.last_metrics
+    assert m["reward/direct/balanced_accuracy"] == pytest.approx(0.5)
+    assert m["reward/direct/youden_j"] == pytest.approx(0.0)
+
+
+def test_perfect_labels_score_full_discrimination():
+    r = _direct({"d": ("appropriate", 0.3), "z": ("inappropriate", 0.3)})
+    r.prompt_metadata = {"p": extract_meta(True)}
+    r(prompts=["p"], completions=[
+        _completion(_flow("appropriate"), _flow("inappropriate", information_type="z"))])
+    m = r.last_metrics
+    assert m["reward/direct/balanced_accuracy"] == pytest.approx(1.0)
+    assert m["reward/direct/youden_j"] == pytest.approx(1.0)
+
+
+def test_youden_j_absent_when_only_one_class_present():
+    # J is defined for two classes; balanced accuracy still reports.
+    r = _direct({"d": ("appropriate", 0.3)})
+    r.prompt_metadata = {"p": extract_meta(True)}
+    r(prompts=["p"], completions=[_completion(_flow("appropriate"))])
+    m = r.last_metrics
+    assert "reward/direct/youden_j" not in m
+    assert m["reward/direct/balanced_accuracy"] == pytest.approx(1.0)

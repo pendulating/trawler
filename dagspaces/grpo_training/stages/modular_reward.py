@@ -948,8 +948,25 @@ class _MetricAccumulator:
             tot = self.direct_scored
             allv = [v for vs in self.direct_by_class.values() for v in vs]
             out["reward/direct/agreement_mean"] = sum(allv) / len(allv)
+            recalls = {}
             for cls, vs in self.direct_by_class.items():
-                out[f"reward/direct/agreement_by_class/{cls}"] = sum(vs) / len(vs)
+                recalls[cls] = sum(vs) / len(vs)
+                out[f"reward/direct/agreement_by_class/{cls}"] = recalls[cls]
+            # Discrimination, not accuracy. The two per-class recalls are
+            # conditioned on disjoint gold subsets, so they do NOT sum to 1 and
+            # are easy to misread as complementary: ANY non-discriminating
+            # policy (blanket label, coin flip) sums to exactly 1.0, while a
+            # perfect one sums to 2.0. Balanced accuracy = mean recall, so 0.5
+            # is the blanket floor — and it is exactly what the macro-EM reward
+            # computes, making it the number the kill criterion should be read
+            # against. agreement_mean is micro-averaged over a ~72/28 split and
+            # therefore mostly tracks the majority class (2026-07-26).
+            if recalls:
+                out["reward/direct/balanced_accuracy"] = sum(recalls.values()) / len(recalls)
+            if len(recalls) == 2:
+                # Youden's J = sensitivity + specificity - 1. 0 = no
+                # discrimination, 1 = perfect. Defined for two classes only.
+                out["reward/direct/youden_j"] = sum(recalls.values()) - 1.0
             out["reward/direct/hedge_frac"] = self.direct_hedge / tot
             out["reward/direct/antithesis_frac"] = self.direct_antithesis / tot
             out["reward/direct/unscored_flow_frac"] = (
