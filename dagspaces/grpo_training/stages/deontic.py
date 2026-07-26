@@ -47,6 +47,58 @@ FORCE_TO_GOLD = {
 NEUTRAL_CONSISTENCY = 0.5
 
 
+# Canonical five-point deontic gradient (standing rule, Matt 2026-07-25):
+#
+#     prohibited, discouraged           -> INAPPROPRIATE
+#     permitted, recommended, obligatory -> APPROPRIATE
+#
+# Synonyms are normalised rather than dropped. An unrecognised force silently
+# scoring as "unscored" is a failure mode we can afford least: it removes flows
+# from the reward with no error, so a vocabulary drift in a future extraction
+# would quietly shrink the training signal. Anything not in this map is
+# surfaced by `unrecognised_forces()` instead of being swallowed.
+_FORCE_SYNONYMS: dict[str, str] = {
+    "obligatory": "obligatory", "obligated": "obligatory",
+    "obligation": "obligatory", "required": "obligatory", "must": "obligatory",
+    "recommended": "recommended", "encouraged": "recommended",
+    "advised": "recommended", "should": "recommended",
+    "permitted": "permitted", "permissible": "permitted",
+    "allowed": "permitted", "optional": "permitted", "may": "permitted",
+    "discouraged": "discouraged", "disfavoured": "discouraged",
+    "disfavored": "discouraged", "should_not": "discouraged",
+    "prohibited": "prohibited", "forbidden": "prohibited",
+    "prohibition": "prohibited", "banned": "prohibited",
+    "impermissible": "prohibited", "must_not": "prohibited",
+}
+
+#: Every force that carries a flow judgment under the standing gradient.
+FORCE_TO_FLOW_APPROPRIATENESS: dict[str, str] = {
+    "obligatory": "appropriate",
+    "recommended": "appropriate",
+    "permitted": "appropriate",
+    "discouraged": "inappropriate",
+    "prohibited": "inappropriate",
+}
+
+_UNRECOGNISED_FORCES: set[str] = set()
+
+
+def canonical_force(force: str | None) -> str | None:
+    """Normalise a force string to the canonical five-point vocabulary."""
+    if not force:
+        return None
+    f = str(force).strip().lower().replace("-", "_").replace(" ", "_")
+    canon = _FORCE_SYNONYMS.get(f)
+    if canon is None and f:
+        _UNRECOGNISED_FORCES.add(f)
+    return canon
+
+
+def unrecognised_forces() -> set[str]:
+    """Force strings seen but not mapped — surfaces vocabulary drift loudly."""
+    return set(_UNRECOGNISED_FORCES)
+
+
 def flow_appropriateness(force: str | None, act_polarity: str | None) -> str | None:
     """Appropriateness of the FLOW a norm governs, accounting for act polarity.
 
@@ -77,8 +129,8 @@ def flow_appropriateness(force: str | None, act_polarity: str | None) -> str | N
     Kept separate from ``FORCE_TO_APPROPRIATENESS`` (a keeper surface) rather
     than modifying it: the constant is what the v9 lineage consumes.
     """
-    f = str(force).strip().lower() if force else ""
-    if not f:
+    f = canonical_force(force)
+    if f is None:
         return None
     # "permitted" is the NEUTRAL point of the deontic axis, and a permission is
     # not a violation: a flow the norms permit IS appropriate (2026-07-25). The
@@ -91,7 +143,7 @@ def flow_appropriateness(force: str | None, act_polarity: str | None) -> str | N
     # permission, never a prohibition. Only the decisive forces flip.
     if f == "permitted":
         return "appropriate"
-    base = FORCE_TO_APPROPRIATENESS.get(f)
+    base = FORCE_TO_FLOW_APPROPRIATENESS.get(f)
     if base is None:
         return None
     if str(act_polarity or "performing").strip().lower() == "refraining":

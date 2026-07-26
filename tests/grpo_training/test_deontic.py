@@ -345,3 +345,42 @@ class TestFlowAppropriateness:
 
     def test_case_and_whitespace_tolerant(self):
         assert flow_appropriateness("  Obligatory ", " Refraining ") == "inappropriate"
+
+
+class TestCanonicalGradient:
+    """Standing rule (2026-07-25): prohibited/discouraged = inappropriate;
+    permitted/recommended/obligatory = appropriate. Synonyms normalise rather
+    than silently dropping out of the reward."""
+
+    def test_the_full_gradient(self):
+        from dagspaces.grpo_training.stages.deontic import (
+            FORCE_TO_FLOW_APPROPRIATENESS,
+        )
+        assert FORCE_TO_FLOW_APPROPRIATENESS == {
+            "obligatory": "appropriate",
+            "recommended": "appropriate",
+            "permitted": "appropriate",
+            "discouraged": "inappropriate",
+            "prohibited": "inappropriate",
+        }
+
+    @pytest.mark.parametrize("synonym,expected", [
+        ("obligated", "appropriate"), ("required", "appropriate"),
+        ("encouraged", "appropriate"), ("advised", "appropriate"),
+        ("permissible", "appropriate"), ("allowed", "appropriate"),
+        ("forbidden", "inappropriate"), ("banned", "inappropriate"),
+        ("impermissible", "inappropriate"), ("disfavored", "inappropriate"),
+        ("Prohibited", "inappropriate"), ("  DISCOURAGED  ", "inappropriate"),
+        ("must_not", "inappropriate"), ("must-not", "inappropriate"),
+    ])
+    def test_synonyms_normalise(self, synonym, expected):
+        assert flow_appropriateness(synonym, "performing") == expected
+
+    def test_unrecognised_force_is_surfaced_not_swallowed(self):
+        from dagspaces.grpo_training.stages.deontic import (
+            canonical_force,
+            unrecognised_forces,
+        )
+        canonical_force("gently_frowned_upon")
+        assert "gently_frowned_upon" in unrecognised_forces()
+        assert flow_appropriateness("gently_frowned_upon", "performing") is None
