@@ -906,8 +906,29 @@ class NormRetriever:
         embeddings_dir: str,
         embedding_client: EmbeddingClient | None = None,
         top_k: int = 3,
+        norm_filter=None,
     ):
         import os
+
+        # Optional index restriction (e.g. R-DIRECT retrieves only over
+        # governs_info_flow norms). Filtering must happen HERE, where the
+        # norms<->embedding-row alignment invariant lives: pre-computed .npy
+        # rows are 1:1 with the UNFILTERED per-source norm list, so the same
+        # mask is applied to both. Callers keep their dict untouched.
+        self._norm_masks: dict[str, list[bool]] | None = None
+        if norm_filter is not None:
+            self._norm_masks = {
+                sid: [bool(norm_filter(n)) for n in norms]
+                for sid, norms in norm_universes.items()
+            }
+            norm_universes = {
+                sid: [n for n, keep in zip(norms, self._norm_masks[sid]) if keep]
+                for sid, norms in norm_universes.items()
+            }
+            n_kept = sum(len(v) for v in norm_universes.values())
+            n_total = sum(len(m) for m in self._norm_masks.values())
+            print(f"[NormRetriever] norm_filter active: index restricted to "
+                  f"{n_kept}/{n_total} norms")
 
         self.norm_universes = norm_universes
         self.top_k = top_k
@@ -918,7 +939,18 @@ class NormRetriever:
             for source_id in norm_universes:
                 npy_path = os.path.join(embeddings_dir, f"{source_id}.npy")
                 if os.path.exists(npy_path):
-                    self._embeddings[source_id] = np.load(npy_path)
+                    emb = np.load(npy_path)
+                    if self._norm_masks is not None:
+                        mask = self._norm_masks[source_id]
+                        if emb.shape[0] != len(mask):
+                            raise ValueError(
+                                f"[NormRetriever] {npy_path}: {emb.shape[0]} "
+                                f"embedding rows but {len(mask)} norms in the "
+                                f"unfiltered universe — refusing to apply a "
+                                f"norm_filter to misaligned embeddings"
+                            )
+                        emb = emb[np.asarray(mask, dtype=bool)]
+                    self._embeddings[source_id] = emb
             loaded = sum(len(v) for v in self._embeddings.values())
             print(f"[NormRetriever] Loaded pre-computed embeddings for "
                   f"{len(self._embeddings)} books ({loaded} vectors)")

@@ -458,6 +458,7 @@ def make_aux_scorers(
         embedding_url = (
             str(_cfg_get(grpo_cfg, "embedding_server_url", "") or "")
             or os.environ.get("GRPO_EMBEDDING_SERVER_URL", "")
+            or os.environ.get("EMBEDDING_SERVER_URL", "")
             or f"http://localhost:{emb_port}"
         )
         emb_model_name = ""
@@ -524,13 +525,18 @@ def make_aux_scorers(
     return ground_scorer, contrast_scorer
 
 
-def _build_retrieval(cfg, grpo_cfg, norm_universes, embedding_client, norm_retriever):
+def _build_retrieval(cfg, grpo_cfg, norm_universes, embedding_client, norm_retriever,
+                     norm_filter=None):
     """EmbeddingClient + NormRetriever for R-DIRECT, built like make_aux_scorers.
 
     Kept as a separate constructor rather than refactoring make_aux_scorers:
     the aux path is live, working code and this is the lower-risk seam. Both
     resolve the same env/config keys, so a divergence would show up as a URL or
     model-name mismatch, not silently wrong retrieval.
+
+    ``norm_filter`` restricts the retrieval index (see NormRetriever); it only
+    applies when this function constructs the retriever — an injected
+    ``norm_retriever`` is used as-is.
     """
     if embedding_client is None:
         emb_port = int(_cfg_get(grpo_cfg, "embedding_server_port", 8001))
@@ -560,6 +566,7 @@ def _build_retrieval(cfg, grpo_cfg, norm_universes, embedding_client, norm_retri
             embeddings_dir=str(_cfg_get(grpo_cfg, "embeddings_dir", "") or ""),
             embedding_client=embedding_client,
             top_k=2,          # R-DIRECT needs top-1 + the runner-up for margin
+            norm_filter=norm_filter,
         )
     return embedding_client, norm_retriever
 
@@ -584,10 +591,18 @@ def make_direct_gold_fn(
     force is non-directional or nothing is retrievable — such flows are UNSCORED
     rather than penalised.
 
-    ``margin`` is top-1 minus top-2 cosine: a **class-neutral** retrieval
-    confidence signal streamed as ``diag/retrieval_margin``. Deliberately a
-    diagnostic, never a filter — polarity-based gating was measured to delete
-    95% of the minority class (reward-direct-spec.md).
+    **The retrieval index is restricted to ``governs_info_flow`` norms**
+    (2026-07-28 ruling; only 29% of universe norms govern info flow, and the
+    unrestricted index left 37% of policy flows unscored because their nearest
+    neighbour was a conduct/decorum norm — m1 wave `unscored_flow_frac`).
+    With the restriction, unscored now means: unrecognised force, a book with
+    zero flow-governing norms, or a retrieval/embedding error.
+
+    ``margin`` is top-1 minus top-2 cosine **within the restricted index**: a
+    **class-neutral** retrieval confidence signal streamed as
+    ``diag/retrieval_margin``. Deliberately a diagnostic, never a filter —
+    polarity-based gating was measured to delete 95% of the minority class
+    (reward-direct-spec.md).
 
     **act_polarity must already be present on the universe norms** (merged by
     ``scripts/apply_act_polarity.py``). Norms lacking it fall back to
@@ -602,7 +617,8 @@ def make_direct_gold_fn(
     from .deontic import flow_appropriateness
 
     emb_client, retriever = _build_retrieval(
-        cfg, grpo_cfg, norm_universes, embedding_client, norm_retriever
+        cfg, grpo_cfg, norm_universes, embedding_client, norm_retriever,
+        norm_filter=lambda n: n.get("governs_info_flow") is True,
     )
 
     def gold_fn(flow: dict, source_id: str):
@@ -631,3 +647,196 @@ def make_direct_gold_fn(
         return gold, margin
 
     return gold_fn
+
+
+# ===========================================================================
+# R-DIRECT chunk-gold index (2026-07-28, R2: the chunk-fixed denominator)
+# ===========================================================================
+class DirectChunkGold:
+    """Per-chunk teacher-flow golds + embeddings for chunk-denominator R-DIRECT.
+
+    ``index`` maps ``(source_id, chunk_id)`` (both str) to
+    ``{"golds": [str], "emb": np.ndarray (n, d) L2-normalised, "texts": [str]}``.
+    ``embed_flows`` embeds a completion's policy flows into the same space
+    (batched — one server call per completion, not per flow).
+    """
+
+    def __init__(self, index: dict, embed_fn):
+        self.index = index
+        self._embed_fn = embed_fn
+
+    def get(self, source_id: str, chunk_id: str):
+        return self.index.get((str(source_id), str(chunk_id)))
+
+    #: The fields a match query is built from — BOTH sides. Teacher queries
+    #: use exactly these (see make_direct_chunk_gold field_cols); policy flows
+    #: additionally carry `norms_invoked`, which _flow_to_query would append.
+    #: The asymmetry made a byte-perfect flow reproduction score cos ~0.88,
+    #: and R-GROUND rewards norm-text growth — so the match rate would DRIFT
+    #: down during training and read as a core-vs-aux interaction in the LOO
+    #: grid (audit 2026-07-28, R2-M3). Note tau=0.55 was calibrated WITH the
+    #: asymmetry, so post-fix it is conservative (retains more true matches).
+    MATCH_FIELDS = ("sender", "recipient", "subject", "information_type",
+                    "transmission_principle", "context")
+
+    def embed_flows(self, flows: list) -> "Any":
+        queries = []
+        for f in flows:
+            flat = _flatten_flow(f)
+            queries.append(_flow_to_query(
+                {k: flat.get(k) for k in self.MATCH_FIELDS}
+            ))
+        vecs = np.asarray(self._embed_fn(queries), dtype=np.float32)
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        return vecs / np.maximum(norms, 1e-9)
+
+
+def majority_gold(norms: list, k: int = 3) -> str | None:
+    """k-majority gold over the top-k retrieved (flow-governing) norms.
+
+    Each norm votes ``flow_appropriateness(force, act_polarity)``; ties and
+    all-None fall back to the top-1 vote (which preserves k=1 semantics).
+    NOTE (2026-07-28 audit): production uses k=1 (top-1 semantics through
+    this function). A k=3 winner-take-all vote was measured to regress golds
+    toward the index's 72.5/27.5 class prior — deleting 19% of minority-class
+    golds and flipping 15% of all golds one-sidedly — so k>1 must not be used
+    without re-measuring the acceptance bar at that k.
+    """
+    from collections import Counter
+
+    from .deontic import flow_appropriateness
+
+    votes = [
+        flow_appropriateness(
+            str(n.get("normative_force") or ""), n.get("act_polarity")
+        )
+        for n in norms[: max(1, int(k))]
+        if isinstance(n, dict)
+    ]
+    decided = [v for v in votes if v is not None]
+    if not decided:
+        return None
+    counts = Counter(decided).most_common(2)
+    if len(counts) == 2 and counts[0][1] == counts[1][1]:
+        return votes[0]  # tie -> top-1 (may be None; then unscored)
+    return counts[0][0]
+
+
+def make_direct_chunk_gold(
+    cfg,
+    grpo_cfg,
+    norm_universes: dict,
+    chunk_keys: "set[tuple[str, str]]",
+    *,
+    extraction_df=None,
+    embedding_client=None,
+    norm_retriever=None,
+    gold_k: int = 1,
+) -> DirectChunkGold:
+    """Build the chunk-gold index: teacher flows -> golds + embeddings, once.
+
+    The denominator problem (m1 post-mortem R2): per-completion macro-EM let
+    the policy control its own exam — 50.7% of scored completions carried one
+    gold class and got plain accuracy. Here the denominator is the CHUNK's
+    teacher flows (68.3% of m1 chunks are mixed-gold at chunk level), fixed
+    and identical for all G completions of a group.
+
+    Teacher flows come from ``grpo_cfg.extraction_path`` or the
+    ``CI_EXTRACTION_PATH`` env (server.env is the source of truth in stage
+    jobs). Gold per teacher flow is top-1 (k=1) over the RESTRICTED
+    (``governs_info_flow``) index — k=3 majority was REVERTED 2026-07-28:
+    measured on the real wave-2 population it regressed golds toward the
+    index's 72.5/27.5 prior (19% of minority golds deleted, 15% of all golds
+    flipped, mixed chunks 68.6%->56.1%), and the acceptance bar was measured
+    at k=1. Chunks whose teacher flows are all unscorable are omitted — the
+    scorer falls back to the per-flow path there.
+    """
+    import pandas as _pd
+
+    emb_client, retriever = _build_retrieval(
+        cfg, grpo_cfg, norm_universes, embedding_client, norm_retriever,
+        norm_filter=lambda n: n.get("governs_info_flow") is True,
+    )
+
+    if extraction_df is None:
+        path = str(
+            _cfg_get(grpo_cfg, "extraction_path", "")
+            or os.environ.get("CI_EXTRACTION_PATH", "")
+        )
+        if not path:
+            raise ValueError(
+                "[direct_chunk_gold] No teacher-flow source: set "
+                "grpo.extraction_path or CI_EXTRACTION_PATH (server.env)"
+            )
+        extraction_df = _pd.read_parquet(path)
+
+    df = extraction_df.copy()
+    sid_col = "gutenberg_id" if "gutenberg_id" in df.columns else "source_id"
+    df["_key"] = list(
+        zip(df[sid_col].astype(str), df["chunk_id"].astype(str))
+    )
+    df = df[df["_key"].isin(chunk_keys)]
+
+    # Must stay in lockstep with DirectChunkGold.MATCH_FIELDS — both sides of
+    # the match cosine are built from exactly these six CI fields.
+    field_cols = {
+        "ci_sender": "sender", "ci_recipient": "recipient",
+        "ci_subject": "subject", "ci_information_type": "information_type",
+        "ci_transmission_principle": "transmission_principle",
+        "ci_context": "context",
+    }
+    flows, keys = [], []
+    for _, row in df.iterrows():
+        flows.append({v: row.get(c) for c, v in field_cols.items()})
+        keys.append(row["_key"])
+
+    index: dict = {}
+    if flows:
+        queries = [_flow_to_query(_flatten_flow(f)) for f in flows]
+        vecs = np.asarray(emb_client.encode_batch(queries), dtype=np.float32)
+        # EmbeddingClient degrades to ZERO vectors on transient failures; a
+        # zero teacher-flow row retrieves nothing and silently drops from the
+        # denominator, biasing that chunk's gold. Build-time = fail loud.
+        zero_rows = int((~vecs.any(axis=1)).sum())
+        if zero_rows:
+            raise RuntimeError(
+                f"[direct_chunk_gold] {zero_rows}/{len(flows)} teacher-flow "
+                "embeddings came back zero (embedding-server fault during the "
+                "index build) — refusing to build a biased gold index"
+            )
+        vecs = vecs / np.maximum(np.linalg.norm(vecs, axis=1, keepdims=True), 1e-9)
+
+        per_chunk: dict = {}
+        for f, key, vec in zip(flows, keys, vecs):
+            raw, _sims = retriever.retrieve(
+                vec, key[0], return_scores=True, top_k=max(2, int(gold_k))
+            )
+            norms = json.loads(raw) if isinstance(raw, str) else (raw or [])
+            gold = majority_gold(norms, k=gold_k)
+            if gold is None:
+                continue  # unscorable teacher flow drops from the denominator
+            entry = per_chunk.setdefault(key, {"golds": [], "emb": [], "texts": []})
+            entry["golds"].append(gold)
+            entry["emb"].append(vec)
+            entry["texts"].append(_flow_to_query(_flatten_flow(f)))
+        for key, entry in per_chunk.items():
+            index[key] = {
+                "golds": entry["golds"],
+                "emb": np.stack(entry["emb"]),
+                "texts": entry["texts"],
+            }
+
+    n_flows = sum(len(v["golds"]) for v in index.values())
+    n_mixed = sum(
+        1 for v in index.values()
+        if len(set(v["golds"])) > 1
+    )
+    print(f"[direct_chunk_gold] index: {len(index)}/{len(chunk_keys)} chunks, "
+          f"{n_flows} teacher flows, {n_mixed} mixed-gold chunks "
+          f"({n_mixed / max(1, len(index)):.0%})")
+    missing = len(chunk_keys) - len(index)
+    if missing:
+        print(f"[direct_chunk_gold] {missing} chunks have no scorable teacher "
+              f"flows — those rows fall back to the per-flow (completion-"
+              f"denominator) path")
+    return DirectChunkGold(index, emb_client.encode_batch)
