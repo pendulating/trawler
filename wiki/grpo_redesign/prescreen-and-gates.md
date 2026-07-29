@@ -44,17 +44,29 @@ that would silently reuse a neighbor cell's screen instead misses cleanly.
 Per-cell `cache_path` files (the v-era convention) are no longer load-bearing
 but remain the convention for tidiness.
 
-## Promotion gates (carried over unchanged)
+## Promotion gates (UPDATED 2026-07-28 — m1 gave them teeth)
 
 `scripts/check_grpo_promotion_gates.py` runs on the training output **before
-any benchmark eval is spent** (house rule; see ablation-protocol.md):
+any benchmark eval is spent** (house rule; see ablation-protocol.md). The m1
+wave exposed two holes: `min_reward_gain=0.0` promoted four flat cells
+(core's gain: +0.0027), and no gate consulted discrimination — core held
+reward 0.73 at the blanket floor (balanced accuracy 0.56) and promoted.
 
 | gate | criterion | note |
 |---|---|---|
-| `reward_trend` | train (or dev, when `dev_fraction>0`) reward not flat/declining | |
+| `reward_trend` | last-third − first-third gain **> 0.02** (was 0.0) | 0.02 sits above the m1 per-bin wobble; a run must beat launch noise |
 | `zero_std` | groups carry spread | prescreen guarantees this at step 0; the gate catches mid-run collapse |
 | `kl_bounded` | KL to reference bounded | trivial at β=0.02 |
-| `no_flow_rate` | `\|tail no-flow − gold_base_rate\| ≤ 0.15` | the abstention-drift alarm; gold base rate now comes from the stratified set, so the target is exact by construction |
+| `no_flow_rate` | `\|tail no-flow − gold_base_rate\| ≤ 0.15` | the abstention-drift alarm. **Was DEAD on every modular run** (keeper-only trace keys; m1's gates all show it skipped) — fixed 2026-07-28 to read both schemas |
+| `direct_discrimination` **(new)** | **LABEL-only** pooled Youden's J over the trace tail (last 100 calls' `direct_flows`, matched flows only) **≥ 0.05** | disk-only (W&B-crash-proof). Misses are REPORTED (`miss_frac`) not gated — a recall-priced J has blanket floor m−1 ≈ −0.23 at launch and would fail every cell. A stale direct tail (core silently stopped scoring) FAILS loudly. Skips on cells without a direct core (−outcome) |
+
+**Caveat (audit 2026-07-28): gate verdicts are RUN-scoped.** `_find_trainer_state`
+reads the highest checkpoint and the trace gates read the END of the traces —
+if the protocol promotes an early checkpoint (the v9-ckpt100 precedent), the
+discrimination verdict describes a later policy. Historical note: the v9
+keeper's recorded verdict ("PROMOTE on +0.015") predates the 0.02 threshold —
+re-running the script on it now yields HOLD; the realized thresholds are
+recorded inside each `promotion_gates.json`.
 
 New m-series signals (`cannot_determine_frac`, `antithesis_frac`,
 `gate_fail_frac`) are **per-cell kill criteria** (pre-registered in

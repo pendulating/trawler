@@ -81,6 +81,50 @@ Output schema per item (JSON list, one entry per scenario):
 
 ## Reward: deontic-distance scoring (one formula, no tier ladder)
 
+> **CORRECTION 2026-07-28 — the m1 wave falsified the hedge economics below;
+> the scale is re-anchored.** The claim "committing beats hedging iff
+> per-item accuracy > 50%" held only against a *mixed* battery with real
+> antithesis risk. Measured m1 reality: 81.4% of battery items were
+> positive-side and **42.8% of batteries were one-sided** (the minority
+> floor was best-effort), so the hedge point — rescaled to 0.5 with zero
+> downside, vs 0.75 for an adjacent miss — was strongly over-priced
+> relative to its information. The policy drifted into it (`hedge_frac`
+> 0.217 → 0.311 over the full cell) while the battery term sat pinned at
+> 0.60 (within-group std 0.051 vs 0.332 for extract — ~1% of advantage
+> mass on 30% of rows). **Causal nuance (pre-launch audit):** hedging was
+> NOT the constant-policy optimum even on the m1 scale (blanket-recommended
+> scored 0.778 vs hedge 0.619 on the realized item pool), and the term
+> carried ~1% of advantage mass — so the drift may be a side-effect of
+> extract-side dynamics rather than battery optimisation, and the re-anchor
+> alone is not guaranteed to reverse it. What the re-anchor DOES guarantee:
+> hedge-everything now scores 0.190 (was 0.611) and blanket strategies
+> ~0.52 (was ~0.74-0.78), so the term can finally separate policies. Three
+> changes (m1 post-mortem R3):
+>
+> 1. **Per-item scale re-anchored to [0,1]** (`deontic_distance.py`):
+>    exact **1.0** · same-side commit **0.4** · hedge vs decisive gold
+>    **0.15** · decisive vs permitted gold 0.4 (mild) / 0.15 (extreme) ·
+>    cross-side **0.0**. Ordering preserved (exact > same-side > hedge >
+>    antithesis); hedge moves from mid-range to near the floor and the
+>    battery mean is now a plain mean (no rescale).
+> 2. **Both-sides-present is a build invariant**: clusters/remainders that
+>    cannot field `minority_floor` minority items are DROPPED, never emitted
+>    one-sided; `build_modular_dataset` raises if any one-sided battery
+>    slips through, if the floor eliminates every battery while
+>    `task_mix.vignette > 0`, or if the REALIZED task mix deviates from the
+>    configured mix beyond `task_mix_tolerance`. **floor = 1, not 2**
+>    (pre-launch audit): the corpus holds only 230 minority-side eligible
+>    norms, capping both-sides batteries at ~110 (floor=1) vs ~86 (floor=2);
+>    and the mix itself is re-registered at **0.18** — m1's 0.3 was only
+>    fillable because 42.8% of its batteries were one-sided.
+> 3. **`cite` demoted to a diagnostic** (`r_vig = battery`): a near-constant
+>    0.1–0.3 Jaccard at 0.3 weight diluted the gradient; it is still
+>    computed and logged.
+>
+> The tables and formula below are kept as the m1 record; wave-2 semantics
+> are the code's (`deontic_distance.py`, `batteries.py`,
+> `tests/grpo_training/test_deontic_distance.py`).
+
 Forces map onto the standard deontic axis:
 
 ```
