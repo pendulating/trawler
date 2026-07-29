@@ -1,10 +1,13 @@
 """Tests for the m-series deontic-distance scorer (`T-VIGNETTE` reward).
 
-Covers the task-vignettes.md contract:
+Covers the task-vignettes.md contract (re-anchored scale, 2026-07-28):
   * AXIS map + the full 25-force-pair item_score table (incl. unknown→permitted);
-  * battery_score rescale, and the antithesis cells (exact 1.0 / adjacent 0.5 /
-    hedge 0 / mild antithesis −0.5 / full −1.0) matching the wiki table;
-  * cite Jaccard overlap, empty-side → 0;
+  * the re-anchored [0,1] item scale — exact 1.0 / same-side 0.4 / hedge 0.15 /
+    cross-side 0.0 — which killed the m1 hedge sanctuary (hedge was mid-range
+    0.5 under the old rescaled distance and the policy measurably drifted
+    into it: hedge_frac 0.217→0.311);
+  * battery_score = plain mean (the [−1,1]→[0,1] rescale is gone);
+  * cite Jaccard overlap, empty-side → 0 — DIAGNOSTIC only, r_vig = battery;
   * parse_battery_completion id-alignment + json_repair on truncated JSON;
   * score_battery aggregate keys (battery / cite / r_vig / hedge_frac /
     antithesis_frac / parsed_frac).
@@ -24,14 +27,15 @@ from dagspaces.grpo_training.stages.deontic import FORCE_TO_GOLD
 
 _FORCES = ["obligatory", "recommended", "permitted", "discouraged", "prohibited"]
 
-# Hardcoded s_i = 1 − |axis(m) − axis(g)| / 2 for every (model, gold) pair.
-# Rows = model force, columns = gold force, in _FORCES order.
+# Hardcoded re-anchored scale (2026-07-28): exact 1.0 / same-side commit 0.4 /
+# hedge-vs-decisive 0.15 / decisive-vs-permitted-gold 0.4 (mild) or 0.15
+# (extreme) / cross-side 0.0. Rows = model force, columns = gold force.
 _ITEM_TABLE = {
-    "obligatory":  {"obligatory": 1.0, "recommended": 0.5, "permitted": 0.0, "discouraged": -0.5, "prohibited": -1.0},
-    "recommended": {"obligatory": 0.5, "recommended": 1.0, "permitted": 0.5, "discouraged": 0.0, "prohibited": -0.5},
-    "permitted":   {"obligatory": 0.0, "recommended": 0.5, "permitted": 1.0, "discouraged": 0.5, "prohibited": 0.0},
-    "discouraged": {"obligatory": -0.5, "recommended": 0.0, "permitted": 0.5, "discouraged": 1.0, "prohibited": 0.5},
-    "prohibited":  {"obligatory": -1.0, "recommended": -0.5, "permitted": 0.0, "discouraged": 0.5, "prohibited": 1.0},
+    "obligatory":  {"obligatory": 1.0, "recommended": 0.4, "permitted": 0.15, "discouraged": 0.0, "prohibited": 0.0},
+    "recommended": {"obligatory": 0.4, "recommended": 1.0, "permitted": 0.4, "discouraged": 0.0, "prohibited": 0.0},
+    "permitted":   {"obligatory": 0.15, "recommended": 0.15, "permitted": 1.0, "discouraged": 0.15, "prohibited": 0.15},
+    "discouraged": {"obligatory": 0.0, "recommended": 0.0, "permitted": 0.4, "discouraged": 1.0, "prohibited": 0.4},
+    "prohibited":  {"obligatory": 0.0, "recommended": 0.0, "permitted": 0.15, "discouraged": 0.4, "prohibited": 1.0},
 }
 
 
@@ -70,16 +74,24 @@ class TestItemScoreTable:
         assert dd.item_score(model, gold) == pytest.approx(_ITEM_TABLE[model][gold])
 
     def test_range_bounds(self):
-        assert dd.item_score("obligatory", "prohibited") == -1.0  # min
+        assert dd.item_score("obligatory", "prohibited") == 0.0   # min (cross)
         assert dd.item_score("prohibited", "prohibited") == 1.0   # max
 
     def test_named_cells_from_wiki_table(self):
-        # gold = obligatory: exact / adjacent / hedge / mild anti / full anti.
+        # gold = obligatory: exact / same-side / hedge / cross / cross.
         assert dd.item_score("obligatory", "obligatory") == 1.0
-        assert dd.item_score("recommended", "obligatory") == 0.5
-        assert dd.item_score("permitted", "obligatory") == 0.0
-        assert dd.item_score("discouraged", "obligatory") == -0.5
-        assert dd.item_score("prohibited", "obligatory") == -1.0
+        assert dd.item_score("recommended", "obligatory") == dd.ITEM_SCORE_SAME_SIDE
+        assert dd.item_score("permitted", "obligatory") == dd.ITEM_SCORE_HEDGE
+        assert dd.item_score("discouraged", "obligatory") == dd.ITEM_SCORE_CROSS
+        assert dd.item_score("prohibited", "obligatory") == dd.ITEM_SCORE_CROSS
+
+    def test_ordering_invariant_hedge_below_same_side_above_cross(self):
+        # THE design ordering the re-anchor exists to enforce: committing to
+        # the right side always beats hedging, hedging always beats the
+        # antithesis. Under the m1 scale hedge (rescaled 0.5) beat wrong-side
+        # commits AND capped downside — the policy learned to hedge.
+        assert (dd.ITEM_SCORE_EXACT > dd.ITEM_SCORE_SAME_SIDE
+                > dd.ITEM_SCORE_HEDGE > dd.ITEM_SCORE_CROSS)
 
 
 class TestItemScoreHedgeFallback:
@@ -94,29 +106,25 @@ class TestItemScoreHedgeFallback:
         assert dd.item_score(42, "recommended") == dd.item_score("permitted", "recommended")
 
     def test_case_and_whitespace_insensitive(self):
-        assert dd.item_score("  Prohibited ", "Obligatory") == -1.0
+        assert dd.item_score("  Prohibited ", "Obligatory") == 0.0
 
     def test_unknown_gold_collapses_to_permitted(self):
         assert dd.item_score("obligatory", "nonsense") == dd.item_score("obligatory", "permitted")
 
 
 # --------------------------------------------------------------------------- #
-# battery_score: rescale + empty raises                                        #
+# battery_score: plain mean + empty raises                                     #
 # --------------------------------------------------------------------------- #
 
 class TestBatteryScore:
-    def test_rescale_endpoints(self):
-        assert dd.battery_score([1.0]) == 1.0     # exact-force battery
-        assert dd.battery_score([0.0]) == 0.5     # all-hedge battery
-        assert dd.battery_score([-1.0]) == 0.0    # full-antithesis battery
-
-    def test_mean_then_rescale(self):
-        # mean of [1.0, -1.0] = 0 → 0.5
-        assert dd.battery_score([1.0, -1.0]) == 0.5
-        # mean of [0.5, -0.5] = 0 → 0.5
-        assert dd.battery_score([0.5, -0.5]) == 0.5
-        # mean of [1.0, 0.5, 0.0] = 0.5 → 0.75
-        assert dd.battery_score([1.0, 0.5, 0.0]) == pytest.approx(0.75)
+    def test_plain_mean_no_rescale(self):
+        # Items are already in [0, 1]; the m1-era [−1,1]→[0,1] rescale is gone
+        # (it parked hedge at 0.5 of full range).
+        assert dd.battery_score([1.0]) == 1.0
+        assert dd.battery_score([dd.ITEM_SCORE_HEDGE]) == dd.ITEM_SCORE_HEDGE
+        assert dd.battery_score([0.0]) == 0.0
+        assert dd.battery_score([1.0, 0.0]) == 0.5
+        assert dd.battery_score([1.0, 0.4, 0.15]) == pytest.approx(1.55 / 3)
 
     def test_empty_raises_valueerror(self):
         with pytest.raises(ValueError):
@@ -254,7 +262,7 @@ class TestScoreBattery:
         out = dd.score_battery(parsed, gold)
         assert out["battery"] == 1.0
         assert out["cite"] == 1.0
-        assert out["r_vig"] == pytest.approx(0.7 * 1.0 + 0.3 * 1.0)
+        assert out["r_vig"] == 1.0  # cite is diagnostic-only (2026-07-28)
         assert out["hedge_frac"] == 0.0
         assert out["antithesis_frac"] == 0.0
         assert out["parsed_frac"] == 1.0
@@ -263,16 +271,23 @@ class TestScoreBattery:
         gold = [_gold("obligatory"), _gold("prohibited")]
         parsed = [{"force": "permitted"}, {"force": "permitted"}]
         out = dd.score_battery(parsed, gold)
-        assert out["battery"] == 0.5           # mean s_i = 0 → 0.5
+        # The m1 sanctuary is closed: hedging everything scores 0.15, not 0.5.
+        assert out["battery"] == pytest.approx(dd.ITEM_SCORE_HEDGE)
         assert out["hedge_frac"] == 1.0
         assert out["antithesis_frac"] == 0.0   # permitted has axis 0, product 0
         assert out["parsed_frac"] == 1.0
+
+    def test_hedging_never_beats_a_same_side_commit(self):
+        gold = [_gold("obligatory")]
+        hedge = dd.score_battery([{"force": "permitted"}], gold)
+        commit = dd.score_battery([{"force": "recommended"}], gold)
+        assert commit["battery"] > hedge["battery"]
 
     def test_full_antithesis(self):
         gold = [_gold("obligatory"), _gold("prohibited")]
         parsed = [{"force": "prohibited"}, {"force": "obligatory"}]
         out = dd.score_battery(parsed, gold)
-        assert out["battery"] == 0.0           # both s_i = -1 → mean -1 → 0
+        assert out["battery"] == 0.0           # cross-side scores 0
         assert out["antithesis_frac"] == 1.0
         assert out["hedge_frac"] == 0.0
 
@@ -280,8 +295,8 @@ class TestScoreBattery:
         gold = [_gold("obligatory", "share it"), _gold("prohibited", "never tell")]
         parsed = [{"force": "obligatory", "governing_norm": "share it"}, None]
         out = dd.score_battery(parsed, gold)
-        # item 1: s=1 cite=1 ; item 2 (None): s=item_score(None, prohibited)=0, cite=0
-        assert out["battery"] == pytest.approx((( 1.0 + 0.0) / 2 + 1) / 2)  # (0.5+1)/2 = 0.75
+        # item 1: s=1 cite=1 ; item 2 (None): hedge vs prohibited = 0.15, cite=0
+        assert out["battery"] == pytest.approx((1.0 + dd.ITEM_SCORE_HEDGE) / 2)
         assert out["cite"] == pytest.approx(0.5)
         assert out["parsed_frac"] == 0.5
         assert out["hedge_frac"] == 0.5        # the None counts as a hedge
@@ -293,14 +308,39 @@ class TestScoreBattery:
         assert out["parsed_frac"] == pytest.approx(1 / 3)
 
     def test_mild_antithesis_not_counted_when_same_polarity(self):
-        # discouraged vs prohibited: same (negative) polarity, adjacent degree —
-        # s=0.5, NOT an antithesis (axis product > 0).
+        # discouraged vs prohibited: same (negative) polarity — a same-side
+        # commit (0.4), NOT an antithesis (axis product > 0).
         gold = [_gold("prohibited")]
         parsed = [{"force": "discouraged"}]
         out = dd.score_battery(parsed, gold)
         assert out["antithesis_frac"] == 0.0
-        assert out["battery"] == pytest.approx((0.5 + 1) / 2)
+        assert out["battery"] == pytest.approx(dd.ITEM_SCORE_SAME_SIDE)
 
     def test_empty_gold_raises(self):
         with pytest.raises(ValueError):
             dd.score_battery([], [])
+
+
+class TestNonAnswerIsNotPermitted:
+    """Audit 2026-07-28: a missing/unparseable answer must NOT score as a
+    genuine "permitted" commit — axis-collapsing both let an unparsed slot
+    earn a full 1.0 on a permitted-gold item (~4% of battery items)."""
+
+    def test_none_vs_permitted_gold_is_hedge_not_exact(self):
+        assert dd.item_score(None, "permitted") == dd.ITEM_SCORE_HEDGE
+        assert dd.item_score("banana", "permitted") == dd.ITEM_SCORE_HEDGE
+
+    def test_genuine_permitted_answer_still_exact(self):
+        assert dd.item_score("permitted", "permitted") == dd.ITEM_SCORE_EXACT
+
+    def test_unparsed_battery_item_on_permitted_gold(self):
+        out = dd.score_battery([None], [{"gold_force": "permitted",
+                                         "articulation": "a"}])
+        assert out["battery"] == dd.ITEM_SCORE_HEDGE
+        assert out["parsed_frac"] == 0.0
+
+    def test_synonym_forces_canonicalise(self):
+        # Latent-universe hardening: synonyms route through canonical_force
+        # instead of collapsing to the hedge point.
+        assert dd.item_score("forbidden", "prohibited") == dd.ITEM_SCORE_EXACT
+        assert dd.axis_of("forbidden") == dd.AXIS["prohibited"]

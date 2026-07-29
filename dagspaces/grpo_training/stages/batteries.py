@@ -335,6 +335,18 @@ def build_batteries(
 
         seq = 0
         while len(yes_idx) + len(no_idx) >= min_k:
+            # Both-sides-present is a build INVARIANT (2026-07-28): a battery
+            # without both polarities cannot test side discrimination — 42.8%
+            # of m1 batteries were one-sided under the old best-effort floor
+            # and answering "somewhere positive" everywhere was near-optimal
+            # on them. When the remaining pool can't field `minority_floor` of
+            # the minority side, this cluster stops yielding batteries; the
+            # leftover one-sided remainder is dropped, never emitted.
+            # floor default is 1 (audit 2026-07-28): the corpus has only 230
+            # minority-side eligible norms total, so a floor of 2 halves the
+            # battery pool; >=1 guarantees the invariant at max coverage.
+            if min(len(yes_idx), len(no_idx)) < minority_floor:
+                break
             chosen = _select_battery_indices(
                 yes_idx, no_idx, rng, k, minority_floor, minority_target
             )
@@ -350,7 +362,7 @@ def build_batteries(
             n_gold_yes = 0
             for norm_index in chosen:
                 norm = book_norms[norm_index]
-                force = _norm_force(norm)
+                force = canonical_force(_norm_force(norm)) or _norm_force(norm)
                 gold = FORCE_TO_GOLD.get(force)
                 if gold == "no":
                     n_gold_no += 1

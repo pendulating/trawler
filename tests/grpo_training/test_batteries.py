@@ -152,12 +152,22 @@ class TestBuildComposition:
         c = bats[0]["composition"]
         assert c["n_gold_no"] >= 1 and c["n_gold_yes"] >= 1
 
-    def test_single_polarity_cluster_allowed(self):
+    def test_single_polarity_cluster_dropped(self):
+        # INVERTED 2026-07-28 (was ..._allowed): a battery without both sides
+        # cannot test side discrimination — 44% of m1 batteries were one-sided
+        # and blanket-positive answering was near-optimal on them. One-sided
+        # clusters now yield NOTHING.
         book = [_yes(f"y{i}") for i in range(5)]
         bats = B.build_batteries(book, "1342", [0] * 5, k=8, min_k=4)
+        assert bats == []
+
+    def test_remainder_that_goes_one_sided_is_dropped(self):
+        # 8 yes + 2 no, k=8: battery 1 consumes both no items; the 2-yes
+        # remainder can never field the minority floor -> exactly one battery.
+        book = [_yes(f"y{i}") for i in range(8)] + [_no(f"n{i}") for i in range(2)]
+        bats = B.build_batteries(book, "1342", [0] * 10, k=8, min_k=2)
         assert len(bats) == 1
-        assert bats[0]["composition"]["n_gold_no"] == 0
-        assert bats[0]["composition"]["n_gold_yes"] == 5
+        assert bats[0]["composition"]["n_gold_no"] == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -171,16 +181,15 @@ class TestBuildStructure:
         assert bats == []
 
     def test_per_cluster_grouping(self):
-        # 4 yes in cluster 0, 4 no in cluster 1 → two single-polarity batteries.
-        book = [_yes(f"y{i}") for i in range(4)] + [_no(f"n{i}") for i in range(4)]
-        cluster_ids = [0, 0, 0, 0, 1, 1, 1, 1]
+        # Two mixed clusters → one battery each; norms never cross clusters.
+        book = ([_yes(f"a{i}") for i in range(3)] + [_no(f"an{i}") for i in range(2)]
+                + [_yes(f"b{i}") for i in range(2)] + [_no(f"bn{i}") for i in range(3)])
+        cluster_ids = [0] * 5 + [1] * 5
         bats = B.build_batteries(book, "1342", cluster_ids, k=8, min_k=4)
         assert len(bats) == 2
         by_cluster = {b["cluster_id"]: b for b in bats}
-        assert by_cluster[0]["composition"]["n_gold_yes"] == 4
-        assert by_cluster[0]["composition"]["n_gold_no"] == 0
-        assert by_cluster[1]["composition"]["n_gold_no"] == 4
-        assert by_cluster[1]["composition"]["n_gold_yes"] == 0
+        assert by_cluster[0]["composition"] == {"n": 5, "n_gold_no": 2, "n_gold_yes": 3}
+        assert by_cluster[1]["composition"] == {"n": 5, "n_gold_no": 3, "n_gold_yes": 2}
 
     def test_multiple_batteries_no_norm_reuse(self):
         # 12 yes + 4 no in one cluster, k=8 → two batteries, disjoint norms.
@@ -202,13 +211,14 @@ class TestBuildStructure:
             _no("keep-2"),
             _yes("keep-3"),
             _yes("keep-4"),
+            _no("keep-5"),  # second minority item (both-sides floor, 2026-07-28)
         ]
         bats = B.build_batteries(book, "1342", [0] * len(book), k=8, min_k=4)
         assert len(bats) == 1
         subjects = {book[it["norm_index"]]["norm_subject"] for it in bats[0]["items"]}
         # permitted is part of the five-point gradient (decision 2026-07-25), so
         # it belongs in batteries; only non-governing / context-less are dropped.
-        assert subjects == {"keep-1", "keep-2", "keep-3", "keep-4", "permit"}
+        assert subjects == {"keep-1", "keep-2", "keep-3", "keep-4", "keep-5", "permit"}
 
 
 # --------------------------------------------------------------------------- #
@@ -217,18 +227,18 @@ class TestBuildStructure:
 
 class TestLeakExclusion:
     def test_leaky_norm_skipped_and_counted(self):
-        # 3 clean yes + 1 clean no + 1 leaky (force word in context) → battery of
-        # 4 clean, leaky excluded and counted.
+        # 3 clean yes + 2 clean no + 1 leaky (force word in context) → battery
+        # of 5 clean, leaky excluded and counted.
         book = [
             _yes("y0"), _yes("y1"), _yes("y2"),
-            _no("n0"),
+            _no("n0"), _no("n1"),
             _no("leaky", context="a prohibited exchange between families"),
         ]
-        bats = B.build_batteries(book, "1342", [0] * 5, k=8, min_k=4)
+        bats = B.build_batteries(book, "1342", [0] * 6, k=8, min_k=4)
         assert len(bats) == 1
         b = bats[0]
         assert b["n_leak_skipped"] == 1
-        assert b["composition"]["n"] == 4
+        assert b["composition"]["n"] == 5
         subjects = {book[it["norm_index"]]["norm_subject"] for it in b["items"]}
         assert "leaky" not in subjects
 
@@ -361,7 +371,8 @@ def test_permitted_item_keeps_permitted_as_its_gold_force():
     embed = lambda xs: __import__("numpy").ones((len(xs), 3))
     norms = [_norm(normative_force=f, norm_act=f"act {i}")
              for i, f in enumerate(
-                 ["permitted", "obligatory", "prohibited", "recommended"])]
+                 ["permitted", "obligatory", "prohibited", "recommended",
+                  "discouraged"])]  # 2 no-side items (both-sides floor)
     clusters = B.cluster_contexts([n["context"] for n in norms], embed)
     bats = B.build_batteries(norms, "1342", clusters, k=8, min_k=4)
     forces = [it["gold_force"] for b in bats for it in b["items"]]

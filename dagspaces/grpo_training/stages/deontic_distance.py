@@ -2,19 +2,26 @@
 
 A battery is a K-item test: K scenarios (same book + context cluster, mixed gold
 polarity) that the policy answers with a 5-way deontic force, brief reasoning,
-and a statement of the governing norm. The reward is one linear distance formula
-(wiki/grpo_redesign/task-vignettes.md, "Reward: deontic-distance scoring"):
+and a statement of the governing norm.
 
-    forces sit on the axis  obligatory +2 · recommended +1 · permitted 0 ·
-    discouraged −1 · prohibited −2, and per item
+**Per-item scale (2026-07-28 re-anchor; wave-2 semantics).** The m1 wave's
+linear axis distance rescaled to [0,1] put the hedge point at 0.5 with zero
+downside and adjacent misses at 0.75 — a hedge sanctuary the policy measurably
+drifted into (hedge_frac 0.217→0.311 over the full cell while the battery term
+sat pinned at 0.60; m1 post-mortem R3). Items now score directly in [0, 1]:
 
-        s_i = 1 − |axis(model_i) − axis(gold_i)| / 2
+    exact force                     1.0
+    same-side commit, not exact     0.4   (obligatory vs recommended, etc.)
+    hedge (permitted/missing/
+        unparseable) vs decisive    0.15
+    decisive vs a permitted gold    0.4 if |axis| == 1 else 0.15
+    cross-side commit (antithesis)  0.0
 
-so an exact force scores 1.0, an adjacent degree 0.5, a hedge (permitted /
-missing) against a decisive gold 0.0, and the **antithesis** (prohibited vs an
-obligatory gold, or vice versa) −1.0. Battery = the mean rescaled to [0,1];
-`R_vig = 0.7·battery + 0.3·cite`, where `cite` is per-item Jaccard token overlap
-with the withheld source articulation.
+preserving the design ordering exact > same-side > hedge > antithesis while
+moving hedge from mid-range to near the floor and widening exact-vs-adjacent
+from 0.25 to 0.6. Battery = plain mean (already [0,1]); ``R_vig = battery`` —
+the citation Jaccard is DEMOTED to a logged diagnostic (its near-constant
+0.1-0.3 range at 0.3 weight diluted the gradient; same post-mortem).
 
 This is additive m-series code (the parallel-stack rule,
 wiki/grpo_redesign/migration.md item 5): it lives beside — and imports the force
@@ -31,6 +38,8 @@ import re
 from collections.abc import Mapping, Sequence
 
 from dagspaces.common.json_extraction import extract_json_from_text
+
+from .deontic import canonical_force
 
 # The standard deontic axis. Shared vocabulary with FORCE_TO_GOLD in deontic.py
 # (obligatory/recommended → gold yes; prohibited/discouraged → gold no;
@@ -59,41 +68,82 @@ def _tokens(text: str) -> set[str]:
 def axis_of(force: object) -> int:
     """Deontic axis value for a force label.
 
-    A ``None``, unparseable, or non-force label collapses to the hedge point
-    (``permitted``, axis 0) — the single convention the whole formula rests on.
+    Synonyms are canonicalised first (audit 2026-07-28: a future universe
+    emitting "forbidden"/"must" would otherwise score at the hedge point
+    while the battery balancer counted it decisively — desynchronising the
+    invariant checker from the reward). A ``None``, unparseable, or
+    non-force label collapses to the hedge point (``permitted``, axis 0).
     """
     if force is None:
         return _HEDGE_AXIS
-    return AXIS.get(str(force).strip().lower(), _HEDGE_AXIS)
+    raw = str(force).strip().lower()
+    canon = canonical_force(raw)
+    return AXIS.get(canon if canon is not None else raw, _HEDGE_AXIS)
+
+
+# The re-anchored per-item scale (2026-07-28). Module-level constants so the
+# realized values are visible in configs/forensics discussions, not buried in
+# a formula.
+ITEM_SCORE_EXACT = 1.0
+ITEM_SCORE_SAME_SIDE = 0.4
+ITEM_SCORE_HEDGE = 0.15
+ITEM_SCORE_CROSS = 0.0
 
 
 def item_score(model_force: object, gold_force: object) -> float:
-    """Per-item deontic-distance score ``1 − |axis(m) − axis(g)| / 2`` ∈ [−1, 1].
+    """Per-item score on the re-anchored [0, 1] scale (2026-07-28).
 
     ``model_force`` that is ``None``, unparseable, or not one of the five forces
     is treated as ``permitted`` (the hedge point, axis 0). ``gold_force`` is a
-    battery item's stored decisive force; a stray non-force gold likewise
-    collapses to the hedge point.
+    battery item's stored force; a stray non-force gold likewise collapses to
+    the hedge point.
 
-    Worked cells (gold = obligatory): exact 1.0 · adjacent (recommended) 0.5 ·
-    hedge (permitted/missing) 0.0 · mild antithesis (discouraged) −0.5 · full
-    antithesis (prohibited) −1.0.
+    Worked cells (gold = obligatory): exact 1.0 · recommended (same side) 0.4 ·
+    hedge (permitted/missing) 0.15 · discouraged/prohibited (cross side) 0.0.
+    Gold = permitted: permitted 1.0 · recommended/discouraged 0.4 ·
+    obligatory/prohibited 0.15. The ordering exact > same-side > hedge >
+    antithesis is the invariant; the WIDTHS are the fix — the m1 scale made
+    hedging the risk-averse optimum and the policy learned exactly that.
     """
-    return 1.0 - abs(axis_of(model_force) - axis_of(gold_force)) / 2.0
+    # A NON-ANSWER (missing / unparseable / non-force string) is not the
+    # same as answering "permitted": axis-collapsing both let an unparsed
+    # slot score a full 1.0 on a permitted-gold item (audit 2026-07-28).
+    # A non-answer earns hedge credit against EVERY gold, permitted included.
+    if model_force is None:
+        return ITEM_SCORE_HEDGE
+    raw = str(model_force).strip().lower()
+    canon = canonical_force(raw)
+    if (canon if canon is not None else raw) not in AXIS:
+        return ITEM_SCORE_HEDGE
+
+    m = axis_of(model_force)
+    g = axis_of(gold_force)
+    if m == g:
+        return ITEM_SCORE_EXACT
+    if m == _HEDGE_AXIS:
+        return ITEM_SCORE_HEDGE  # hedging against a decisive gold
+    if g == _HEDGE_AXIS:
+        # Decisive commit on a permitted act: mild (±1) is a near-miss,
+        # extreme (±2) is as wrong as hedging on a decisive gold.
+        return ITEM_SCORE_SAME_SIDE if abs(m) == 1 else ITEM_SCORE_HEDGE
+    if m * g > 0:
+        return ITEM_SCORE_SAME_SIDE
+    return ITEM_SCORE_CROSS
 
 
 def battery_score(item_scores: Sequence[float]) -> float:
-    """Battery score = mean per-item score rescaled from [−1, 1] to [0, 1].
+    """Battery score = plain mean of per-item scores (each already in [0, 1]).
 
-    ``(mean(item_scores) + 1) / 2``. An **empty** sequence is a caller bug
-    (a battery always has items) and raises ``ValueError`` rather than
-    returning a silent neutral — the ambiguity would mask a build/routing error.
+    The m1-era rescale from [−1, 1] is GONE with the re-anchored item scale —
+    it was what parked the hedge point at 0.5 of full range. An **empty**
+    sequence is a caller bug (a battery always has items) and raises
+    ``ValueError`` rather than returning a silent neutral — the ambiguity
+    would mask a build/routing error.
     """
     items = list(item_scores)
     if not items:
         raise ValueError("battery_score requires a non-empty item_scores sequence")
-    mean = sum(float(s) for s in items) / len(items)
-    return (mean + 1.0) / 2.0
+    return sum(float(s) for s in items) / len(items)
 
 
 def cite_score(model_norm_text: str, articulation: str) -> float:
@@ -166,10 +216,12 @@ def score_battery(
 
     Returns a dict:
 
-      * ``battery`` — rescaled mean per-item deontic-distance score, [0, 1].
+      * ``battery`` — mean per-item score on the re-anchored [0, 1] scale.
       * ``cite`` — mean per-item Jaccard citation score; an unparsed item
-        contributes 0.
-      * ``r_vig`` — ``0.7·battery + 0.3·cite`` (the fixed vignette reward).
+        contributes 0. DIAGNOSTIC ONLY since 2026-07-28 (logged, not
+        rewarded): its near-constant range at 0.3 weight diluted the
+        battery gradient in the m1 wave.
+      * ``r_vig`` — ``battery`` (the vignette reward).
       * ``hedge_frac`` — fraction of items answered at the hedge point (axis 0:
         ``permitted``, missing, or unparseable).
       * ``antithesis_frac`` — fraction of items whose model/gold axes have
@@ -218,10 +270,11 @@ def score_battery(
         else:
             cites.append(cite_score(item.get("governing_norm", "") or "", articulation))
 
+    battery = battery_score(item_scores)
     return {
-        "battery": battery_score(item_scores),
+        "battery": battery,
         "cite": sum(cites) / k,
-        "r_vig": 0.7 * battery_score(item_scores) + 0.3 * (sum(cites) / k),
+        "r_vig": battery,  # cite demoted to diagnostic (2026-07-28)
         "hedge_frac": n_hedge / k,
         "antithesis_frac": n_antithesis / k,
         "parsed_frac": n_parsed / k,
