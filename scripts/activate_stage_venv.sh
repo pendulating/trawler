@@ -32,3 +32,21 @@ else
 fi
 
 unset _scratch_venv
+
+# ── FFmpeg shared libs for torchcodec (2026-07-24) ─────────────────────
+# Prepend a self-contained FFmpeg 7.1 lib dir so torchcodec's dlopen of
+# libtorchcodec_coreN.so resolves libav*.so.N here instead of failing (klara
+# lacks FFmpeg 4-7; system FFmpeg 8 hits a GLIBCXX_3.4.32 wall from the
+# anaconda-base libstdc++). These libav*.so have no libstdc++ dependency, so
+# they load cleanly. LD_LIBRARY_PATH is consulted by ld.so at process spawn,
+# so this MUST run in the shell setup block BEFORE the stage python launches
+# (it does — every launcher sources this file in `setup:`). Prepend ONLY the
+# ffmpeg dir; idempotent guard avoids duplicate entries across nested sources.
+_ff_libdir="${TRAWLER_FFMPEG_LIBDIR:-/share/pierson/matt/zoo/ffmpeg-libs/n7.1/lib}"
+if [ -d "$_ff_libdir" ] && [ -e "$_ff_libdir/libavutil.so.59" ]; then
+  case ":${LD_LIBRARY_PATH:-}:" in
+    *":$_ff_libdir:"*) : ;;                       # already present — no-op
+    *) export LD_LIBRARY_PATH="$_ff_libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;
+  esac
+fi
+unset _ff_libdir
