@@ -1,5 +1,14 @@
 # @package _global_
 # ─────────────────────────────────────────────────────────────────────────────
+# SUPERSEDED 2026-07-28 by sweep/grpo_m2_grid.yaml. The m1 wave completed flat
+# in all four launched cells; the post-mortem found four shared reward-stack
+# defects (prompt mismatch, macro collapse + unscored flows, battery hedge
+# sanctuary, toothless gates) — none of the m1 cells measure component
+# contributions. Kept as the m1 record; note that re-running THIS yaml at
+# today's code does NOT reproduce m1 (the code defaults changed underneath:
+# SFT-aligned prompt, chunk denominator, re-anchored batteries). True m1
+# reproduction needs the 2026-07-26 tree.
+# ─────────────────────────────────────────────────────────────────────────────
 # m1 grid — the m-series LOO ablation, one sweep yaml (the pre-registration).
 #
 # Source: wiki/grpo_redesign/ablation-protocol.md (cell mechanics, the 2:1

@@ -15,10 +15,12 @@
 # The sweep conf/sweep/grpo_m1_grid.yaml varies ONLY those two + experiment.name.
 # The values here are the `full` cell (both auxiliaries, 0.7/0.3 mix).
 #
-# NOTE (m-series keys not yet consumed by code): the module keys below are the
-# draft contract the forthcoming ModularReward integration (migration.md
-# checklist item 4) will read. They resolve cleanly through Hydra today; the
-# code that consumes them is item 7's downstream work.
+# STATUS 2026-07-28: the module keys below are LIVE — consumed by
+# ModularReward / build_modular_dataset / make_direct_chunk_gold. This file is
+# the wave-2 preset (post-m1-post-mortem): SFT-aligned rollout prompt,
+# chunk-denominator R-DIRECT (restricted index, k=1 gold, tau=0.55),
+# re-anchored batteries with the both-sides floor. The m1 values live in git
+# history; m1 metrics are NOT comparable to wave-2 metrics (new scales).
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ══ OPTIMIZER PRESET — copied VERBATIM from the keeper (online_rground_external
@@ -98,8 +100,7 @@ enable_thinking_grpo: false
 dev_fraction: 0.0
 eval_steps: 50
 
-# ══ M-SERIES MODULE KEYS — the modular reward stack. Draft contract consumed by
-# ══ the forthcoming ModularReward integration (migration.md checklist item 4).
+# ══ M-SERIES MODULE KEYS — the modular reward stack (all LIVE; see STATUS).
 
 # Composition selector: the new modular stack (gate → routing → outcome +
 # auxiliaries with the 2:1 weight rule), NOT the v-era "directional" 6-weight
@@ -117,37 +118,51 @@ reward_auxiliaries: [ground, contrast]
 # (−vignette cell sets {extract: 1.0, vignette: 0.0}). Renames the v-era
 # vignette_ratio. Source: ablation-protocol.md §"Cell mechanics";
 # migration.md (vignette_ratio → task_mix.vignette).
-task_mix: {extract: 0.7, vignette: 0.3}
+# REVISED 2026-07-28 (pre-launch audit): vignette 0.3 at target_n 600 needs
+# 180 batteries, but both-sides batteries have a HARD data ceiling of ~115
+# (230 minority-side eligible norms / 2) and the realized floor=1 pool is
+# ~110. The m1 "0.3" was only achievable because 42.8% of its batteries were
+# one-sided. 0.18*600 = 108 <= pool; the build now RAISES if the realized
+# mix deviates from this by more than task_mix_tolerance.
+task_mix: {extract: 0.82, vignette: 0.18}
+task_mix_tolerance: 0.03
 
-# Vignette battery construction. Hard floor >=1 minority item per battery,
-# target 2; K=8 with a min_k=4 fallback. Source: data.md §"Battery feasibility"
-# (decision: hard floor >=1 minority, target 2) and task-vignettes.md batteries.
+# Vignette battery construction. UPDATED 2026-07-28 (m1 post-mortem R3, then
+# revised by the pre-launch audit): the floor is a build INVARIANT — clusters
+# (and remainders) that cannot field `minority_floor` minority items are
+# DROPPED, never emitted one-sided (42.8% of m1 batteries were one-sided and
+# untestable for side discrimination). floor=1 (not 2): the corpus has only
+# 230 minority-side eligible norms TOTAL, so floor=2 caps the pool at ~86
+# batteries vs ~110 at floor=1 — minority scarcity is spent more efficiently
+# at >=1/battery, and minority_target still pulls 2 when available.
 battery: {k: 8, min_k: 4, minority_floor: 1, minority_target: 2}
 
-# R-OUTCOME probe pool + sampling. pools_path defaults to the built fiction10
-# probe pool (null-answerability calibration pass, 2026-07-24: 0.0% drop, 1,199
-# unique probes over 2,709 chunks). k_max=4 matches the realized K in
-# calibration; p_null is the null-answerability filter threshold. Source:
-# reward-outcome.md; data.md §"Prerequisite job list" item 4.
+# Probe pool + sampling. LEGACY-POPULATION PIN (2026-07-28): with the outcome
+# core retired, probes are no longer scored by anything — but the build still
+# attaches them and still EXCLUDES flow-bearing chunks with an empty pool,
+# which is what defines the ~420-chunk extract population every wave-2
+# calibration was measured on (chunk-gold index, tau, teacher-flow stats).
+# Keep unchanged so the population stays pinned; probes also feed the
+# direction-consistency diagnostic. Source: reward-outcome.md (retired);
+# reward-direct-spec.md "Chunk-denominator R-DIRECT".
 probes:
   pools_path: outputs/2026-07-23_mseries_premeasure/probe_calibration/probe_pools_filtered.parquet
   k_max: 4
   p_null: 0.8
 
-# R-OUTCOME answerer client. Cross-family robustness check (+answerer-B) uses a
-# non-Gemma model; the PRIMARY answerer is gemma-4-31b served on VLLM_SERVER_URL.
-# Source: reward-outcome.md (answerer client); ablation-protocol.md D1 revision.
-# `model` MUST equal the served model id vLLM was launched with (the request's
-# `model` field is matched exactly — a friendly alias like "gemma-4-31b" 404s).
-# The answerer and R-GROUND judge are ONE deployment / two roles (m1-run-plan.md
-# §"GPU budget"), so this tracks judge_model.model_source (the served path,
-# JUDGE_MODEL_PATH) — they cannot diverge by construction.
+# RETIRED-CORE client (2026-07-28): consumed ONLY when core_mode: outcome —
+# the factory no longer builds the answerer in direct mode (the m1 wave wired
+# a dead client). Kept for reproducibility of the retired core's negative
+# result. `model` MUST equal the served model id vLLM was launched with.
 answerer: {base_url_env: VLLM_SERVER_URL, model: "${judge_model.model_source}"}
 
 # R-GROUND / R-CONTRAST retrieval breadth. reward-ground.md / reward-contrast.md
 # specify k=3 norms; pinned here (the code default is 5, the keeper listwise
 # lineage value). Set to match the redesign spec (2026-07-24 review); reversible.
 rank_top_k: 3
+# Rank/grounding blend inside the listwise judge score (code default 0.5,
+# pinned for the protocol record — its sibling rank_top_k already was).
+rank_weight: 0.5
 
 # Verifiable core (reward-direct-spec.md, 2026-07-25). "direct" = R-DIRECT: the
 # governing norm classifies each extracted flow (force x act_polarity) and the
@@ -157,6 +172,48 @@ rank_top_k: 3
 # norm verbatim it still called ~83% of prohibited flows appropriate; total
 # learnable signal +0.042 macro).
 core_mode: direct
+
+# ══ WAVE-2 R-DIRECT KEYS (2026-07-28, m1 post-mortem R1/R2 — see
+# ══ reward-direct-spec.md "CORRECTION 2026-07-28" + "Chunk-denominator").
+# ══ All four match the code defaults; pinned here so the sweep yaml is the
+# ══ complete protocol record.
+
+# R1: rollout prompts byte-identical to the SFT training instruction
+# (sft_data_prep.sft_aligned_extract_template — imported builder, never a
+# config copy). The m1 wave scored the policy on conf/prompt/ci_extraction
+# .yaml, a prompt it never trained on: 34.4% vs 2.7% R-VALID gate failure
+# (A/B probe, outputs/2026-07-28_ab_prompt_probe). false = m1 behaviour.
+sft_aligned_extract_prompt: true
+
+# R2: chunk-fixed denominator. The completion is matched against the CHUNK's
+# teacher flows (gold precomputed at build; misses cost recall) instead of
+# macro-averaging over its own extracted flows — per-completion macro
+# collapsed to plain accuracy on 50.7% of m1 scored completions (reward 0.73
+# at balanced accuracy 0.56). false = m1 per-flow behaviour.
+direct_chunk_denominator: true
+
+# Gold per teacher flow: top-1 over the restricted index (k=1). REVERTED from
+# k=3 on 2026-07-28 audit evidence: a k=3 majority vote regresses gold toward
+# the index's 72.5/27.5 class prior — measured on the real wave-2 population
+# it deleted 19% of minority-class golds, flipped 15% of all golds (206
+# inappr->appr vs 117 reverse), and cut mixed-gold chunks 68.6% -> 56.1%.
+# k=1 matches the measured acceptance bar (teacher macro 0.482,
+# reward-direct-spec.md) and the pre-registered ~68% mixed-chunk expectation.
+direct_gold_k: 1
+
+# Greedy 1:1 match threshold, calibrated 2026-07-28 on 2,518 policy flows
+# under the aligned prompt (outputs/2026-07-28_tau_calibration): separation
+# plateaus at tau 0.55-0.575 (J=0.70); 0.55 = the signal-preserving end
+# (87.5% true-match retention / 17.5% null acceptance).
+direct_match_threshold: 0.55
+
+# Retrieval artifacts for the chunk-gold index + R-DIRECT retriever. Both are
+# canonical server.env values (stage jobs re-read server.env; launch-shell
+# exports do NOT cross submitit). embeddings_dir rows are 1:1 with the
+# UNFILTERED per-book norm lists — NormRetriever masks both together and
+# refuses loudly on misalignment.
+extraction_path: ${oc.env:CI_EXTRACTION_PATH}
+embeddings_dir: ${oc.env:NORM_EMBEDDINGS_PATH}
 
 # A-ABSTAIN reward table (extended to gold-NO extractions). Mirrors the keeper's
 # no_flow_reward(gold): gold=YES→wrong 0.1, gold=NO→correct 0.6, unknown→0.4.

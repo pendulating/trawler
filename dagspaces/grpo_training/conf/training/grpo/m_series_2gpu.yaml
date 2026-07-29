@@ -20,7 +20,11 @@
 #   EMBEDDING_SERVER_URL=... VLLM_SERVER_URL=http://klara:8002 JUDGE_MODEL_PATH=... \
 #   python -m dagspaces.grpo_training.cli \
 #     pipeline=grpo_only_online_external \
-#     model=gemma-4-12b/sft-canonical \
+#     model=gemma-4-12b/sft-canonical-ckpt513 \
+#     # NOT model=gemma-4-12b/sft-canonical: that alias still points at the
+#     # 2026-07-15 pre-template-fix adapter (Gemma-3 chat template — the rows
+#     # declared INVALID on 2026-07-18); the repaired adapters are the
+#     # sft-canonical-ckpt{171,342,513} variants (audit 2026-07-28). \
 #     training/grpo=m_series_2gpu \
 #     hydra/launcher=slurm_train_2x \
 #     training.grpo.reward_auxiliaries='[...winning cell...]' \

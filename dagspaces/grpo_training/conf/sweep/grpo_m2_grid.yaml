@@ -1,0 +1,127 @@
+# @package _global_
+# ─────────────────────────────────────────────────────────────────────────────
+# m2 grid — the wave-2 LOO ablation (the m1 re-run on the repaired reward
+# stack). Pre-registration file: this yaml + training/grpo/m_series.yaml (the
+# wave-2 preset) are the complete protocol record.
+#
+# WHY A NEW GRID: the m1 wave (2026-07-26, sweep/grpo_m1_grid.yaml) was flat in
+# every cell and CANNOT be read as component ablation evidence — all cells
+# shared four defects that drowned the reward (m1 post-mortem:
+# notebooks/normative-simulacra/grpo_m1_wave_analysis_2026_07_28.py):
+#   1. rollout prompt the SFT policy never trained on (34.4% vs 2.7% R-VALID
+#      failure; 63-79% of extract advantage mass was format noise)   → R1
+#   2. per-completion macro-EM collapse (reward 0.73 at balanced acc 0.56)
+#      + retrieval over an index that left 37% of flows unscored     → R2
+#   3. battery hedge sanctuary (policy hedge_frac rose 0.217→0.311)  → R3
+#   4. toothless gates (min_reward_gain=0.0 promoted all four cells) → R4
+# All fixed 2026-07-28; every fix is pinned in m_series.yaml with a dated
+# comment and its calibration artifact.
+#
+# NOT COMPARABLE TO m1: the core term (chunk-fixed macro, prices recall), the
+# battery scale (re-anchored, no rescale), and the gates all changed. Compare
+# wave-2 cells against each other and the new gates only.
+#
+# Cell mechanics are UNCHANGED from m1 (ablation-protocol.md): a cell is the
+# two cell keys (reward_auxiliaries + task_mix) plus the -outcome-only
+# reward_core toggle; nothing else varies across the grid.
+#
+#   cell        reward_auxiliaries      task_mix.vignette   direct core
+#   ────        ──────────────────      ─────────────────   ───────────
+#   core        []                      0.18                on
+#   full        [ground, contrast]      0.18                on
+#   -outcome    [ground, contrast]      0.18                OFF
+#   -ground     [contrast]              0.18                on
+#   -contrast   [ground]                0.18                on
+#   -vignette   [ground, contrast]      0.0                 on
+#
+# task_mix.vignette is 0.18, NOT m1's 0.3: both-sides batteries have a hard
+# data ceiling of ~110 (230 minority-side eligible norms), so 0.3 was never
+# achievable — m1 filled it only because 42.8% of its batteries were
+# one-sided. These cell values must match m_series.yaml's task_mix (this
+# table OVERRIDES the preset via interpolation; a mismatch aborts the build
+# through the realized-mix tolerance raise).
+#
+# Run order (unchanged): wave A = core, full, minus_outcome, minus_vignette;
+# wave B fills -ground/-contrast only if full > core (on the NEW gates).
+# Launch with the ABSOLUTE venv python (submitit bakes the monitor srun python
+# from the driver sys.executable — shell activation is not enough):
+#   /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/python \
+#       -m dagspaces.grpo_training.cli --multirun +sweep=grpo_m2_grid \
+#       cell=core,full,minus_outcome,minus_vignette
+#
+# Prerequisites (server.env is the source of truth for stage jobs — launch-
+# shell exports do NOT cross submitit):
+#   CI_REASONING_PATH, CI_EXTRACTION_PATH (chunk-gold index),
+#   NORM_UNIVERSES_PATH + NORM_EMBEDDINGS_PATH (polarity-applied build,
+#   2026-07-25), EMBEDDING_SERVER_URL (chunk-gold build + score-time flow
+#   embeds), VLLM_SERVER_URL/JUDGE_MODEL_PATH (R-GROUND/R-CONTRAST judge;
+#   NOT needed by the direct core — the answerer client is no longer built
+#   in direct mode). The runner now PREFLIGHTS both servers at launch
+#   (audit 2026-07-28) — a dead judge previously degraded `full` to `core`
+#   silently. GPU budget: 4 policy lanes + 2 judge + 1 embedding = 7 of
+#   klara's 8 (the m1 header undercounted the embedding server).
+#
+# Monitoring expectations (m1 post-mortem R6 + launch-composition checks):
+#   * launch log must show "[grpo_training] extract prompt: SFT-aligned",
+#     "[direct_chunk_gold] index: ..." with ~68% mixed-gold chunks (the k=1
+#     figure — 48% would mean the gold_k revert regressed), and
+#     "[modular_reward] chunk-denominator R-DIRECT active (tau=0.55, gold_k=1)"
+#   * realized task mix must print {extract: ~0.82, vignette: ~0.18} — the
+#     build RAISES beyond task_mix_tolerance (a 0.3 config silently trained
+#     at 0.143 in the audit simulation; the pool ceiling is ~110 batteries)
+#   * battery composition: zero one-sided batteries (build raises if not)
+#   * core-cell KL should sit ~0.02-0.06 like its siblings; 10x again means
+#     the m1 noise diagnosis was incomplete — stop and look
+#   * watch reward/{ground,contrast}/judge_failed_group_frac (a mid-run judge
+#     outage degrades aux cells toward `core` group-neutrally) and
+#     reward/direct/{miss_frac,spurious_flow_frac,embed_failed_frac}
+#   * spurious_flow_frac is the registered KILL CRITERION for flow-count
+#     inflation (unpriced hack channel on single-class chunks; audit R2-M4)
+#   * gates: reward_trend needs gain > 0.02; direct_discrimination needs
+#     LABEL-only pooled J >= 0.05 over the trace tail (disk-only; misses are
+#     reported as miss_frac, and a stale direct tail FAILS loudly)
+# ─────────────────────────────────────────────────────────────────────────────
+
+defaults:
+  # Same canonical policy base as m1: qwen3.5-9b sft-canonical (2026-07-15 DFT
+  # sweep on fiction10-gemma4 flows). The SFT adapter did NOT change; only the
+  # rollout prompt now matches what it was trained on.
+  - override /pipeline: grpo_only_online_external
+  - override /model: qwen3.5-9b/sft-canonical
+  - override /training/grpo: m_series
+
+# Default cell for a single-run (`--cfg job`) compose; the sweeper overrides it.
+cell: full
+
+# The six aligned cells (heterogeneous tuples — same encoding as m1).
+_cells:
+  core:           {auxiliaries: [],                 extract: 0.82, vignette: 0.18, outcome: true,  name: grpo_m2_core}
+  full:           {auxiliaries: [ground, contrast], extract: 0.82, vignette: 0.18, outcome: true,  name: grpo_m2_full}
+  minus_outcome:  {auxiliaries: [ground, contrast], extract: 0.82, vignette: 0.18, outcome: false, name: "grpo_m2_-outcome"}
+  minus_ground:   {auxiliaries: [contrast],         extract: 0.82, vignette: 0.18, outcome: true,  name: "grpo_m2_-ground"}
+  minus_contrast: {auxiliaries: [ground],           extract: 0.82, vignette: 0.18, outcome: true,  name: "grpo_m2_-contrast"}
+  minus_vignette: {auxiliaries: [ground, contrast], extract: 1.0,  vignette: 0.0,  outcome: true,  name: "grpo_m2_-vignette"}
+
+experiment:
+  name: ${_cells.${cell}.name}
+
+training:
+  grpo:
+    # The -outcome control toggle (on for every cell but minus_outcome).
+    reward_core: ${_cells.${cell}.outcome}
+    # ── the two cell keys (the only reward-shape variation across the grid) ──
+    reward_auxiliaries: ${_cells.${cell}.auxiliaries}
+    task_mix:
+      extract: ${_cells.${cell}.extract}
+      vignette: ${_cells.${cell}.vignette}
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 4 concurrent policy lanes (7 GPUs total: 4 policy + 2 judge + 1 embed).
+    array_parallelism: 4
+  sweep:
+    subdir: cell=${cell}
+  sweeper:
+    params:
+      cell: core,full,minus_outcome,minus_ground,minus_contrast,minus_vignette
