@@ -1223,7 +1223,14 @@ class _MetricAccumulator:
                 out["diag/retrieval_margin"] = (
                     sum(self.direct_margins) / len(self.direct_margins)
                 )
-            # Chunk-denominator diagnostics (semantics audited 2026-07-28):
+        # Chunk-denominator diagnostics — OUTSIDE the direct_scored guard
+        # (final review M-1): direct_scored counts MATCHED flows only, so it
+        # is 0 exactly when the embedding server degrades or every teacher
+        # flow is missed — the two states miss_frac/spurious_flow_frac/
+        # embed_failed_frac exist to surface. A key that stops logging
+        # flatlines at its last healthy value on the W&B panel.
+        if True:
+            # (semantics audited 2026-07-28):
             # by_class above is MATCHED flows only, so agreement/
             # balanced_accuracy/youden_j keep label-only meaning. Recall
             # (which the REWARD prices — misses are 0.0 to their class) is
@@ -1548,7 +1555,7 @@ def build_modular_dataset(
                 cluster_ids,
                 k=int(battery_cfg.get("k", 8)),
                 min_k=int(battery_cfg.get("min_k", 4)),
-                minority_floor=int(battery_cfg.get("minority_floor", 2)),
+                minority_floor=int(battery_cfg.get("minority_floor", 1)),
                 minority_target=int(battery_cfg.get("minority_target", 2)),
             )
             for bat in built:

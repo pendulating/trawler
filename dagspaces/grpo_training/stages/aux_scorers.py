@@ -787,7 +787,13 @@ def make_direct_chunk_gold(
     }
     flows, keys = [], []
     for _, row in df.iterrows():
-        flows.append({v: row.get(c) for c, v in field_cols.items()})
+        # pd.notna guard (final review mn-2): 11 extraction rows carry NaN
+        # ci_subject; float('nan') is truthy, so a literal "nan" token would
+        # enter the teacher query one-sidedly and depress the match cosine.
+        flows.append({
+            v: (row.get(c) if _pd.notna(row.get(c)) else None)
+            for c, v in field_cols.items()
+        })
         keys.append(row["_key"])
 
     index: dict = {}

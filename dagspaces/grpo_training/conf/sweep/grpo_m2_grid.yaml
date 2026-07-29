@@ -77,6 +77,15 @@
 #     reward/direct/{miss_frac,spurious_flow_frac,embed_failed_frac}
 #   * spurious_flow_frac is the registered KILL CRITERION for flow-count
 #     inflation (unpriced hack channel on single-class chunks; audit R2-M4)
+#   * vignette/antithesis_frac is the blanket-majority detector: blanket-
+#     "obligatory" is the strongest surviving degenerate battery strategy
+#     (0.539 on the re-anchored scale; hedge-everything only 0.186, and a
+#     PERFECT policy posts hedge_frac ~0.043 from the 4.3% permitted golds
+#     — read hedge_frac against that floor, not 0)
+#   * gate (a) min_reward_gain=0.02 gates the COMPOSITE reward and is an
+#     intra-cell learning check only — module weights differ by cell, so
+#     never compare gate-(a) margins across cells (use gate (e) /
+#     reward/direct/* for cross-cell verdicts)
 #   * gates: reward_trend needs gain > 0.02; direct_discrimination needs
 #     LABEL-only pooled J >= 0.05 over the trace tail (disk-only; misses are
 #     reported as miss_frac, and a stale direct tail FAILS loudly)
@@ -124,4 +133,7 @@ hydra:
     subdir: cell=${cell}
   sweeper:
     params:
-      cell: core,full,minus_outcome,minus_ground,minus_contrast,minus_vignette
+      # Default = wave A ONLY (duplicate-launch hazard is in the project
+      # record): -ground/-contrast are wave B, launched explicitly with
+      # cell=minus_ground,minus_contrast only if full > core on the new gates.
+      cell: core,full,minus_outcome,minus_vignette

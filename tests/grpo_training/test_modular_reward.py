@@ -296,7 +296,7 @@ def test_vignette_routing_scored_by_battery():
     r = _reward()
     r.prompt_metadata = {"v": {"task_type": "vignette", "gold_items": gold_items}}
     scores = r(prompts=["v"], completions=[completion])
-    # Both forces exact → battery 1.0; cite has real overlap → r_vig in (0.7, 1].
+    # Both forces exact → battery 1.0 == r_vig (cite is diagnostic-only).
     assert scores[0] > 0.7
     assert "vignette/antithesis_frac" in r.last_metrics
     assert r.last_metrics["vignette/antithesis_frac"] == pytest.approx(0.0)

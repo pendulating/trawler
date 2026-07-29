@@ -38,6 +38,14 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     # 0.0 promoted the entire flat m1 grid (core's gain: +0.0027). 0.02 sits
     # above the m1 per-bin wobble (±0.02-0.03 on the per-call mean) — a run
     # must beat launch noise, not just tie its starting point.
+    # SEMANTICS (final review M-2): this gates the COMPOSITE reward, whose
+    # module weights differ by cell (core outcome=1.0; full outcome=0.5).
+    # Gate (a) is therefore an INTRA-cell "did it learn at all" check —
+    # never compare gate-(a) margins across cells, and never read a
+    # multi-module cell's HOLD as "its core learned less than core's":
+    # cross-cell verdicts use the discrimination metrics (gate e /
+    # reward/direct/*), which are weight-independent. The v9 keeper's
+    # recorded verdict (+0.015 PROMOTE) predates this threshold.
     "min_reward_gain": 0.02,     # last-third mean reward − first-third mean
     "max_frac_zero_std": 0.2,    # mean fraction of zero-advantage groups
     "max_kl": 1.0,               # mean KL to the SFT reference
