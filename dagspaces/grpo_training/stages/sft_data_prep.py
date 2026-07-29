@@ -145,6 +145,37 @@ def _build_ci_instruction(
 # The all-default builder reproduces the original constant verbatim.
 _CI_INSTRUCTION = _build_ci_instruction()
 
+
+def resolve_field_toggles(cfg: Any) -> "FieldToggles":
+    """The per-flow field toggles as SFT data prep resolves them from cfg."""
+    return FieldToggles(
+        flow_context=bool(OmegaConf.select(cfg, "training.sft.flow_context", default=True)),
+        flow_appropriateness=bool(OmegaConf.select(cfg, "training.sft.flow_appropriateness", default=True)),
+        flow_norms_meta=bool(OmegaConf.select(cfg, "training.sft.flow_norms_meta", default=True)),
+        flow_confidence=bool(OmegaConf.select(cfg, "training.sft.flow_confidence", default=True)),
+    )
+
+
+def sft_aligned_extract_template(cfg: Any) -> str:
+    """The GRPO extract prompt template, byte-aligned with SFT training pairs.
+
+    The m1 wave scored the SFT policy on `conf/prompt/ci_extraction.yaml` — a
+    completely different instruction from the one every SFT pair was built
+    with here (`run_sft_data_prep_stage` line ~337: ``instruction + "\\n\\n" +
+    article_text``). The A/B probe measured 34.4% vs 2.7% R-VALID gate
+    failure for the two prompts on the same policy/chunks/sampling
+    (outputs/2026-07-28_ab_prompt_probe). This helper is the single source of
+    truth for parity: it resolves the SAME toggles and calls the SAME
+    instruction builder the SFT pairs used, so the two cannot drift apart.
+
+    Returns a ``{{chunk_text}}`` template (the shape grpo dataset builds
+    expect); substituting the chunk reproduces the SFT user message exactly.
+    """
+    from dataclasses import asdict
+
+    instruction = _build_ci_instruction(**asdict(resolve_field_toggles(cfg)))
+    return instruction + "\n\n{{chunk_text}}"
+
 _NO_EXCHANGE_REASONING = (
     "This passage does not contain any identifiable information flows. "
     "While the text may describe characters, settings, or events, there is "
@@ -243,12 +274,7 @@ def run_sft_data_prep_stage(
     # Per-flow field ablation toggles. Defaults preserve the full schema; flipping
     # any to false drops the corresponding fields from BOTH the assistant JSON
     # and the user-side instruction prose. See FieldToggles docstring above.
-    toggles = FieldToggles(
-        flow_context=bool(OmegaConf.select(cfg, "training.sft.flow_context", default=True)),
-        flow_appropriateness=bool(OmegaConf.select(cfg, "training.sft.flow_appropriateness", default=True)),
-        flow_norms_meta=bool(OmegaConf.select(cfg, "training.sft.flow_norms_meta", default=True)),
-        flow_confidence=bool(OmegaConf.select(cfg, "training.sft.flow_confidence", default=True)),
-    )
+    toggles = resolve_field_toggles(cfg)
     instruction = _build_ci_instruction(**asdict(toggles))
 
     # Book-level filter: restrict to a single book's data

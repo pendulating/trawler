@@ -1,5 +1,13 @@
 # Prompt template for CI information flow extraction.
-# Used by both SFT data prep (gold completions) and GRPO (online generation).
+#
+# USED ONLY by the keeper (non-modular) GRPO rollout path. It is NOT used by
+# SFT data prep (sft_data_prep.py hardcodes its own instruction via
+# _build_ci_instruction), and since 2026-07-28 it is NOT used by m-series
+# rollouts either: modular runs default to the SFT-aligned template
+# (sft_data_prep.sft_aligned_extract_template) because scoring the SFT policy
+# on THIS prompt — which it never trained on — caused 34.4% vs 2.7% R-VALID
+# gate failure (A/B probe, outputs/2026-07-28_ab_prompt_probe). Set
+# grpo.sft_aligned_extract_prompt=false to force this prompt in a modular run.
 # The chunk text is substituted into {{chunk_text}}.
 
 instruction: |
