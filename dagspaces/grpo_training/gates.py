@@ -17,6 +17,12 @@ Gates (all computed from artifacts the training stage already writes):
                           recent reward traces must stay within
                           ``no_flow_tolerance`` of the gold base rate
                           (guards against collapse onto the lazy path).
+  e. direct_discrimination — pooled Youden's J over the per-flow gold/pred
+                          records in the trace tail must reach
+                          ``min_youden_j`` (m-series chunk-denominator core
+                          only; total reward can rise for reasons that are
+                          not discrimination — format, hedge mass — and the
+                          m1 wave promoted four cells at the blanket floor).
 
 Use via ``scripts/check_grpo_promotion_gates.py <checkpoint_dir>`` (exits
 non-zero on failure, for sweep scripting) or import ``check_promotion_gates``.
@@ -29,11 +35,20 @@ import os
 from typing import Any
 
 DEFAULT_THRESHOLDS: dict[str, float] = {
-    "min_reward_gain": 0.0,      # last-third mean reward − first-third mean
+    # 0.0 promoted the entire flat m1 grid (core's gain: +0.0027). 0.02 sits
+    # above the m1 per-bin wobble (±0.02-0.03 on the per-call mean) — a run
+    # must beat launch noise, not just tie its starting point.
+    "min_reward_gain": 0.02,     # last-third mean reward − first-third mean
     "max_frac_zero_std": 0.2,    # mean fraction of zero-advantage groups
     "max_kl": 1.0,               # mean KL to the SFT reference
     "no_flow_tolerance": 0.15,   # |trace no-flow rate − gold base rate|
     "trace_tail_calls": 20,      # reward-trace calls used for gate (d)
+    "min_youden_j": 0.05,        # LABEL-only pooled J floor over the trace
+                                 # tail (gate e); matched flows only, so 0 =
+                                 # blanket floor and ±0.05 = m1 noise band
+                                 # (recall is reported as miss_frac, not
+                                 # gated — audit 2026-07-28)
+    "j_trace_tail_calls": 100,   # reward-trace calls pooled for gate (e)
 }
 
 
@@ -131,20 +146,27 @@ def _gate_no_flow(
         return {"status": "skipped", "reason": f"no traces at {traces_path}"}
 
     rows: list[dict[str, Any]] = []
-    with open(traces_path, "r", encoding="utf-8") as f:
+    with open(traces_path, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if row.get("task_type") == "ci_extraction":
+            # Keeper traces: task_type == "ci_extraction" with `is_no_flow`.
+            # Modular traces: task_type == "extract" with `no_flow` set only
+            # on abstain-routed rows. The gate was DEAD on every modular run
+            # until 2026-07-28 (m1's gates all show it skipped) because it
+            # only knew the keeper schema.
+            if row.get("task_type") in ("ci_extraction", "extract"):
                 rows.append(row)
     if not rows:
-        return {"status": "skipped", "reason": "no ci_extraction trace rows"}
+        return {"status": "skipped", "reason": "no extract-task trace rows"}
 
     max_call = max(r.get("call", 0) for r in rows)
     tail = [r for r in rows if r.get("call", 0) > max_call - tail_calls]
-    rate = sum(1 for r in tail if r.get("is_no_flow")) / len(tail)
+    rate = sum(
+        1 for r in tail if r.get("is_no_flow", r.get("no_flow", False))
+    ) / len(tail)
     deviation = abs(rate - gold_base_rate)
     return {
         "status": "pass" if deviation <= tolerance else "fail",
@@ -153,6 +175,95 @@ def _gate_no_flow(
         "deviation": round(deviation, 4),
         "tolerance": tolerance,
         "n_tail_completions": len(tail),
+    }
+
+
+def _gate_direct_discrimination(
+    traces_path: str,
+    min_j: float,
+    tail_calls: int,
+) -> dict[str, Any]:
+    """Gate (e): pooled Youden's J from the traces' per-flow gold/pred records.
+
+    Reads the ``direct_flows`` lists the chunk-denominator R-DIRECT scorer
+    logs per scored completion (modular_reward, 2026-07-28) — deliberately
+    disk-only so a W&B crash cannot lose the verdict (m1's core lost its
+    last 150 steps of discrimination metrics exactly that way). A hit is
+    ``pred == gold``; a miss, hedge, or unmatched teacher flow all score 0
+    for their class — J here prices recall as well as labelling, matching
+    the reward. Skipped (never failed) when the traces carry no
+    ``direct_flows`` (−outcome cells, per-flow fallback path, pre-R2 runs).
+    """
+    if not os.path.exists(traces_path):
+        return {"status": "skipped", "reason": f"no traces at {traces_path}"}
+
+    rows: list[dict[str, Any]] = []
+    global_max_call = -1
+    with open(traces_path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            global_max_call = max(global_max_call, int(row.get("call", 0) or 0))
+            if row.get("direct_flows"):
+                rows.append(row)
+    if not rows:
+        return {"status": "skipped",
+                "reason": "no direct_flows trace rows (not a chunk-"
+                          "denominator direct-core run?)"}
+
+    max_call = max(r.get("call", 0) for r in rows)
+    # Staleness guard (audit 2026-07-28, gates C1): if the direct core
+    # silently stopped scoring (embedding outage -> group-neutral), the last
+    # direct_flows rows predate the end of training and a verdict on them
+    # would describe a policy from N calls earlier — while LOOKING healthy.
+    if global_max_call - max_call > 2:
+        return {
+            "status": "fail",
+            "reason": (f"direct core stopped scoring at call {max_call} of "
+                       f"{global_max_call} — the tail is stale (embedding "
+                       "outage?); no discrimination verdict is possible"),
+            "last_direct_call": max_call,
+            "last_trace_call": global_max_call,
+            "threshold": min_j,
+        }
+    tail = [r for r in rows if r.get("call", 0) > max_call - tail_calls]
+    # LABEL-only J (audit 2026-07-28, R2-M5): unmatched teacher flows
+    # (pred None) are EXCLUDED here — including them makes J carry the match
+    # rate, whose blanket floor is m-1 (launch J ~= -0.23), so the 0.05
+    # threshold would fail every cell for a recall reason. Recall is reported
+    # alongside as miss_frac; the REWARD still prices it.
+    hits_by_class: dict[str, list[int]] = {}
+    n_missed = 0
+    n_teacher = 0
+    for r in tail:
+        for fl in r["direct_flows"]:
+            gold = fl.get("gold")
+            if gold is None:
+                continue
+            n_teacher += 1
+            if fl.get("pred") is None:
+                n_missed += 1
+                continue
+            hits_by_class.setdefault(str(gold), []).append(
+                1 if fl.get("pred") == gold else 0
+            )
+    if len(hits_by_class) < 2:
+        return {"status": "skipped",
+                "reason": f"tail carries {len(hits_by_class)} matched gold "
+                          "class(es); J needs both"}
+
+    recalls = {c: sum(v) / len(v) for c, v in hits_by_class.items()}
+    j = sum(recalls.values()) - 1.0
+    return {
+        "status": "pass" if j >= min_j else "fail",
+        "youden_j": round(j, 4),
+        "recalls": {c: round(r, 4) for c, r in recalls.items()},
+        "miss_frac": round(n_missed / n_teacher, 4) if n_teacher else None,
+        "n_flow_judgments": sum(len(v) for v in hits_by_class.values()),
+        "n_tail_completions": len(tail),
+        "threshold": min_j,
     }
 
 
@@ -212,6 +323,11 @@ def check_promotion_gates(
             gold_base_rate,
             th["no_flow_tolerance"],
             int(th["trace_tail_calls"]),
+        ),
+        "direct_discrimination": _gate_direct_discrimination(
+            os.path.join(checkpoint_dir, "reward_traces.jsonl"),
+            th["min_youden_j"],
+            int(th["j_trace_tail_calls"]),
         ),
     }
 

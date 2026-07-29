@@ -315,6 +315,40 @@ AuxScorer = Callable[..., Sequence[float]]
 #: the production adapter lives in aux_scorers.make_direct_gold_fn.
 DirectGoldFn = Callable[[dict, str], "tuple[str | None, float]"]
 
+
+def match_flows(sims, tau: float) -> list[tuple[int, int, float]]:
+    """Greedy one-to-one matching over a (teacher, policy) similarity matrix.
+
+    Highest-similarity pair first, each side used at most once, pairs below
+    ``tau`` never match. Returns ``(teacher_idx, policy_idx, sim)`` triples.
+    Pure and dependency-light so the chunk-denominator scorer is unit-testable
+    without an embedding server.
+    """
+    import numpy as _np
+
+    s = _np.asarray(sims, dtype=_np.float32)
+    if s.ndim != 2 or 0 in s.shape:
+        return []
+    # NaN guard (audit 2026-07-28): argsort places NaN last ascending, so the
+    # descending order would put NaN FIRST, and `nan < tau` is False — a NaN
+    # pair would be matched and poison diag/match_sim. Map NaN below any tau.
+    s = _np.nan_to_num(s, nan=-1.0)
+    order = _np.argsort(s, axis=None)[::-1]
+    used_t: set[int] = set()
+    used_p: set[int] = set()
+    out: list[tuple[int, int, float]] = []
+    for flat in order:
+        t, p = divmod(int(flat), s.shape[1])
+        sim = float(s[t, p])
+        if sim < tau:
+            break  # descending order: nothing later can pass
+        if t in used_t or p in used_p:
+            continue
+        used_t.add(t)
+        used_p.add(p)
+        out.append((t, p, sim))
+    return out
+
 #: How the policy's own appropriateness label is normalised before comparison.
 #: Anything that is not a decisive commitment is a hedge and scores 0 — the
 #: tooth inherited from R-OUTCOME: hedging must never beat committing.
@@ -333,7 +367,8 @@ class ModularReward:
 
     Per completion:
       * **T-VIGNETTE** rows → ``parse_battery_completion`` + ``score_battery``
-        → ``r_vig`` (the 0.7/0.3 battery/cite split lives inside ``score_battery``).
+        → ``r_vig`` (= the re-anchored battery mean; cite is diagnostic-only
+        since 2026-07-28).
       * **T-EXTRACT** rows → R-VALID gate (fail ⇒ 0.0) → A-ABSTAIN routing
         table (no-flow / gold-NO / unknown rows scored by the fixed table, no
         server calls) → survivors (gold-YES valid extractions) scored by
@@ -349,6 +384,13 @@ class ModularReward:
         reward_core: bool = True,
         core_mode: str = "direct",
         direct_gold_fn: "DirectGoldFn | None" = None,
+        direct_chunk_gold=None,
+        # tau calibrated 2026-07-28 (outputs/2026-07-28_tau_calibration):
+        # signal/null separation plateaus at 0.55-0.575 (J=0.70); 0.55 is the
+        # signal-preserving end (87.5% true-match retention, 17.5% null) —
+        # a rejected true match becomes a recall miss that punishes the
+        # completion directly, a false accept is diluted by greedy 1:1.
+        direct_match_threshold: float = 0.55,
         answerer: AnswererClient | None = None,
         ground_scorer: AuxScorer | None = None,
         contrast_scorer: AuxScorer | None = None,
@@ -369,6 +411,14 @@ class ModularReward:
         self.core_mode = str(core_mode)
         self.weights = compute_module_weights(self.auxiliaries, self.reward_core)
         self._direct_gold_fn = direct_gold_fn
+        # Chunk-denominator R-DIRECT (R2, 2026-07-28): when a DirectChunkGold
+        # index is attached (dataset build), scored completions are matched
+        # against the CHUNK's teacher flows and macro-averaged over the
+        # chunk's gold classes — the denominator is fixed and identical for
+        # all G siblings, so the policy no longer curates its own exam.
+        # Without an index (tests, missing chunks) the per-flow path applies.
+        self._direct_chunk_gold = direct_chunk_gold
+        self.direct_match_threshold = float(direct_match_threshold)
         self.answerer = answerer
         self._ground_scorer = ground_scorer
         self._contrast_scorer = contrast_scorer
@@ -398,12 +448,32 @@ class ModularReward:
         self._trace_writes = 0
         # Per-call scratch: completion index -> {probe_ids, golds, answers}.
         self._probe_io: dict[int, dict[str, Any]] = {}
+        # Per-call scratch for the chunk-denominator direct core: completion
+        # index -> {direct_flows, direct_missed, direct_spurious} (R5: traces
+        # must carry per-flow gold/pred so discrimination is recomputable from
+        # disk — the m1 W&B crash made core's tail unrecoverable).
+        self._direct_io: dict[int, dict[str, Any]] = {}
+        # Persistent gate-failure counter: the per-call accumulator resets
+        # each __call__, which made the "1-in-8" text sampling actually
+        # sample the first failure of every call (audit 2026-07-28).
+        self._gatefail_seen = 0
+        # Per-call scratch for battery rows: completion index ->
+        # {model_forces, vig_result} (R5: the re-anchored battery scale is
+        # wave 2's biggest behavioural change — whether hedging falls must be
+        # answerable from disk, per row, not only from W&B aggregates).
+        self._vignette_io: dict[int, dict[str, Any]] = {}
+
+    def set_direct_chunk_gold(self, chunk_gold) -> None:
+        """Attach the chunk-gold index (called by the dataset-build hook)."""
+        self._direct_chunk_gold = chunk_gold
 
     # ---- reward traces ---------------------------------------------------
     def _should_trace(self) -> bool:
         if not self._trace_path:
             return False
         return (self._call_count == 0) or (self._call_count % self._trace_every == 0)
+
+    _trace_warned = False
 
     def _log_trace(self, entries: list[dict[str, Any]]) -> None:
         """Append trace rows as JSONL. Never raises — tracing is observational."""
@@ -415,8 +485,13 @@ class ModularReward:
                 for entry in entries:
                     f.write(_json.dumps(entry, ensure_ascii=False, default=str) + "\n")
             self._maybe_truncate_trace()
-        except Exception:
-            pass
+        except Exception as exc:
+            # Never perturbs scoring — but never silently either: the m1
+            # lesson is that unlogged data is unrecoverable (warn once).
+            if not ModularReward._trace_warned:
+                ModularReward._trace_warned = True
+                print(f"[modular_reward] WARNING trace write failed "
+                      f"({exc!r}); further failures will be silent")
 
     def _maybe_truncate_trace(self) -> None:
         """Keep the trace file bounded (mirrors the keeper's policy): when it
@@ -462,6 +537,27 @@ class ModularReward:
         else:
             text = str(completion)
         return _strip_think_blocks(text)
+
+    @classmethod
+    def _extract_raw_text(cls, completion: Any) -> str:
+        """Assistant text WITHOUT think-stripping (trace forensics only).
+
+        A runaway ``<think>`` block strips to ``""`` — sampling the stripped
+        text would log an empty string for exactly the gate-failure mode the
+        sample exists to diagnose (audit 2026-07-28).
+        """
+        if isinstance(completion, str):
+            return completion
+        if isinstance(completion, list):
+            for msg in completion:
+                if isinstance(msg, dict) and msg.get("role") == "assistant":
+                    return msg.get("content", "")
+            return " ".join(
+                msg.get("content", "")
+                for msg in completion
+                if isinstance(msg, dict)
+            )
+        return str(completion)
 
     @staticmethod
     def _prompt_key(prompt: Any) -> str:
@@ -537,6 +633,11 @@ class ModularReward:
         **kwargs: Any,
     ) -> list[float]:
         n = len(completions)
+        # Clear per-call scratch at ENTRY: an abort raised mid-call (embedding
+        # fail-loud) must not leak stale io rows into a later call's traces.
+        self._probe_io = {}
+        self._direct_io = {}
+        self._vignette_io = {}
         texts = [self._extract_text(c) for c in completions]
         keys = [self._prompt_key(prompts[i]) if prompts else "" for i in range(n)]
         metas = [self.prompt_metadata.get(k, {}) for k in keys]
@@ -558,7 +659,7 @@ class ModularReward:
             task_type = str(meta.get("task_type", "extract"))
 
             if task_type == "vignette":
-                scores[i] = self._score_vignette(texts[i], meta, acc)
+                scores[i] = self._score_vignette(texts[i], meta, acc, i)
                 route[i] = {"task_type": "vignette", "route": "vignette"}
                 continue
 
@@ -570,6 +671,14 @@ class ModularReward:
                 scores[i] = 0.0
                 route[i] = {"task_type": "extract", "route": "gate_fail",
                             "gate_reason": gate.reason}
+                # R5: sample failing text into the trace (1-in-8 failures
+                # run-wide, capped). Sample the RAW completion, not the
+                # think-stripped text — a runaway <think> block strips to ""
+                # and is exactly the failure mode this exists to diagnose.
+                self._gatefail_seen += 1
+                if self._gatefail_seen % 8 == 1:
+                    raw = self._extract_raw_text(completions[i])
+                    route[i]["completion_text_sample"] = str(raw)[:600]
                 continue
 
             gold = meta.get("gold_has_exchange")
@@ -600,7 +709,14 @@ class ModularReward:
             # Verifiable core.
             if self.reward_core and self.core_mode == "direct":
                 for i in group:
-                    val = self._score_direct(gate_pass_flows.get(i, []), metas[i], acc)
+                    if self._direct_chunk_gold is not None:
+                        val = self._score_direct_chunk(
+                            gate_pass_flows.get(i, []), metas[i], acc, i
+                        )
+                    else:
+                        val = self._score_direct(
+                            gate_pass_flows.get(i, []), metas[i], acc
+                        )
                     outcome_term[i] = GROUP_NEUTRAL if val is None else val
             elif self.reward_core and self.answerer is not None:
                 self._score_outcome_group(
@@ -666,22 +782,26 @@ class ModularReward:
                         k: aux_term[k].get(i) for k in self.auxiliaries
                     }
                     row.update(self._probe_io.get(i, {}))
+                    row.update(self._direct_io.get(i, {}))
                 elif det.get("route") == "vignette":
                     row["battery_id"] = meta.get("battery_id")
                     row["gold_forces"] = [
                         g.get("gold_force") for g in (meta.get("gold_items") or [])
                     ]
+                    row.update(self._vignette_io.get(i, {}))
                 rows.append(row)
             self._log_trace(rows)
         self._call_count += 1
         self._probe_io = {}
+        self._direct_io = {}
+        self._vignette_io = {}
         return scores
 
     # ---- component scorers ----------------------------------------------
     def _score_vignette(
-        self, text: str, meta: dict, acc: "_MetricAccumulator"
+        self, text: str, meta: dict, acc: "_MetricAccumulator", idx: int = -1
     ) -> float:
-        """Score a T-VIGNETTE row: deontic-distance battery + citation (frozen)."""
+        """Score a T-VIGNETTE row on the re-anchored battery scale."""
         gold_items = meta.get("gold_items") or []
         k = len(gold_items)
         if k == 0:
@@ -689,7 +809,116 @@ class ModularReward:
         parsed = parse_battery_completion(text, k)
         result = score_battery(parsed, gold_items)
         acc.observe_vignette(result)
+        if idx >= 0:
+            # R5: per-row battery forensics for the trace — answered forces
+            # (None = unparsed slot) + the full result dict, so hedge drift
+            # under the re-anchored scale is recomputable from disk.
+            self._vignette_io[idx] = {
+                "model_forces": [
+                    (p.get("force") if isinstance(p, dict) else None)
+                    for p in parsed
+                ],
+                "vig_result": {kk: round(float(v), 4)
+                               for kk, v in result.items()},
+            }
         return float(result["r_vig"])
+
+    def _score_direct_chunk(
+        self, flows: list, meta: dict, acc: "_MetricAccumulator", idx: int
+    ) -> float | None:
+        """R-DIRECT with the chunk-fixed denominator (R2, 2026-07-28).
+
+        The chunk's teacher flows carry the golds (k=3-majority over the
+        restricted index, precomputed at build). The completion's flows are
+        embedding-matched one-to-one against them (greedy, cosine >=
+        ``direct_match_threshold``); each matched teacher flow scores the
+        policy's ``appropriateness`` label (hedge/wrong 0.0, right 1.0), each
+        UNMATCHED teacher flow scores 0.0 to its class — omitting a governed
+        flow now costs recall, closing the curate-your-own-exam hole. The
+        return is the macro-average over the classes present in the CHUNK's
+        golds, identical for all G siblings. Unmatched policy flows are not
+        scored (counted as ``spurious``). Falls back to the per-flow path for
+        chunks absent from the index; embedding failure returns None (the
+        caller applies GROUP_NEUTRAL — never a penalty for infra faults).
+        """
+        entry = (
+            self._direct_chunk_gold.get(
+                str(meta.get("source_id", "")), str(meta.get("chunk_id", ""))
+            )
+            if self._direct_chunk_gold is not None
+            else None
+        )
+        if entry is None:
+            return self._score_direct(flows, meta, acc)
+
+        golds: list[str] = list(entry["golds"])
+        p_flows = [f for f in (flows if isinstance(flows, list) else [])
+                   if isinstance(f, dict)]
+        acc.direct_completions += 1
+        matches: list[tuple[int, int, float]] = []
+        if p_flows:
+            try:
+                p_emb = self._direct_chunk_gold.embed_flows(p_flows)
+            except Exception as exc:
+                # A dead embedding server must ABORT training, exactly as the
+                # aux path does — scoring through it silently corrupts the
+                # core term (audit 2026-07-28, gates C1).
+                if _is_embedding_abort(exc):
+                    raise
+                acc.direct_embed_failed += 1
+                return None
+            # EmbeddingClient degrades to ZERO vectors on transient failures
+            # (it raises only after 3 consecutive) — a zero row would match
+            # nothing and score a correct completion 0.0. Infra faults are
+            # group-neutral, never a penalty (audit 2026-07-28, R2-M2).
+            import numpy as _np
+            if not _np.asarray(p_emb).any(axis=1).all():
+                acc.direct_embed_failed += 1
+                return None
+            sims = entry["emb"] @ p_emb.T
+            matches = match_flows(sims, self.direct_match_threshold)
+
+        matched_t = {t: (p, sim) for t, p, sim in matches}
+        by_class: dict[str, list[float]] = {}
+        trace_flows: list[dict[str, Any]] = []
+        for t, gold in enumerate(golds):
+            if t in matched_t:
+                p, sim = matched_t[t]
+                label = str(p_flows[p].get("appropriateness") or "").strip().lower()
+                if label not in _DECISIVE_LABELS:
+                    acc.direct_hedge += 1
+                    hit = 0.0
+                else:
+                    hit = 1.0 if label == gold else 0.0
+                    if hit == 0.0:
+                        acc.direct_antithesis += 1
+                # Label-semantics accumulator: MATCHED flows only, so
+                # agreement/balanced_accuracy/youden_j keep m1-comparable
+                # meaning ("given a correspondence, is the label right").
+                acc.direct_by_class.setdefault(gold, []).append(hit)
+                acc.direct_scored += 1
+                acc.direct_match_sims.append(sim)
+                trace_flows.append({"gold": gold, "pred": label or None,
+                                    "sim": round(sim, 4)})
+            else:
+                hit = 0.0
+                acc.direct_missed_by_class[gold] = (
+                    acc.direct_missed_by_class.get(gold, 0) + 1
+                )
+                acc.direct_missed += 1
+                trace_flows.append({"gold": gold, "pred": None, "sim": None})
+            # The REWARD prices recall: misses stay in the completion's macro.
+            by_class.setdefault(gold, []).append(hit)
+        n_spurious = len(p_flows) - len(matches)
+        acc.direct_spurious += n_spurious
+        acc.direct_policy_flows += len(p_flows)
+        self._direct_io[idx] = {
+            "direct_flows": trace_flows,
+            "direct_spurious": n_spurious,
+        }
+        if not by_class:
+            return None
+        return sum(sum(v) / len(v) for v in by_class.values()) / len(by_class)
 
     def _score_direct(
         self, flows: list, meta: dict, acc: "_MetricAccumulator"
@@ -839,9 +1068,20 @@ class _MetricAccumulator:
         self.direct_antithesis = 0
         self.direct_by_class: dict[str, list[float]] = {}
         self.direct_margins: list[float] = []
+        # chunk-denominator direct core (R2)
+        self.direct_missed = 0     # teacher flows no policy flow matched
+        self.direct_missed_by_class: dict[str, int] = {}
+        self.direct_spurious = 0   # policy flows matching no teacher flow
+        self.direct_policy_flows = 0
+        self.direct_completions = 0
+        self.direct_embed_failed = 0  # non-abort embed faults (group-neutral)
+        self.direct_match_sims: list[float] = []
         # vignette
         self.vig_antithesis: list[float] = []
         self.vig_hedge: list[float] = []
+        self.vig_battery: list[float] = []
+        self.vig_cite: list[float] = []
+        self.vig_parsed: list[float] = []
         # aux
         self.aux_failed: dict[str, int] = {"ground": 0, "contrast": 0}
         self.aux_groups: dict[str, int] = {"ground": 0, "contrast": 0}
@@ -880,6 +1120,9 @@ class _MetricAccumulator:
     def observe_vignette(self, result: Mapping[str, float]) -> None:
         self.vig_antithesis.append(float(result.get("antithesis_frac", 0.0)))
         self.vig_hedge.append(float(result.get("hedge_frac", 0.0)))
+        self.vig_battery.append(float(result.get("battery", 0.0)))
+        self.vig_cite.append(float(result.get("cite", 0.0)))
+        self.vig_parsed.append(float(result.get("parsed_frac", 0.0)))
 
     def observe_direction(self, flows: list, meta: dict) -> None:
         """diag/direction_consistency: agreement of the completion's flow
@@ -969,13 +1212,52 @@ class _MetricAccumulator:
                 out["reward/direct/youden_j"] = sum(recalls.values()) - 1.0
             out["reward/direct/hedge_frac"] = self.direct_hedge / tot
             out["reward/direct/antithesis_frac"] = self.direct_antithesis / tot
-            out["reward/direct/unscored_flow_frac"] = (
-                self.direct_unscored / (tot + self.direct_unscored)
-            )
+            if self.direct_unscored:
+                # Per-flow (m1) path only. The chunk path never increments it
+                # — emitting a constant 0.0 there would masquerade as live
+                # confirmation of the unscored-flow fix (audit 2026-07-28).
+                out["reward/direct/unscored_flow_frac"] = (
+                    self.direct_unscored / (tot + self.direct_unscored)
+                )
             if self.direct_margins:
                 out["diag/retrieval_margin"] = (
                     sum(self.direct_margins) / len(self.direct_margins)
                 )
+            # Chunk-denominator diagnostics (semantics audited 2026-07-28):
+            # by_class above is MATCHED flows only, so agreement/
+            # balanced_accuracy/youden_j keep label-only meaning. Recall
+            # (which the REWARD prices — misses are 0.0 to their class) is
+            # emitted separately below.
+            n_teacher = self.direct_scored + self.direct_missed
+            if self.direct_completions:
+                out["reward/direct/miss_frac"] = (
+                    self.direct_missed / n_teacher if n_teacher else 0.0
+                )
+                out["reward/direct/spurious_flow_frac"] = (
+                    self.direct_spurious / self.direct_policy_flows
+                    if self.direct_policy_flows else 0.0
+                )
+                out["reward/direct/embed_failed_frac"] = (
+                    self.direct_embed_failed / self.direct_completions
+                )
+                recalls_full = {}
+                for cls in set(self.direct_by_class) | set(self.direct_missed_by_class):
+                    hits = sum(self.direct_by_class.get(cls, []))
+                    denom = (len(self.direct_by_class.get(cls, []))
+                             + self.direct_missed_by_class.get(cls, 0))
+                    if denom:
+                        recalls_full[cls] = hits / denom
+                        out[f"reward/direct/recall_by_class/{cls}"] = recalls_full[cls]
+                if recalls_full:
+                    out["reward/direct/balanced_recall"] = (
+                        sum(recalls_full.values()) / len(recalls_full)
+                    )
+                if self.direct_match_sims:
+                    # >= tau by construction — read WITH miss_frac, never
+                    # alone (drift raises miss_frac, not lowers match_sim).
+                    out["diag/match_sim"] = (
+                        sum(self.direct_match_sims) / len(self.direct_match_sims)
+                    )
 
         # vignette/*
         if self.vig_antithesis:
@@ -983,6 +1265,14 @@ class _MetricAccumulator:
                 self.vig_antithesis
             )
             out["vignette/hedge_frac"] = sum(self.vig_hedge) / len(self.vig_hedge)
+            # The term R3 re-anchored, watchable LIVE (m1's "pinned at 0.60"
+            # had to be mined from traces post-hoc); parsed_frac separates
+            # genuine hedging from unparsed batteries — the battery prompt is
+            # a task the SFT policy never saw, so R1-class parse failures
+            # would otherwise masquerade as hedge_frac (audit 2026-07-28).
+            out["vignette/battery_mean"] = sum(self.vig_battery) / len(self.vig_battery)
+            out["vignette/cite_mean"] = sum(self.vig_cite) / len(self.vig_cite)
+            out["vignette/parsed_frac"] = sum(self.vig_parsed) / len(self.vig_parsed)
 
         # reward/<aux>/*
         for kind in _AUX_NAMES:
@@ -1048,8 +1338,12 @@ def make_modular_reward_from_cfg(
     auxiliaries = list(grpo_cfg.get("reward_auxiliaries", []) or [])
     reward_core = bool(grpo_cfg.get("reward_core", True))
     abstain = dict(grpo_cfg.get("abstain", {}) or {})
+    core_mode = str(grpo_cfg.get("core_mode", "direct") or "direct")
 
-    if answerer is None and reward_core:
+    # The frozen answerer belongs to the RETIRED outcome core only. Building
+    # it in direct mode (as the m1 wave did) wires a dead client to a server
+    # role the run never uses — misleading in configs and metadata.
+    if answerer is None and reward_core and core_mode == "outcome":
         from .answerer_client import make_answerer_from_cfg
 
         answerer = make_answerer_from_cfg(cfg)
@@ -1059,8 +1353,6 @@ def make_modular_reward_from_cfg(
         ground_scorer, contrast_scorer = _make_aux_scorers(
             cfg, grpo_cfg, norm_universes or {}, active_aux
         )
-
-    core_mode = str(grpo_cfg.get("core_mode", "direct") or "direct")
     if direct_gold_fn is None and reward_core and core_mode == "direct":
         from .aux_scorers import make_direct_gold_fn
 
@@ -1071,6 +1363,10 @@ def make_modular_reward_from_cfg(
         reward_core=reward_core,
         core_mode=core_mode,
         direct_gold_fn=direct_gold_fn,
+        direct_match_threshold=float(
+            0.55 if grpo_cfg.get("direct_match_threshold") is None
+            else grpo_cfg.get("direct_match_threshold")
+        ),
         answerer=answerer,
         ground_scorer=ground_scorer,
         contrast_scorer=contrast_scorer,
@@ -1252,7 +1548,7 @@ def build_modular_dataset(
                 cluster_ids,
                 k=int(battery_cfg.get("k", 8)),
                 min_k=int(battery_cfg.get("min_k", 4)),
-                minority_floor=int(battery_cfg.get("minority_floor", 1)),
+                minority_floor=int(battery_cfg.get("minority_floor", 2)),
                 minority_target=int(battery_cfg.get("minority_target", 2)),
             )
             for bat in built:
@@ -1314,8 +1610,39 @@ def build_modular_dataset(
             "source_id rename. R-OUTCOME would train on nothing."
         )
 
-    # --- Stratified prescreen (mix-preserving; realized mix reported) -------
+    # --- Battery composition invariants (2026-07-28, R3) --------------------
+    # Both-sides-present is enforced at build in build_batteries; assert it
+    # here too so a regression in the builder can never silently ship
+    # one-sided batteries again (44% of m1 batteries were one-sided and the
+    # term carried ~1% of advantage mass on 30% of rows).
     task_mix = dict(grpo_cfg.get("task_mix", {}) or {})
+    _one_sided = [
+        c["battery_id"] for c in battery_compositions
+        if c.get("n_gold_no", 0) == 0 or c.get("n_gold_yes", 0) == 0
+    ]
+    if _one_sided:
+        raise ValueError(
+            f"[modular_reward] {len(_one_sided)} one-sided batteries built "
+            f"(e.g. {_one_sided[:3]}) — the both-sides invariant regressed "
+            "(batteries.build_batteries minority-floor guard)."
+        )
+    if float(task_mix.get("vignette", 0.0) or 0.0) > 0.0 and n_batteries == 0:
+        # NO embed_fn escape hatch (audit 2026-07-28): embed_fn is None
+        # exactly when the clustering embedder failed to load — the most
+        # likely cause of zero batteries. A cell that silently trains
+        # all-extract while its config says vignette > 0 is an unlabelled
+        # duplicate of the -vignette cell.
+        raise ValueError(
+            "[modular_reward] task_mix.vignette > 0 but ZERO batteries were "
+            "built"
+            + ("" if embed_fn is not None else
+               " (context embedding model failed to load — check the "
+               "sentence-transformers/HF-cache availability on this node)")
+            + ". Lower the floor deliberately or set task_mix.vignette=0; "
+            "training would silently run without the battery task otherwise."
+        )
+
+    # --- Stratified prescreen (mix-preserving; realized mix reported) -------
     target_n = int((grpo_cfg.get("prescreen", {}) or {}).get("target_n", len(rows)))
     rows_df = pd.DataFrame(rows)
     if len(rows_df) == 0:
@@ -1325,6 +1652,49 @@ def build_modular_dataset(
     )
     selected_prompts = set(selected_df["prompt"].tolist())
     reward_fn.prompt_metadata = {k: v for k, v in meta.items() if k in selected_prompts}
+
+    # --- Chunk-gold index for the chunk-denominator direct core (R2) --------
+    # Built AFTER prescreen so only surviving chunks are embedded. Gold-NO
+    # rows are routed by A-ABSTAIN and never reach the scored path, so only
+    # gold-YES/unknown chunks enter the index. Gated on a wired gold_fn so
+    # unit builds (mock rewards, no embedding server) skip it; production
+    # failures here must raise — a half-built index would silently score a
+    # fraction of chunks on the wrong denominator.
+    if (
+        reward_fn.reward_core
+        and getattr(reward_fn, "core_mode", "") == "direct"
+        and reward_fn._direct_gold_fn is not None
+        and bool(grpo_cfg.get("direct_chunk_denominator", True))
+    ):
+        from .aux_scorers import make_direct_chunk_gold
+
+        chunk_keys = {
+            (str(v["source_id"]), str(v["chunk_id"]))
+            for v in reward_fn.prompt_metadata.values()
+            if v.get("task_type") == "extract"
+            and v.get("gold_has_exchange") is not False
+        }
+        if chunk_keys:
+            _gk = grpo_cfg.get("direct_gold_k", 1)
+            _gk = 1 if _gk is None else int(_gk)
+            chunk_gold = make_direct_chunk_gold(
+                cfg, grpo_cfg, norm_universes or {}, chunk_keys, gold_k=_gk,
+            )
+            # Fail-loud coverage guard (audit 2026-07-28, R2-M6): a dtype
+            # drift in a rebuilt extraction parquet would empty the join and
+            # silently revert every row to the m1 per-flow path — the exact
+            # defect wave 2 exists to fix. Mirrors the probe-pool join guard.
+            if len(chunk_gold.index) < 0.5 * len(chunk_keys):
+                raise ValueError(
+                    f"[modular_reward] chunk-gold index covers only "
+                    f"{len(chunk_gold.index)}/{len(chunk_keys)} chunks — the "
+                    "(source_id, chunk_id) join against extraction_path "
+                    "missed (dtype drift?). Refusing to train mostly on the "
+                    "per-flow fallback."
+                )
+            reward_fn.set_direct_chunk_gold(chunk_gold)
+            print(f"[modular_reward] chunk-denominator R-DIRECT active "
+                  f"(tau={reward_fn.direct_match_threshold}, gold_k={_gk})")
 
     dataset = Dataset.from_pandas(
         selected_df[["prompt", "task_type", "gold_has_exchange"]].reset_index(drop=True)
@@ -1367,6 +1737,26 @@ def build_modular_dataset(
         f"A-ABSTAIN rows; {n_batteries} batteries); "
         f"realized task mix {report.get('realized_task_mix')}"
     )
+
+    # --- Realized-vs-configured mix invariant (audit 2026-07-28) ------------
+    # The prescreen is a mix-preserving allocator that CANNOT fail: a stratum
+    # shortfall (e.g. too few batteries) silently backfills the other strata.
+    # That is how a pre-registered vignette share of 0.3 would have trained at
+    # 0.143 with nothing but a stdout line. The cell keys ARE the protocol —
+    # a realized mix off by more than task_mix_tolerance aborts the build.
+    _tol = grpo_cfg.get("task_mix_tolerance", 0.03)
+    _tol = 0.03 if _tol is None else float(_tol)
+    _realized = dict(report.get("realized_task_mix") or {})
+    for _task, _want in task_mix.items():
+        _got = float(_realized.get(_task, 0.0))
+        if abs(_got - float(_want)) > _tol:
+            raise ValueError(
+                f"[modular_reward] realized task mix for {_task!r} is "
+                f"{_got:.3f} vs configured {float(_want):.3f} "
+                f"(tolerance {_tol}). The stratum pool cannot fill the "
+                "configured share — fix task_mix (or the pool) explicitly "
+                "rather than training a silently different protocol."
+            )
     return dataset, metadata
 
 

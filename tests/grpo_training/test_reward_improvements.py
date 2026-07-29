@@ -360,8 +360,13 @@ class TestFlowVarianceFilter:
 
 def _write_checkpoint(tmp_path, rewards, frac_zero_std=0.05, kl=0.02,
                       no_flow_frac=0.5, gold_no_flow_rate=0.5,
-                      eval_rewards=None):
-    """Synthesize the artifacts check_promotion_gates reads."""
+                      eval_rewards=None, direct_recalls=(0.9, 0.6)):
+    """Synthesize the artifacts check_promotion_gates reads.
+
+    ``direct_recalls`` = (appropriate, inappropriate) per-class hit rates for
+    the synthesized ``direct_flows`` trace records (gate e); pass ``None`` to
+    omit them (pre-R2 runs / −outcome cells → gate skips).
+    """
     ckpt = tmp_path / "checkpoint"
     step_dir = ckpt / f"checkpoint-{len(rewards) * 10}"
     step_dir.mkdir(parents=True)
@@ -388,6 +393,21 @@ def _write_checkpoint(tmp_path, rewards, frac_zero_std=0.05, kl=0.02,
                 "task_type": "ci_extraction",
                 "is_no_flow": idx < n_no_flow_rows,
             })
+        if direct_recalls is not None:
+            ra, ri = direct_recalls
+            flows = []
+            for j in range(10):
+                hit = j < int(round(ra * 10))
+                flows.append({"gold": "appropriate",
+                              "pred": "appropriate" if hit else "inappropriate",
+                              "sim": 0.8})
+            for j in range(10):
+                hit = j < int(round(ri * 10))
+                flows.append({"gold": "inappropriate",
+                              "pred": "inappropriate" if hit else "appropriate",
+                              "sim": 0.8})
+            trace_rows.append({"call": call, "task_type": "extract",
+                               "route": "scored", "direct_flows": flows})
     (ckpt / "reward_traces.jsonl").write_text(
         "\n".join(json.dumps(r) for r in trace_rows)
     )
@@ -409,6 +429,48 @@ class TestPromotionGates:
         report = check_promotion_gates(ckpt)
         assert report["promote"] is True
         assert all(g["status"] == "pass" for g in report["gates"].values())
+        # fixture recalls (0.9, 0.6) → J = 0.5, comfortably above the floor
+        assert report["gates"]["direct_discrimination"]["youden_j"] == \
+            pytest.approx(0.5)
+
+    def test_m1_scale_gain_now_fails_trend_gate(self, tmp_path):
+        # Regression on the m1 incident: core's +0.0027 "gain" was promoted
+        # by the old 0.0 threshold. Under min_reward_gain=0.02 a run must
+        # beat launch noise, not tie it.
+        ckpt = _write_checkpoint(
+            tmp_path,
+            rewards=[0.5455, 0.5460, 0.5455, 0.5470, 0.5465, 0.5481],
+        )
+        report = check_promotion_gates(ckpt)
+        assert report["gates"]["reward_trend"]["status"] == "fail"
+        assert report["promote"] is False
+
+    def test_blanket_labeler_fails_discrimination_gate(self, tmp_path):
+        # Total reward rises but the policy labels EVERYTHING appropriate:
+        # recalls 1.0 / 0.0 → J = 0 → gate e fails. This is the m1 failure
+        # mode (reward 0.73 at the blanket floor) that gates a-d cannot see.
+        ckpt = _write_checkpoint(
+            tmp_path,
+            rewards=[0.40, 0.42, 0.45, 0.47, 0.50, 0.55],
+            direct_recalls=(1.0, 0.0),
+        )
+        report = check_promotion_gates(ckpt)
+        gate = report["gates"]["direct_discrimination"]
+        assert gate["status"] == "fail"
+        assert gate["youden_j"] == pytest.approx(0.0)
+        assert report["promote"] is False
+
+    def test_discrimination_gate_skips_without_direct_flows(self, tmp_path):
+        # −outcome cells / pre-R2 traces carry no direct_flows: skip, never
+        # fail (a skipped gate must not block promotion).
+        ckpt = _write_checkpoint(
+            tmp_path,
+            rewards=[0.40, 0.42, 0.45, 0.47, 0.50, 0.55],
+            direct_recalls=None,
+        )
+        report = check_promotion_gates(ckpt)
+        assert report["gates"]["direct_discrimination"]["status"] == "skipped"
+        assert report["promote"] is True
 
     def test_flat_reward_fails_trend_gate(self, tmp_path):
         # The May 2026 production curve: flat-to-declining.
@@ -932,3 +994,84 @@ class TestContrastiveSymmetry:
         assert s_low[0] == pytest.approx(0.75)
         assert s_high[0] == pytest.approx(0.50)
         assert s_low[0] > s_high[0]
+
+
+class TestGateAuditFixes:
+    """Audit 2026-07-28: staleness guard, label-only J, modular no_flow schema."""
+
+    def test_stale_direct_tail_fails_loudly(self, tmp_path):
+        # Direct core silently stops (embedding outage -> group-neutral):
+        # the last direct_flows rows predate the end of training. The gate
+        # must FAIL with a staleness reason, not pass on old data.
+        ckpt = _write_checkpoint(
+            tmp_path, rewards=[0.40, 0.42, 0.45, 0.47, 0.50, 0.55],
+            direct_recalls=None,
+        )
+        rows = []
+        for call in range(30):
+            row = {"call": call, "task_type": "extract", "route": "scored"}
+            if call < 15:  # direct core died at call 15
+                row["direct_flows"] = [
+                    {"gold": "appropriate", "pred": "appropriate", "sim": 0.8},
+                    {"gold": "inappropriate", "pred": "inappropriate", "sim": 0.8},
+                ]
+            rows.append(row)
+        (tmp_path / "checkpoint" / "reward_traces.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in rows))
+        report = check_promotion_gates(ckpt)
+        gate = report["gates"]["direct_discrimination"]
+        assert gate["status"] == "fail"
+        assert "stale" in gate["reason"]
+        assert report["promote"] is False
+
+    def test_misses_reported_not_gated(self, tmp_path):
+        # Label-only J: unmatched teacher flows (pred None) must not drag J
+        # below the floor — they are reported as miss_frac instead.
+        ckpt = _write_checkpoint(
+            tmp_path, rewards=[0.40, 0.42, 0.45, 0.47, 0.50, 0.55],
+            direct_recalls=None,
+        )
+        rows = []
+        for call in range(30):
+            flows = [
+                {"gold": "appropriate", "pred": "appropriate", "sim": 0.8},
+                {"gold": "inappropriate", "pred": "inappropriate", "sim": 0.8},
+                {"gold": "appropriate", "pred": None, "sim": None},
+                {"gold": "inappropriate", "pred": None, "sim": None},
+            ]
+            rows.append({"call": call, "task_type": "extract",
+                         "route": "scored", "direct_flows": flows})
+        (tmp_path / "checkpoint" / "reward_traces.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in rows))
+        report = check_promotion_gates(ckpt)
+        gate = report["gates"]["direct_discrimination"]
+        assert gate["status"] == "pass"      # label J = 1.0 despite 50% misses
+        assert gate["youden_j"] == 1.0
+        assert gate["miss_frac"] == 0.5
+
+    def test_no_flow_gate_reads_modular_schema(self, tmp_path):
+        # The gate was DEAD on every modular run (keeper-only keys). Modular
+        # rows: task_type "extract", `no_flow` on abstain routes.
+        ckpt = _write_checkpoint(
+            tmp_path, rewards=[0.40, 0.42, 0.45, 0.47, 0.50, 0.55],
+            no_flow_frac=0.0, gold_no_flow_rate=0.5, direct_recalls=(0.9, 0.6),
+        )
+        rows = []
+        for call in range(30):
+            for idx in range(8):
+                row = {"call": call, "task_type": "extract"}
+                if idx < 4:
+                    row["no_flow"] = True   # modular abstain-route key
+                rows.append(row)
+        # keep gate (e) alive alongside
+        for call in range(30):
+            flows = [{"gold": "appropriate", "pred": "appropriate", "sim": 0.8},
+                     {"gold": "inappropriate", "pred": "inappropriate", "sim": 0.8}]
+            rows.append({"call": call, "task_type": "extract",
+                         "route": "scored", "direct_flows": flows})
+        (tmp_path / "checkpoint" / "reward_traces.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in rows))
+        report = check_promotion_gates(ckpt)
+        gate = report["gates"]["no_flow_rate"]
+        assert gate["status"] == "pass"
+        assert gate["trace_no_flow_rate"] > 0.3   # not the dead-gate constant 0

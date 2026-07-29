@@ -316,6 +316,39 @@ class GRPOTrainingRunner(StageRunner):
         judge_server_url = ""
         use_external_servers = False
 
+        # m-series preflight (audit 2026-07-28, config M4): the modular path
+        # never entered the online_rground branch below, so it launched with
+        # NO server checks — a dead judge silently degrades `full` to `core`
+        # (aux scorers return group-neutral on failure) and a dead embedding
+        # server degrades the direct core, both without a crash. Fail at
+        # launch, not 40 hours in.
+        if str(grpo_cfg.get("reward_composition") or "") == "modular":
+            _pre_timeout = grpo_cfg.get("external_server_check_timeout", 300)
+            _emb_url = (
+                str(grpo_cfg.get("embedding_server_url") or "")
+                or os.environ.get("GRPO_EMBEDDING_SERVER_URL", "")
+                or os.environ.get("EMBEDDING_SERVER_URL", "")
+            )
+            if not _emb_url:
+                raise ValueError(
+                    "[grpo_training] modular reward needs an embedding server "
+                    "(chunk-gold index + R-DIRECT match queries + aux "
+                    "retrieval) but no EMBEDDING_SERVER_URL is configured"
+                )
+            _check_external_server(_emb_url, "embedding", timeout=_pre_timeout)
+            if list(grpo_cfg.get("reward_auxiliaries", []) or []):
+                _judge_url = (
+                    str(grpo_cfg.get("judge_server_url") or "")
+                    or os.environ.get("VLLM_SERVER_URL", "")
+                    or os.environ.get("JUDGE_SERVER_URL", "")
+                )
+                if not _judge_url:
+                    raise ValueError(
+                        "[grpo_training] reward_auxiliaries are active but no "
+                        "judge server URL is configured (VLLM_SERVER_URL)"
+                    )
+                _check_external_server(_judge_url, "judge", timeout=_pre_timeout)
+
         if use_online_rground:
             embedding_server_url = str(
                 grpo_cfg.get("embedding_server_url") or ""

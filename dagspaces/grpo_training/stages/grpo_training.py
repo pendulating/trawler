@@ -928,6 +928,20 @@ def run_grpo_training_stage(
         from .sft_data_prep import _CI_INSTRUCTION
         ci_prompt_template = _CI_INSTRUCTION + "\n\n{{chunk_text}}"
 
+    # m-series: rollout prompts must match the SFT training distribution.
+    # The m1 wave sampled the policy on the config prompt above — an
+    # instruction the SFT adapter never saw — and paid 34.4% vs 2.7% R-VALID
+    # gate failure for it (A/B probe 2026-07-28, grpo_redesign wiki R1).
+    # Byte-parity comes from importing the same builder SFT data prep uses,
+    # never from a config copy that can drift. Keeper (non-modular) runs keep
+    # the config prompt — their v9-lineage rollouts were trained on it.
+    if _modular and bool(grpo_cfg.get("sft_aligned_extract_prompt", True)):
+        from .sft_data_prep import sft_aligned_extract_template
+        ci_prompt_template = sft_aligned_extract_template(cfg)
+        print("[grpo_training] extract prompt: SFT-aligned template "
+              "(grpo.sft_aligned_extract_prompt=true) — config "
+              "prompt_ci_extraction is NOT used for rollouts")
+
     all_source_ids = list(norm_universes.keys())
 
     # Generate judgment vignettes from norm universes if ratio > 0
@@ -1035,7 +1049,10 @@ def run_grpo_training_stage(
         n_gold_pos = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is True)
         n_gold_neg = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is False)
         n_gold_unk = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("gold_has_exchange") is None)
-        n_vignette_meta = sum(1 for m in reward_fn.prompt_metadata.values() if m.get("task_type") == "norm_judgment")
+        n_vignette_meta = sum(
+            1 for m in reward_fn.prompt_metadata.values()
+            if m.get("task_type") in ("norm_judgment", "vignette")
+        )
         # Realised vignette force mix BEFORE screening. The v11 steering variable —
         # sampling from the candidate pool is uniform/force-blind, so the realised
         # ratio must be measured, not inferred from the pool's ratio.
@@ -1091,7 +1108,9 @@ def run_grpo_training_stage(
     # degenerate variance under the SFT policy), so the configured
     # vignette_ratio describes the PRE-screen mix only. Record the realized
     # post-screen count so the paper's mix claim is auditable.
-    _train_vignettes = sum(1 for r in dataset if r.get("task_type") == "norm_judgment")
+    _train_vignettes = sum(
+        1 for r in dataset if r.get("task_type") in ("norm_judgment", "vignette")
+    )
     # Imported here (not only in the legacy dataset-build branch above) so the
     # shared post-screen accounting is reachable on the modular path too — the
     # modular branch never runs the legacy import. Idempotent duplicate import.
@@ -1621,8 +1640,22 @@ def run_grpo_training_stage(
         "sft_checkpoint": sft_checkpoint,
     }
     _meta_path = os.path.join(output_dir, "training_metadata.json")
+    # MERGE, never clobber (audit 2026-07-28): build_modular_dataset writes
+    # this file first with the principle-6 audit trail (prescreen_report,
+    # battery_compositions, realized task mix, m1_cache_signature) — the m1
+    # wave destroyed all of it by overwriting here, which is why the m1
+    # record shows n_vignettes 0 despite training 180 batteries.
+    _existing_meta: dict = {}
+    try:
+        if os.path.exists(_meta_path):
+            with open(_meta_path) as _mf:
+                _existing_meta = json.load(_mf)
+    except Exception:
+        _existing_meta = {}
+    _existing_meta.update(_training_meta)
     with open(_meta_path, "w") as _mf:
-        json.dump(_training_meta, _mf, indent=2)
+        json.dump(_existing_meta, _mf, indent=2, default=str)
+    _training_meta = _existing_meta
     print(f"[grpo_training] Wrote training metadata to {_meta_path}")
 
     # Mirror the FULL training metadata into the W&B run config — same dict
