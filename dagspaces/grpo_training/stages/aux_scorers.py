@@ -732,6 +732,7 @@ def make_direct_chunk_gold(
     embedding_client=None,
     norm_retriever=None,
     gold_k: int = 1,
+    keep_norm_info: bool = False,
 ) -> DirectChunkGold:
     """Build the chunk-gold index: teacher flows -> golds + embeddings, once.
 
@@ -825,11 +826,32 @@ def make_direct_chunk_gold(
             entry["golds"].append(gold)
             entry["emb"].append(vec)
             entry["texts"].append(_flow_to_query(_flatten_flow(f)))
+            if keep_norm_info:
+                # k-series (2026-07-31 plan §4): R-CITATION/R-SCRUTINIZE
+                # write the GOVERNING norm into the edited completion, so the
+                # index must carry it. top-1 = the norm whose force decided
+                # the gold at k=1 (production semantics).
+                top = norms[0] if norms and isinstance(norms[0], dict) else {}
+                entry.setdefault("norms", []).append({
+                    # same candidate chain probes._articulation resolves
+                    "articulation": top.get("norm_articulation")
+                                    or top.get("raz_norm_articulation")
+                                    or top.get("articulation")
+                                    or top.get("canonical_norm_articulation"),
+                    "normative_force": top.get("normative_force"),
+                    "act_polarity": top.get("act_polarity"),
+                    "norm_subject": top.get("norm_subject"),
+                    "norm_act": top.get("norm_act"),
+                    "condition_of_application":
+                        top.get("condition_of_application"),
+                    "context": top.get("context"),
+                })
         for key, entry in per_chunk.items():
             index[key] = {
                 "golds": entry["golds"],
                 "emb": np.stack(entry["emb"]),
                 "texts": entry["texts"],
+                **({"norms": entry["norms"]} if keep_norm_info else {}),
             }
 
     n_flows = sum(len(v["golds"]) for v in index.values())
