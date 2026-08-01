@@ -172,6 +172,10 @@ def run_kto_training_stage(
     metadata_path: str | None = None,
 ) -> dict[str, Any]:
     """Train one k-series arm. Returns the run metadata dict."""
+    # Reduce fragmentation headroom pressure from the large logits
+    # allocations (read at first CUDA allocation, so setting it here works).
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     import torch
     from datasets import Dataset
     from peft import LoraConfig, TaskType
@@ -291,13 +295,41 @@ def run_kto_training_stage(
                              callbacks=callbacks)
     else:
         from trl import KTOConfig, KTOTrainer
+
+        # Memory patch (K2 smoke, 2026-08-01): TRL's per-step entropy
+        # telemetry calls entropy_from_logits on the batched SHIFTED logits
+        # slice, whose reshape(-1, vocab) materializes a full non-contiguous
+        # copy (~6GB at bs=2 x 4096 tokens x 152k vocab) — the fatal
+        # allocation on a 48GB A6000. Per-sequence slices of the same tensor
+        # ARE contiguous, so reshape is a view and the chunked computation
+        # runs copy-free. Telemetry-only: identical entropy values.
+        import trl.trainer.kto_trainer as _kto_mod
+        _orig_entropy = _kto_mod.entropy_from_logits
+
+        def _rowwise_entropy(logits, chunk_size: int = 128):
+            if logits.dim() == 3:
+                return torch.stack(
+                    [_orig_entropy(row, chunk_size) for row in logits])
+            return _orig_entropy(logits, chunk_size)
+
+        _kto_mod.entropy_from_logits = _rowwise_entropy
+        # TRL 1.8.0 KTOConfig has no max_prompt_length — only max_length
+        # (right-truncation of the full sequence). 4096 covers the K0 p99
+        # prompt (~2k tokens) + completion (~1.1k) with headroom, so no row
+        # loses its trained eos to truncation.
+        #
+        # bf16=False here is PURE-bf16, not fp32 training: the weights are
+        # loaded bf16, so HF's bf16 autocast adds nothing, while its
+        # accelerate wrapper upcasts the returned logits to fp32 — a ~6.7GB
+        # copy of a [4, seq, 152k-vocab] tensor that OOMed the K2 smoke.
+        # TRL's own logp path (selective_log_softmax) and the entropy patch
+        # above both have explicit bf16 branches, so no consumer needs fp32.
         args = KTOConfig(
-            **common_args,
+            **{**common_args, "bf16": False},
             beta=float(kto_cfg.get("beta", 0.1)),
             desirable_weight=float(weights["desirable_weight"]),
             undesirable_weight=float(weights["undesirable_weight"]),
             max_length=int(kto_cfg.get("max_length", 4096)),
-            max_prompt_length=int(kto_cfg.get("max_prompt_length", 2048)),
         )
         # ref_model=None + peft_config: TRL uses the adapter-disabled base
         # as the implicit reference — no second model in memory.

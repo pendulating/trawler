@@ -27,10 +27,17 @@ learning_rate: 5.0e-6         # §6: KTO reference-model regime, colder than GRP
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 num_epochs: 1                 # §6: offline preference tuning overfits fast
-per_device_batch_size: 4      # effective batch 32 — KTO wants class-mixed batches
-gradient_accumulation_steps: 8
-max_length: 4096              # §6: m2 completion p99 ~1.1k tokens + prompt 0.9-2k
-max_prompt_length: 2048
+# Effective batch 32 (KTO wants class-mixed batches). Per-device 2 is BOTH
+# the memory ceiling AND the TRL floor: bs=4 OOMed a 48GB A6000 (KTO
+# duplicates the batch for its KL estimate), and TRL rejects bs=1 outright
+# (the KL term degenerates). bs=2 fits only with the stage's row-wise
+# entropy-telemetry patch (see kto_training.py) avoiding a ~6GB logits copy.
+per_device_batch_size: 2
+gradient_accumulation_steps: 16
+# TRL 1.8.0 KTOConfig exposes only max_length (right-truncation of the full
+# sequence; no max_prompt_length). 4096 covers p99 prompt (~2k) + completion
+# (~1.1k) with headroom — §6's 4096/2048 registration amended in §15.
+max_length: 4096
 max_grad_norm: 1.0
 gradient_checkpointing: true
 save_frac: 0.10               # §6: save every 10% of steps; probe per save (tier-1)
