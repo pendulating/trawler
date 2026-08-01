@@ -126,6 +126,7 @@ def label_completion(
         "label": d1_prime_label(per_flow),
         "parsed": g.parsed,
         "corrections": corrections,
+        "per_flow": per_flow,
         "n_flows": len(g.flows),
         "n_matched": len(matches),
     }
@@ -260,6 +261,9 @@ def build_kto_dataset(
                     emit(key, text, False, "abstain", "shared")
                     stats["abstain_undesirable"] += 1
                     n_und += 1
+                else:
+                    # No silent caps: beyond-cap drops are counted, not hidden.
+                    stats["capped_abstain_undesirable"] += 1
             for _ in range(abstain_desirables_per_chunk):
                 emit(key, synth_abstain_completion(), True,
                      "abstain", "shared", synthesized=True)
@@ -282,19 +286,29 @@ def build_kto_dataset(
             if text in seen_texts:
                 stats["deduped"] += 1
                 continue
-            if r["label"] == "desirable" and n_des < max_pairs_per_chunk:
-                seen_texts.add(text)
-                emit(key, text, True, "mine", "shared")
-                stats["mine_desirable"] += 1
-                n_des += 1
-            elif r["label"] == "undesirable" and n_und < max_pairs_per_chunk:
-                seen_texts.add(text)
-                emit(key, text, False, "und", "shared",
-                     n_corrections=len(r["corrections"]))
-                stats["undesirable"] += 1
-                n_und += 1
-                if r["corrections"]:
-                    pending_edits.append((key, r["parsed"], r["corrections"]))
+            if r["label"] == "desirable":
+                if n_des < max_pairs_per_chunk:
+                    seen_texts.add(text)
+                    emit(key, text, True, "mine", "shared")
+                    stats["mine_desirable"] += 1
+                    n_des += 1
+                else:
+                    stats["capped_desirable"] += 1
+            elif r["label"] == "undesirable":
+                if n_und < max_pairs_per_chunk:
+                    seen_texts.add(text)
+                    emit(key, text, False, "und", "shared",
+                         n_corrections=len(r["corrections"]))
+                    stats["undesirable"] += 1
+                    n_und += 1
+                    if r["corrections"]:
+                        pending_edits.append((key, r["parsed"], r["corrections"]))
+                else:
+                    stats["capped_undesirable"] += 1
+            else:
+                # D1' non-labels ("neither" / "excluded") — counted so the
+                # metadata accounts for every scored completion.
+                stats[f"d1_{r['label']}"] += 1
 
     # ---- ladder desirables (deferred so rationales can be batched) -------
     if rationale_batch_fn is None and rationale_fn is not None:

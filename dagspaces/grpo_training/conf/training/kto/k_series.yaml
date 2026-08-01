@@ -1,0 +1,49 @@
+# @package training.kto
+# k-series KTO defaults (wiki/2026-07-31_kto_plan.md §6 — every value cited).
+#
+# arm: verdict | citation | scrutinize (KTOTrainer, supervision-depth ladder)
+#      | sft_ctrl (SFTTrainer on K-CITATION's desirable rows — the mandatory
+#      control: is KTO's use of undesirables adding anything?)
+arm: citation                 # §7: K-CITATION is the primary arm
+
+# The K1 dataset (job 683040, fingerprint b27a46f8e7f5). kto_metadata.json is
+# resolved as the parquet's sibling unless metadata_path overrides it. The
+# stage refuses to train if the recomputed composition fingerprint or the
+# realized per-arm class counts disagree with the metadata (K1-review
+# carry-forward #3).
+dataset_path: /share/pierson/matt/UAIR/outputs/2026-07-31_k1_full/kto_rows.parquet
+metadata_path: null
+
+# Same starting policy as m2 (the arms compare): the pre-GRPO base+adapter
+# merge. §6 "base" row.
+base_model: /share/pierson/matt/UAIR/multirun/2026-07-28_grpo_m2_core/21-31-11/cell=core/grpo_only_online_external/outputs/grpo/checkpoint/_merged_sft
+
+beta: 0.1                     # TRL default; §6 — sweep {0.05, 0.3} only if k1 moves
+# desirable_weight/undesirable_weight are NOT set here: they come from the
+# K1 metadata's arm_class_weights (measured, not guessed — 0.822/1.0 →
+# realized ratio 1.15, inside TRL's [1, 4/3] band).
+
+learning_rate: 5.0e-6         # §6: KTO reference-model regime, colder than GRPO's 2e-5
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+num_epochs: 1                 # §6: offline preference tuning overfits fast
+per_device_batch_size: 4      # effective batch 32 — KTO wants class-mixed batches
+gradient_accumulation_steps: 8
+max_length: 4096              # §6: m2 completion p99 ~1.1k tokens + prompt 0.9-2k
+max_prompt_length: 2048
+max_grad_norm: 1.0
+gradient_checkpointing: true
+save_frac: 0.10               # §6: save every 10% of steps; probe per save (tier-1)
+logging_steps: 10
+dataloader_num_workers: 2
+seed: 42                      # §6 (+ one confirmatory repeat at 43 if promoted)
+
+lora:                         # §6: same adapter capacity as training/sft/default.yaml
+  rank: 64
+  alpha: 128
+  dropout: 0.05
+  target_modules: all-linear
+
+# Smoke runs only (K2 sequence step 2): subsample the arm's rows AFTER the
+# identity/composition asserts. null = full dataset (production).
+sample_fraction: null

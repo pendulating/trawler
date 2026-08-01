@@ -18,6 +18,7 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
     global _STAGE_REGISTRY
     if _STAGE_REGISTRY is None:
         from .grpo_training import GRPOTrainingRunner
+        from .kto_training import KTOTrainingRunner
         from .norm_universe import NormUniverseRunner
         from .reward_prep import RewardPrepRunner
         from .sft_data_prep import SFTDataPrepRunner
@@ -29,5 +30,6 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             "sft_training": SFTTrainingRunner(),
             "reward_prep": RewardPrepRunner(),
             "grpo_training": GRPOTrainingRunner(),
+            "kto_training": KTOTrainingRunner(),
         }
     return _STAGE_REGISTRY.copy()

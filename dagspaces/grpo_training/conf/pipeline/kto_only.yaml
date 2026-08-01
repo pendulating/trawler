@@ -1,0 +1,35 @@
+# @package _global_
+# k-series KTO pipeline: one arm per invocation over the frozen K1 dataset.
+#
+#   python -m dagspaces.grpo_training.cli -m pipeline=kto_only \
+#       training.kto.arm=citation,scrutinize,verdict,sft_ctrl
+#
+# The dataset is a frozen artifact (outputs/2026-07-31_k1_full/), not a
+# pipeline-produced node — the stage asserts its identity (fingerprint +
+# realized counts) against kto_metadata.json before training.
+
+defaults:
+  - /training/kto: k_series
+  - override /hydra/launcher: slurm_monitor
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/kto_only
+
+  sources:
+    kto_rows:
+      path: ${training.kto.dataset_path}
+      type: parquet
+
+  graph:
+    nodes:
+      kto_training:
+        stage: kto_training
+        depends_on: []
+        inputs:
+          dataset: kto_rows
+        outputs:
+          checkpoint:
+            path: outputs/kto/checkpoint
+            type: dir
+        launcher: slurm_train_1x
+        wandb_suffix: kto_training
