@@ -4,6 +4,11 @@ Server mode exports VLLM_SERVER_URL to EVERY stage in an eval cell, so the
 resolver must only route stages whose model matches the server's
 (VLLM_SERVER_MODEL) — a judge stage running a different model must fall
 back to a local engine, never be silently answered by the task model.
+
+Corollary (2026-08-03): a URL with NO identity var is not trusted either.
+eval_all always exports VLLM_SERVER_MODEL alongside the URL, so a bare URL did
+not come from server mode — it is a stray env var, and server.env ships exactly
+such a var pointing at the judge.
 """
 
 import pytest
@@ -43,12 +48,29 @@ class TestResolveServerUrl:
         monkeypatch.setenv("VLLM_SERVER_MODEL", "/zoo/Qwen3.5-9B")
         assert _resolve_server_url(_cfg("/zoo/Gemma-4-31B-it")) is None
 
-    def test_env_without_model_identity_still_routes(self, monkeypatch):
-        # Back-compat: a hand-launched server that never exported the
-        # identity var keeps working (caller's responsibility).
+    def test_env_without_model_identity_refuses_to_route(self, monkeypatch):
+        # INVERTED 2026-08-03. This used to assert the URL was honoured, as
+        # back-compat for a hand-launched server that never exported the
+        # identity var ("caller's responsibility"). That bet lost: the caller
+        # is not a human choosing to route. server.env ships
+        # VLLM_SERVER_URL pointing at the JUDGE server for the answerer /
+        # aux-scorer clients, and ensure_dotenv() re-loads it inside EVERY
+        # stage job — so the var silently applied to unrelated benchmark runs.
+        # On 2026-08-03 it routed all five CI benchmarks' task inference to the
+        # judge port: 404 on every request, generated_text empty,
+        # parseable_rate 0.0000, the whole 5-cell sweep lost. It failed loudly
+        # only because the served model name did not match; a collision would
+        # have scored the JUDGE's answers as the task model's.
+        #
+        # Nothing regressed by inverting this: no caller in the repo reaches
+        # _resolve_server_url with a bare URL (every script referencing
+        # VLLM_SERVER_URL reads it directly for the judge/answerer role), and
+        # the legitimate hand-launched-server workflow keeps its trusted path
+        # via cfg.model.vllm_server_url — see
+        # test_explicit_cfg_override_skips_identity_check below.
         monkeypatch.setenv("VLLM_SERVER_URL", self.URL)
         monkeypatch.delenv("VLLM_SERVER_MODEL", raising=False)
-        assert _resolve_server_url(_cfg()) == self.URL
+        assert _resolve_server_url(_cfg()) is None
 
     def test_explicit_cfg_override_skips_identity_check(self, monkeypatch):
         monkeypatch.setenv("VLLM_SERVER_URL", "http://other:1/v1")

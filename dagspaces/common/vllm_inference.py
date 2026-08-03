@@ -438,18 +438,38 @@ def _resolve_server_url(cfg) -> str | None:
     if not url:
         return None
     server_model = os.environ.get("VLLM_SERVER_MODEL", "")
-    if server_model:
-        try:
-            stage_model = str(getattr(cfg.model, "model_source", "") or "")
-        except Exception:
-            stage_model = ""
-        if stage_model.rstrip("/") != server_model.rstrip("/"):
-            print(
-                f"[vllm_inference] VLLM_SERVER_URL set but serves "
-                f"{server_model!r}, stage needs {stage_model!r} — using a "
-                f"local engine instead."
-            )
-            return None
+    if not server_model:
+        # An UNIDENTIFIED server is never trusted for task-model inference.
+        # eval_all's server mode always exports VLLM_SERVER_MODEL next to the
+        # URL (eval_all/orchestrator.py), so a URL with no identity did not
+        # come from server mode — it is a stray env var. server.env ships
+        # VLLM_SERVER_URL pointing at the JUDGE server for the answerer /
+        # aux-scorer clients (which resolve it deliberately via base_url_env),
+        # and ensure_dotenv re-loads it inside every stage job. On 2026-08-03
+        # that silently routed all five CI benchmarks' task inference to the
+        # judge port: 404 on every request, generated_text empty, and
+        # parseable_rate 0.0000 across goldcoin/cirl/confaide. It failed loudly
+        # only because the served model name did not match; a server whose
+        # served name happened to collide would have answered with the WRONG
+        # MODEL and scored clean.
+        print(
+            "[vllm_inference] VLLM_SERVER_URL is set but VLLM_SERVER_MODEL is "
+            "not — refusing to route task inference to an unidentified server "
+            "(this is how a stray server.env judge URL hijacks a benchmark). "
+            "Using a local engine instead."
+        )
+        return None
+    try:
+        stage_model = str(getattr(cfg.model, "model_source", "") or "")
+    except Exception:
+        stage_model = ""
+    if stage_model.rstrip("/") != server_model.rstrip("/"):
+        print(
+            f"[vllm_inference] VLLM_SERVER_URL set but serves "
+            f"{server_model!r}, stage needs {stage_model!r} — using a "
+            f"local engine instead."
+        )
+        return None
     return url
 
 
