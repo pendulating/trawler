@@ -1,0 +1,37 @@
+#!/bin/bash
+#SBATCH --job-name=k3-rescore
+#SBATCH --partition=pierson
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=06:00:00
+#SBATCH --output=logs/k3-rescore-%j.out
+#SBATCH --error=logs/k3-rescore-%j.err
+
+# Wiki §17 confirmatory test — regenerate the K3 probe's BASELINE SLICE ONLY
+# (1 of 45) retaining per-flow retrieval margin, and recompute Youden's J under
+# margin filters. Answers: is the appropriateness gold merely noisy (salvageable
+# on the high-confidence subset) or wrong everywhere?
+#
+# The script raises unless it first reproduces the probe's baseline J of
+# -0.0344 — that guard is what makes the filtered numbers trustworthy.
+#
+# REQUIRES the embedding server up (EMBEDDING_SERVER_URL in server.env); the
+# gold index is rebuilt through production retrieval.
+
+set -euo pipefail
+
+REPO_DIR="/share/pierson/matt/UAIR"
+cd "$REPO_DIR"
+mkdir -p logs
+
+source .venv-vllm025cu129/bin/activate
+echo "Python: $(which python) ($(python --version))"
+nvidia-smi -L || true
+
+export PYTHONPATH="$REPO_DIR:${PYTHONPATH:-}"
+export TOKENIZERS_PARALLELISM=false
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+
+python scripts/kto_baseline_margin_rescore.py \
+    --out "outputs/2026-08-03_margin_rescore"

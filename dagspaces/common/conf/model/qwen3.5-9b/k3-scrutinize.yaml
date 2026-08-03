@@ -1,0 +1,25 @@
+# @package _global_
+# K3 arm "scrutinize", FINAL checkpoint (wiki/2026-07-31_kto_plan.md §16).
+# Base = the m2 merged SFT; adapter = the KTO/SFT-CTRL LoRA trained on the K1
+# dataset (fingerprint b27a46f8e7f5).
+#
+# CAVEAT (wiki §17): the K1 labels derive from a gold whose agreement with the
+# teacher's own ci_appropriateness is kappa 0.053. External benchmarks are the
+# only uncontaminated measurement of these arms.
+model:
+  model_source: /share/pierson/matt/UAIR/multirun/2026-07-28_grpo_m2_core/21-31-11/cell=core/grpo_only_online_external/outputs/grpo/checkpoint/_merged_sft
+  model_family: qwen3.5
+  lora_path: /share/pierson/matt/UAIR/multirun/2026-08-01_k3_arms_b/18-55-02/0/kto_only/outputs/kto/checkpoint
+  thinking_mode: off
+  chat_template_kwargs:
+    enable_thinking: false
+  engine_kwargs:
+    max_model_len: 16384
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    enforce_eager: true
+    enable_lora: true
+    max_lora_rank: 64
+  batch_size: 0
+  concurrency: 1

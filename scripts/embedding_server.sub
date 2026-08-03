@@ -106,14 +106,23 @@ echo "[$(date)] Launching embedding server..."
     &
 SERVER_PID=$!
 
-# Wait for health check
-for i in $(seq 1 120); do
+# Wait for health check. Cold NFS checkpoint loads of the 8B model run
+# 20-30 min (observed 2026-08-01: ~6 min/shard x 4 shards), so the old
+# 600s ceiling killed healthy startups. Override with EMB_READY_TIMEOUT.
+EMB_READY_TIMEOUT="${EMB_READY_TIMEOUT:-2400}"
+EMB_READY_TRIES=$(( EMB_READY_TIMEOUT / 5 ))
+for i in $(seq 1 "$EMB_READY_TRIES"); do
     if curl -sf "http://localhost:${EMB_PORT}/health" > /dev/null 2>&1; then
         echo "[$(date)] Embedding server ready on port ${EMB_PORT}"
         break
     fi
-    if [ "$i" -eq 120 ]; then
-        echo "[$(date)] ERROR: server not ready after 600s" >&2
+    # Fail fast if vLLM died — no point waiting out the clock.
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "[$(date)] ERROR: server process exited during startup" >&2
+        exit 1
+    fi
+    if [ "$i" -eq "$EMB_READY_TRIES" ]; then
+        echo "[$(date)] ERROR: server not ready after ${EMB_READY_TIMEOUT}s" >&2
         kill $SERVER_PID 2>/dev/null || true
         exit 1
     fi

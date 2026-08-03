@@ -1,0 +1,19 @@
+# @package _global_
+# K3 REFERENCE CELL — the merged SFT policy every k-series arm started from
+# (training/kto/k_series.yaml `base_model`). This is NOT the v9 keeper's SFT
+# base (contentless-v6, qwen-teacher era), so K3 arms must be compared against
+# THIS cell in THIS sweep, never against the v9 numbers in the paper.
+model:
+  model_source: /share/pierson/matt/UAIR/multirun/2026-07-28_grpo_m2_core/21-31-11/cell=core/grpo_only_online_external/outputs/grpo/checkpoint/_merged_sft
+  model_family: qwen3.5
+  thinking_mode: off
+  chat_template_kwargs:
+    enable_thinking: false
+  engine_kwargs:
+    max_model_len: 16384
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    enforce_eager: true
+  batch_size: 0
+  concurrency: 1

@@ -1,0 +1,50 @@
+# @package _global_
+# K4 (revived) — external CI-benchmark eval of the k-series arms.
+#
+# WHY THIS RUNS AT ALL. §8 declared K4 NO-GO because no arm passed the
+# promotion gates. Those gates were computed on the held-out probe, whose gold
+# was shown (wiki §17, 2026-08-03) to agree with the teacher's own
+# `ci_appropriateness` at kappa 0.053. The NO-GO was therefore decided by a
+# defective instrument. External benchmarks do not touch that gold and are the
+# only uncontaminated measurement of what the arms learned.
+#
+# CELLS (5). All four arms, plus the base they started from. Arms are NOT
+# pre-selected by "best-performing": the probe is the defective instrument, so
+# selecting on it would import the defect into the eval design. SFT-CTRL is
+# retained because it is the only cell that answers "does KTO's use of
+# undesirables add anything?" on external gold.
+#
+# COMPARISON DISCIPLINE. Compare each arm to `k3-base` IN THIS SWEEP. Do not
+# compare to the v9 numbers in the paper: different SFT lineage (m2 merged SFT
+# vs contentless-v6) and PrivacyLens protocol drift since the keeper era
+# (tool-pin + Thought-strip restored) make those cells non-comparable.
+#
+# READ WITH parseable_rate. scrutinize gate-fails 12-32% on the extract task
+# (§16); if that format damage transfers, its benchmark numbers will be
+# depressed for format reasons, not reasoning. Check parseable_rate before
+# reading any scrutinize cell as a reasoning result.
+#
+# Known noise floors: GoldCoin sub-1pt gaps are noise (temp 0.2, 2/214 flipped
+# predictions moved macro-F1 0.9pt). ConfAIde tier2a/2b run at max_tokens=32 —
+# check finish_reason before calling a low score a parser failure.
+#
+# PREREQUISITE: judge server up at klara:8002 (PrivacyLens leakage/helpfulness).
+#
+# Usage:
+#   bash scripts/run_eval_k3_arms.sh
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    array_parallelism: 5
+  sweeper:
+    params:
+      model: >-
+        qwen3.5-9b/k3-base,
+        qwen3.5-9b/k3-verdict,
+        qwen3.5-9b/k3-citation,
+        qwen3.5-9b/k3-scrutinize,
+        qwen3.5-9b/k3-sftctrl
+
+experiment:
+  name: k3_arms_ci_eval
