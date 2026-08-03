@@ -57,6 +57,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     from dagspaces.grpo_training.stages.aux_scorers import (
+        DirectChunkGold,
         _build_retrieval,
         _flatten_flow,
         _flow_to_query,
@@ -93,14 +94,13 @@ def main() -> None:
         base_url=os.environ["EMBEDDING_SERVER_URL"], model_name=EMB_MODEL)
     yes_keys = {tuple(k.split("|", 1)) for k in probe_keys if gold_yes[k]}
 
-    # ---- production index (the authority for golds/emb ordering) ---------
-    chunk_gold = make_direct_chunk_gold(
-        None, {"embeddings_dir": os.environ.get("NORM_EMBEDDINGS_PATH", "")},
-        universes, yes_keys, keep_norm_info=True, embedding_client=emb_client)
-
-    # ---- parallel index carrying margin + the teacher's own label --------
-    # Mirrors aux_scorers.make_direct_chunk_gold's build loop exactly; the
-    # assert below proves it did not diverge.
+    # ---- ONE index, carrying margin + the teacher's own label ------------
+    # Single retrieval pass is the authority for golds, embeddings AND margin,
+    # so there is no cross-pass alignment to get wrong (a two-index version of
+    # this script diverged from production for exactly that reason). The build
+    # loop mirrors aux_scorers.make_direct_chunk_gold; production is rebuilt
+    # below purely as a cross-check, and the end-to-end guard is the J
+    # reproduction at the bottom.
     _, retriever = _build_retrieval(
         None, {"embeddings_dir": os.environ.get("NORM_EMBEDDINGS_PATH", "")},
         universes, emb_client, None,
@@ -134,21 +134,37 @@ def main() -> None:
         gold = majority_gold(norms, k=1)
         if gold is None:
             continue  # same drop rule as production
-        e = side.setdefault(key, {"golds": [], "margin": [], "top_sim": [],
+        e = side.setdefault(key, {"golds": [], "emb": [], "texts": [],
+                                  "margin": [], "top_sim": [],
                                   "teacher_appr": []})
         e["golds"].append(gold)
+        e["emb"].append(vec)
+        e["texts"].append(_flow_to_query(_flatten_flow(tflows[i])))
         e["top_sim"].append(float(sims[0]) if len(sims) else float("nan"))
         e["margin"].append(
             float(sims[0] - sims[1]) if len(sims) > 1 else float("nan"))
         e["teacher_appr"].append(df["ci_appropriateness"].iloc[i])
 
-    for key, e in side.items():
-        prod = chunk_gold.get(*key)
-        if prod is None or list(prod["golds"]) != list(e["golds"]):
-            raise RuntimeError(
-                f"side index diverged from production gold at {key} — "
-                "margin bookkeeping is not aligned; refusing to report")
-    print(f"[rescore] side index aligned with production on {len(side)} chunks")
+    index = {k: {**v, "emb": np.stack(v["emb"])} for k, v in side.items()}
+    chunk_gold = DirectChunkGold(index, emb_client.encode_batch)
+    print(f"[rescore] index: {len(index)} chunks, "
+          f"{sum(len(v['golds']) for v in index.values())} teacher flows")
+
+    # Cross-check against the production builder. Soft: a divergence does not
+    # by itself invalidate the run (the J guard below is the real gate), but it
+    # must be visible if it happens.
+    prod_gold = make_direct_chunk_gold(
+        None, {"embeddings_dir": os.environ.get("NORM_EMBEDDINGS_PATH", "")},
+        universes, yes_keys, keep_norm_info=True, embedding_client=emb_client)
+    diverged = [k for k, v in index.items()
+                if list((prod_gold.get(*k) or {}).get("golds", []))
+                != list(v["golds"])]
+    if diverged:
+        print(f"[rescore] WARNING: {len(diverged)}/{len(index)} chunks differ "
+              f"from the production builder, e.g. {diverged[:5]}")
+    else:
+        print(f"[rescore] cross-check: golds identical to production on all "
+              f"{len(index)} chunks")
 
     # ---- generate the baseline slice -------------------------------------
     from vllm import LLM, SamplingParams
