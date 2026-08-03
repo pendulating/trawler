@@ -1,18 +1,25 @@
 # @package _global_
-# K4 (revived) — external CI-benchmark eval of the k-series arms.
+# K4 (revived) — external CI-benchmark eval of the k-series (KTO) arms.
 #
 # WHY THIS RUNS AT ALL. §8 declared K4 NO-GO because no arm passed the
 # promotion gates. Those gates were computed on the held-out probe, whose gold
 # was shown (wiki §17, 2026-08-03) to agree with the teacher's own
-# `ci_appropriateness` at kappa 0.053. The NO-GO was therefore decided by a
-# defective instrument. External benchmarks do not touch that gold and are the
-# only uncontaminated measurement of what the arms learned.
+# `ci_appropriateness` at kappa 0.053 (median top1-top2 retrieval margin
+# 0.0136). The NO-GO was decided by a defective instrument. External benchmarks
+# do not touch that gold and are the only uncontaminated measurement of what
+# these arms learned.
 #
-# CELLS (5). All four arms, plus the base they started from. Arms are NOT
+# CELLS (5). All four arms, plus the base they were trained from. Arms are NOT
 # pre-selected by "best-performing": the probe is the defective instrument, so
 # selecting on it would import the defect into the eval design. SFT-CTRL is
 # retained because it is the only cell that answers "does KTO's use of
 # undesirables add anything?" on external gold.
+#
+# Model yamls follow the canonical LoRA-eval pattern
+# (dagspaces/common/conf/model/qwen3.5-9b/sft-canonical.yaml): backbone in
+# `model_source`, adapter in `lora_path`, `enable_lora` + `max_lora_rank: 64`.
+# The one departure is deliberate — `model_source` is the m2 MERGED SFT, not
+# stock Qwen3.5-9B, because that is what the arms were trained on top of.
 #
 # COMPARISON DISCIPLINE. Compare each arm to `k3-base` IN THIS SWEEP. Do not
 # compare to the v9 numbers in the paper: different SFT lineage (m2 merged SFT
@@ -21,30 +28,54 @@
 #
 # READ WITH parseable_rate. scrutinize gate-fails 12-32% on the extract task
 # (§16); if that format damage transfers, its benchmark numbers will be
-# depressed for format reasons, not reasoning. Check parseable_rate before
-# reading any scrutinize cell as a reasoning result.
+# depressed for format reasons, not reasoning. Collect with
+#   python scripts/collect_k3_eval.py --sweep <this run dir>
+# which prints every score next to its parse health.
 #
-# Known noise floors: GoldCoin sub-1pt gaps are noise (temp 0.2, 2/214 flipped
+# Known noise floors: GoldCoin sub-1pt gaps are noise (temp 0.2; 2/214 flipped
 # predictions moved macro-F1 0.9pt). ConfAIde tier2a/2b run at max_tokens=32 —
 # check finish_reason before calling a low score a parser failure.
 #
-# PREREQUISITE: judge server up at klara:8002 (PrivacyLens leakage/helpfulness).
+# Required cluster setup — PrivacyLens is the only judge-dependent benchmark:
+#   sbatch scripts/judge_server.sub    # must report /v1/models before launch
 #
 # Usage:
 #   bash scripts/run_eval_k3_arms.sh
 
+experiment:
+  name: k3_arms_ci_eval
+
 hydra:
   mode: MULTIRUN
   launcher:
+    # 5 cells, each a monitor that fans out GPU children; one shared judge
+    # server backs privacylens. All five run concurrently — array_parallelism
+    # defaults to 1 in slurm_monitor.yaml, which silently SERIALIZES a sweep
+    # (cost the k3 training trio a day on 2026-08-01).
     array_parallelism: 5
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      # Pin the engine for the whole sweep so all five cells are compared under
+      # one vLLM version rather than a per-cell mix.
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
   sweeper:
     params:
+      # Reference cell FIRST so collect_k3_eval.py's --ref default lines up.
       model: >-
         qwen3.5-9b/k3-base,
         qwen3.5-9b/k3-verdict,
         qwen3.5-9b/k3-citation,
         qwen3.5-9b/k3-scrutinize,
         qwen3.5-9b/k3-sftctrl
-
-experiment:
-  name: k3_arms_ci_eval
