@@ -49,10 +49,18 @@ hydra:
   mode: MULTIRUN
   launcher:
     # 5 cells, each a monitor that fans out GPU children; one shared judge
-    # server backs privacylens. All five run concurrently — array_parallelism
-    # defaults to 1 in slurm_monitor.yaml, which silently SERIALIZES a sweep
-    # (cost the k3 training trio a day on 2026-08-01).
-    array_parallelism: 5
+    # server backs privacylens.
+    #
+    # 3, NOT 5. The 2026-08-03 11-46-24 run used 5 and three cells lost
+    # benchmarks to `sbatch: Batch job submission failed: Socket timed out on
+    # send/recv` — five monitors submitting child GPU jobs at once wedged the
+    # SLURM controller (the same wedge that forced
+    # run_eval_sft_per_checkpoint_restart21.sh). 3 matches the canonical
+    # full-roster sweep and leaves headroom.
+    #
+    # Do NOT drop to the slurm_monitor.yaml default of 1: that silently
+    # SERIALIZES the sweep (cost the k3 training trio a day on 2026-08-01).
+    array_parallelism: 3
     setup:
       - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
       - export HYDRA_FULL_ERROR=1
