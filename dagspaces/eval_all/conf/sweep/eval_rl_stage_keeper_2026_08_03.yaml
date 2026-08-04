@@ -1,0 +1,74 @@
+# @package _global_
+# The RL stage (GRPO keeper) under the CURRENT camera-ready protocol.
+#
+# WHY A RE-RUN IS REQUIRED. The keeper's published numbers come from the
+# 2026-06-24 per-benchmark multiruns (goldcoin_v9_vs_v8_vs_sft,
+# privacylens_v9_vs_sft_vs_base, confaide_v9_vs_sft). Every one of them
+# predates the 2026-07-21 parity reviews, so none is readable by
+# notebooks/colm-camera-ready/benchmark_results.py:
+#   - GoldCoin  pre-flip denominator (dropped unparseables instead of
+#               substituting a wrong label)
+#   - PrivacyLens  pre-parser-fix (21.5% of helpfulness judgments corrupted),
+#               pre tool-pin/Thought-strip restoration, and Qwen3.6-27B-judged
+#               where the notebook requires EXPECTED_JUDGE=Gemma-4-31B-it
+#   - CIRL      the retired `cirl_vignettes` metric, not CIRL-729
+# The keeper cannot be added to the camera-ready table from those artifacts.
+# This sweep regenerates it under the same protocol as every other row.
+#
+# CELLS (2). The keeper AND its own matched SFT base. The base is not
+# optional: the table's "Qwen3.5-9B / SFT" row is `sft-canonical`
+# (2026-07-15, Gemma-4 teacher, contentless-v6), a DIFFERENT lineage from the
+# keeper's qwen-teacher-era SFT. Reading GRPO against sft-canonical would
+# charge the lineage difference to GRPO.
+#
+# Judge: Gemma-4-31B-it on klara:8002 — matches EXPECTED_JUDGE, so
+# PrivacyLens rows from this sweep ARE judge-comparable with the canonical
+# sweeps (unlike the keeper's 2026-06 rows).
+#
+# Required cluster setup:
+#   sbatch scripts/judge_server.sub     # must report /v1/models before launch
+#
+# Usage:
+#   bash scripts/run_eval_rl_stage.sh
+
+experiment:
+  name: eval_rl_stage_keeper
+
+# CIRL-729 paper protocol, matching eval_cirl729_canonical_2026_07_22: a model
+# that ignores the strict <think>/<answer> format scores -1 rather than
+# hard-failing the sanity gate with an empty cell. Without this the CIRL stage
+# ABORTS and the cell renders "—" ("we chose not to report") instead of the
+# truthful N/A ("the benchmark ran and the model is structurally unscoreable")
+# — which is exactly what happened to the k-series cells on their first pass.
+benchmarks:
+  cirl:
+    extra_args:
+      - +runtime.allow_unreliable_metrics=true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 2, not 5. The 2026-08-03 K4 sweep wedged the SLURM controller at 5
+    # ("sbatch: Socket timed out on send/recv") and again, less severely, at
+    # 3. Two cells is ample here and keeps submission pressure low.
+    array_parallelism: 2
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      model: >-
+        qwen3.5-9b/v9-base,
+        qwen3.5-9b/v9-ckpt100

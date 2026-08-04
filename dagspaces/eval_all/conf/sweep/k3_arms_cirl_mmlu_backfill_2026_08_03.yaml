@@ -1,0 +1,71 @@
+# @package _global_
+# Backfill CIRL-729 + MMLU for the five k-series cells.
+#
+# The 2026-08-03 K4 sweep (k3_arms_ci_2026_08_03) left two columns empty in the
+# camera-ready table, both for avoidable reasons:
+#
+#   CIRL  ran, but WITHOUT the paper protocol's
+#         `+runtime.allow_unreliable_metrics=true`. k3-base parses only 2.33%
+#         of the 729 actions into the strict <think>/<answer> format, so the
+#         stage hit the sanity gate and aborted before writing metrics.json.
+#         With the flag, strict-format misses score -1 (recorded, never
+#         dropped), Net always fills, and Lk/Util blank out via the notebook's
+#         own CIRL_SCORABLE_MIN bar. The cell then reads N/A — "the benchmark
+#         ran and this model is structurally unscoreable" — instead of "—",
+#         which claims we chose not to report it. Those are different claims
+#         and the notebook keeps them distinct on purpose.
+#
+#   MMLU  was excluded by `+benchmark_filter=ci_only` on the launch. The
+#         canonical rows carry MMLU, so filtering left the RL rows short a
+#         column against every other row.
+#
+# Runs ONLY these two benchmarks, so it cannot supersede any GoldCoin /
+# PrivacyLens / ConfAIde / VLM cell from the main K4 run under the notebook's
+# per-cell latest-run-wins.
+#
+# Usage:
+#   bash scripts/run_eval_k3_cirl_mmlu.sh
+
+experiment:
+  name: k3_arms_cirl_mmlu_backfill
+
+benchmark_filter:
+  include:
+    - cirl
+    - mmlu
+
+# Paper protocol, matching eval_cirl729_canonical_2026_07_22.
+benchmarks:
+  cirl:
+    extra_args:
+      - +runtime.allow_unreliable_metrics=true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 2. The 2026-08-03 K4 sweep wedged the SLURM controller at 5 and again at
+    # 3 ("sbatch: Socket timed out on send/recv"); these are cheap cells.
+    array_parallelism: 2
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      model: >-
+        qwen3.5-9b/k3-base,
+        qwen3.5-9b/k3-verdict,
+        qwen3.5-9b/k3-citation,
+        qwen3.5-9b/k3-scrutinize,
+        qwen3.5-9b/k3-sftctrl
