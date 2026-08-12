@@ -270,8 +270,9 @@ class TestMajorityGold:
 class TestFactoryAnswererGating:
     def test_direct_mode_builds_no_answerer(self):
         # The m1 wave wired the frozen answerer client into every direct-mode
-        # cell despite the core never calling it. The factory now builds it
-        # only for the retired core_mode="outcome".
+        # cell despite the core never calling it. The answerer was removed
+        # outright on 2026-08-12, so the invariant is now structural: the
+        # reward carries no answerer attribute at all.
         from dagspaces.grpo_training.stages.modular_reward import (
             make_modular_reward_from_cfg,
         )
@@ -282,5 +283,5 @@ class TestFactoryAnswererGating:
                       "reward_auxiliaries": []},
             norm_universes={},
         )
-        assert r.answerer is None
+        assert not hasattr(r, "answerer")
         assert r.core_mode == "direct"

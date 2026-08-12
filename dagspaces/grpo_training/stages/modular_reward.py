@@ -2,13 +2,16 @@
 
 The reward in three sentences (wiki/grpo_redesign/README.md): an extraction
 scores zero unless it parses and is schema-complete (``R-VALID``); a valid one
-is scored by whether a frozen answerer, reading only the extraction, correctly
-answers probe questions whose gold comes from the book's governing norms
-(``R-OUTCOME``), plus optional deletable auxiliaries (judge grounding, wrong-book
-contrast); a vignette row is an 8-item deontic battery scored by deontic distance
-+ citation. Rows where probes cannot run (no-flow declarations, and every
-completion on a gold-NO chunk) are scored by a fixed abstention table
+is scored by ``R-DIRECT`` — retrieve the nearest ``governs_info_flow`` norm,
+derive a reference label from its deontic force x act polarity, and score the
+policy's own appropriateness label against it — plus optional deletable
+auxiliaries (judge grounding, wrong-book contrast); a vignette row is an 8-item
+deontic battery scored by deontic distance + citation. No-flow declarations and
+every completion on a gold-NO chunk take a fixed abstention table
 (``A-ABSTAIN``) with no server calls.
+
+The frozen-answerer core (``R-OUTCOME``) that this stack originally shipped with
+was removed 2026-08-12; ``core_mode`` now accepts only ``"direct"``.
 
 This is additive m-series code (the parallel-stack rule,
 wiki/grpo_redesign/migration.md): it is selected only when
@@ -18,7 +21,6 @@ contracts and never reimplements them:
 
 * :mod:`probes` — ``sample_probes`` / ``apply_null_filter`` (probe attachment).
 * :mod:`deontic_distance` — ``parse_battery_completion`` / ``score_battery``.
-* :mod:`answerer_client` — ``AnswererClient`` / ``make_answerer_from_cfg``.
 * :mod:`deontic` — ``FORCE_TO_GOLD`` and the ``candidate_appropriateness_*``
   diagnostic (``diag/direction_consistency`` only — never a reward term).
 
@@ -40,7 +42,6 @@ from typing import Any, Callable
 from dagspaces.common.json_extraction import extract_json_from_text
 from dagspaces.common.vllm_inference import _strip_think_blocks
 
-from .answerer_client import AnswererClient
 from .deontic import FORCE_TO_GOLD, candidate_appropriateness_consistency
 from .deontic_distance import parse_battery_completion, score_battery
 from .probes import apply_null_filter, sample_probes
@@ -66,9 +67,10 @@ CORE_FIELDS: tuple[str, ...] = (
 )
 
 # Fields the R-VALID length cap applies to (criterion 5, anti-content-stuffing).
-# Exactly the answerer-visible structured fields (answerer_client._STRUCTURED_FIELDS,
-# which now includes ``context`` per the 2026-07-24 whitelist decision) — a cap on
-# any field the answerer reads closes the smuggling channel.
+# Exactly the structured fields the retired answerer could read (its
+# _STRUCTURED_FIELDS whitelist, which gained ``context`` on 2026-07-24). The
+# answerer is gone, but the cap is what keeps a completion from smuggling
+# unbounded text through the extraction, so the field set stays as-is.
 CAPPED_FIELDS: tuple[str, ...] = (
     "sender",
     "recipient",
@@ -77,19 +79,15 @@ CAPPED_FIELDS: tuple[str, ...] = (
     "transmission_principle",
     "context",
     "appropriateness",
-    # v2 (2026-07-25): norms_invoked became answerer-visible, so it joins the
-    # anti-content-stuffing cap. `appropriateness` stays capped although it is
-    # no longer sent — capping a field the answerer cannot see costs nothing
-    # and keeps the gate's contract stable if the whitelist changes again.
+    # v2 (2026-07-25): norms_invoked joined the anti-content-stuffing cap.
     "norms_invoked",
 )
 
 # Per-flow field token cap (reward-valid.md: "order-of-64 tokens/field").
 FIELD_CAP_TOKENS = 64
 
-# The answerer group-failure fallback and the judge group-failure fallback share
-# one constant: deliberate zero-advantage neutrality, never noise
-# (reward-outcome.md "Failure handling"; reward-ground.md "Failure fallback").
+# The judge group-failure fallback: deliberate zero-advantage neutrality, never
+# noise (reward-ground.md "Failure fallback").
 GROUP_NEUTRAL = 0.5
 
 # Floor for a VALID, gold-YES, flow-bearing (normal-path) completion's composite
@@ -391,7 +389,6 @@ class ModularReward:
         # a rejected true match becomes a recall miss that punishes the
         # completion directly, a false accept is diluted by greedy 1:1.
         direct_match_threshold: float = 0.55,
-        answerer: AnswererClient | None = None,
         ground_scorer: AuxScorer | None = None,
         contrast_scorer: AuxScorer | None = None,
         abstain: Mapping[str, float] | None = None,
@@ -403,12 +400,17 @@ class ModularReward:
     ):
         self.auxiliaries = [a for a in _AUX_NAMES if a in set(auxiliaries)]
         self.reward_core = bool(reward_core)
-        # "direct"  — R-DIRECT: the norm classifies the flow; score the policy's
-        #             own appropriateness label against it. No model in the loop.
-        # "outcome" — the legacy frozen-answerer core. Retained only so the
-        #             negative result stays reproducible (reward-direct-spec.md);
-        #             not used by any proposed keeper config.
+        # "direct" — R-DIRECT: the norm classifies the flow; score the policy's
+        # own appropriateness label against it. No model in the loop. The legacy
+        # frozen-answerer core ("outcome") was removed 2026-08-12 along with
+        # answerer_client.py; it is now a hard error rather than a silent
+        # fall-through to an unwired core.
         self.core_mode = str(core_mode)
+        if self.core_mode != "direct":
+            raise ValueError(
+                f"core_mode={self.core_mode!r} is no longer supported. The frozen-answerer "
+                f"'outcome' core was removed with answerer_client.py; use core_mode: direct."
+            )
         self.weights = compute_module_weights(self.auxiliaries, self.reward_core)
         self._direct_gold_fn = direct_gold_fn
         # Chunk-denominator R-DIRECT (R2, 2026-07-28): when a DirectChunkGold
@@ -419,7 +421,6 @@ class ModularReward:
         # Without an index (tests, missing chunks) the per-flow path applies.
         self._direct_chunk_gold = direct_chunk_gold
         self.direct_match_threshold = float(direct_match_threshold)
-        self.answerer = answerer
         self._ground_scorer = ground_scorer
         self._contrast_scorer = contrast_scorer
         _ab = dict(abstain or {})
@@ -447,7 +448,6 @@ class ModularReward:
         self._call_count = 0
         self._trace_writes = 0
         # Per-call scratch: completion index -> {probe_ids, golds, answers}.
-        self._probe_io: dict[int, dict[str, Any]] = {}
         # Per-call scratch for the chunk-denominator direct core: completion
         # index -> {direct_flows, direct_missed, direct_spurious} (R5: traces
         # must carry per-flow gold/pred so discrimination is recomputable from
@@ -635,7 +635,6 @@ class ModularReward:
         n = len(completions)
         # Clear per-call scratch at ENTRY: an abort raised mid-call (embedding
         # fail-loud) must not leak stale io rows into a later call's traces.
-        self._probe_io = {}
         self._direct_io = {}
         self._vignette_io = {}
         texts = [self._extract_text(c) for c in completions]
@@ -651,7 +650,7 @@ class ModularReward:
         # normal_groups: prompt_key -> list of global indices (gold-YES, valid,
         # flow-bearing extractions — the only rows the outcome/aux path scores).
         normal_groups: dict[str, list[int]] = {}
-        gate_pass_flows: dict[int, list] = {}  # i -> parsed flows for the answerer
+        gate_pass_flows: dict[int, list] = {}  # i -> parsed flows for the core
         route: dict[int, dict[str, Any]] = {}  # i -> trace detail (observational)
 
         for i in range(n):
@@ -718,10 +717,6 @@ class ModularReward:
                             gate_pass_flows.get(i, []), metas[i], acc
                         )
                     outcome_term[i] = GROUP_NEUTRAL if val is None else val
-            elif self.reward_core and self.answerer is not None:
-                self._score_outcome_group(
-                    group, gate_pass_flows, metas, outcome_term, acc
-                )
             elif self.reward_core:  # core active but nothing wired
                 for i in group:
                     outcome_term[i] = GROUP_NEUTRAL
@@ -781,7 +776,6 @@ class ModularReward:
                     row["aux_terms"] = {
                         k: aux_term[k].get(i) for k in self.auxiliaries
                     }
-                    row.update(self._probe_io.get(i, {}))
                     row.update(self._direct_io.get(i, {}))
                 elif det.get("route") == "vignette":
                     row["battery_id"] = meta.get("battery_id")
@@ -792,7 +786,6 @@ class ModularReward:
                 rows.append(row)
             self._log_trace(rows)
         self._call_count += 1
-        self._probe_io = {}
         self._direct_io = {}
         self._vignette_io = {}
         return scores
@@ -973,69 +966,6 @@ class ModularReward:
             return None
         return sum(sum(v) / len(v) for v in by_class.values()) / len(by_class)
 
-    def _score_outcome_group(
-        self,
-        group: list[int],
-        gate_pass_flows: dict[int, list],
-        metas: list[dict],
-        outcome_term: dict[int, float],
-        acc: "_MetricAccumulator",
-    ) -> None:
-        """R-OUTCOME over one group; group-neutral 0.5 if any answerer call fails.
-
-        Per completion, the frozen answerer answers the row's pre-sampled probes
-        from the *structured extraction alone*; the term is mean EM
-        (``cannot_determine`` scores 0). If any completion's answerer reply fails
-        after one retry, the whole group gets uniform 0.5 for this term — zero
-        advantage (reward-outcome.md "Failure handling").
-        """
-        per_completion_em: dict[int, float] = {}
-        group_failed = False
-
-        for i in group:
-            probes = metas[i].get("probes") or []
-            probe_texts = [p.get("prompt_text", "") for p in probes]
-            golds = [p.get("gold") for p in probes]
-            if not probe_texts:
-                # Empty-pool chunks are excluded at build; defensive neutral.
-                per_completion_em[i] = GROUP_NEUTRAL
-                continue
-            flows = gate_pass_flows.get(i, [])
-            # extraction_token_len drift diagnostic (reward-outcome.md): total
-            # answerer-visible field tokens per extraction — a content-stuffing
-            # canary (the field caps are the actual defense).
-            acc.extraction_lens.append(
-                sum(_field_token_len(v) for f in flows for v in dict(f).values())
-                if isinstance(flows, list) else 0
-            )
-            result = self.answerer.answer_probes(flows, probe_texts)
-            if result.get("failed"):
-                group_failed = True
-                continue
-            answers = result.get("answers", [])
-            # Class-balanced EM (2026-07-25): the training probe set is 88.2%
-            # gold-yes, so micro-EM hands a blanket-"yes" extraction 0.882.
-            # Macro prices it at 0.5 wherever both classes are present.
-            per_completion_em[i] = AnswererClient.em_macro(answers, golds)
-            acc.observe_probes(answers, golds)
-            # Retain answers+golds so alternative scorings (micro-EM, per-class,
-            # re-derived gold) stay recoverable from traces after the fact.
-            self._probe_io[i] = {
-                "probe_ids": [p.get("probe_id") for p in probes],
-                "golds": list(golds),
-                "answers": list(answers),
-            }
-
-        if group_failed:
-            acc.answerer_failed += len(group)
-            for i in group:
-                outcome_term[i] = GROUP_NEUTRAL
-        else:
-            for i in group:
-                outcome_term[i] = per_completion_em.get(i, GROUP_NEUTRAL)
-        acc.n_outcome += len(group)
-
-
 # ---------------------------------------------------------------------------
 # W&B metric accumulation
 # ---------------------------------------------------------------------------
@@ -1057,14 +987,8 @@ class _MetricAccumulator:
         self.n_gold_yes = 0
         self.goldno_extraction = 0
         self.n_gold_no = 0
-        # outcome
-        self.n_outcome = 0
-        self.answerer_failed = 0
-        self.em_by_force: dict[str, list[float]] = {"yes": [], "no": []}
-        self.cannot_determine = 0
-        self.n_probe_slots = 0
+        # within-group std of the core term — the advantage carrier
         self.group_spreads: list[float] = []
-        self.extraction_lens: list[int] = []  # answerer-visible field token count
         # direct core
         self.direct_scored = 0
         self.direct_unscored = 0
@@ -1103,17 +1027,6 @@ class _MetricAccumulator:
                 self.wrong_abstention += 1
         elif gold is False:
             self.goldno_extraction += 1
-
-    def observe_probes(self, answers: list[str], golds: list[str]) -> None:
-        for ans, gold in zip(answers, golds):
-            self.n_probe_slots += 1
-            if ans == "cannot_determine":
-                self.cannot_determine += 1
-                em = 0.0
-            else:
-                em = 1.0 if ans == gold else 0.0
-            if gold in ("yes", "no"):
-                self.em_by_force[gold].append(em)
 
     def observe_group_spread(self, terms: list[float]) -> None:
         if len(terms) >= 2:
@@ -1161,34 +1074,13 @@ class _MetricAccumulator:
                 self.goldno_extraction / self.n_gold_no
             )
 
-        # reward/outcome/*
-        if self.n_outcome:
-            all_em = self.em_by_force["yes"] + self.em_by_force["no"]
-            if all_em:
-                out["reward/outcome/em_mean"] = sum(all_em) / len(all_em)
-            if self.em_by_force["yes"]:
-                out["reward/outcome/em_mean_by_force/yes"] = sum(
-                    self.em_by_force["yes"]
-                ) / len(self.em_by_force["yes"])
-            if self.em_by_force["no"]:
-                out["reward/outcome/em_mean_by_force/no"] = sum(
-                    self.em_by_force["no"]
-                ) / len(self.em_by_force["no"])
-            if self.n_probe_slots:
-                out["reward/outcome/cannot_determine_frac"] = (
-                    self.cannot_determine / self.n_probe_slots
-                )
-            out["reward/outcome/answerer_failed_frac"] = (
-                self.answerer_failed / self.n_outcome
+        # core/group_spread: within-group std of the core term. This was
+        # previously nested under `if self.n_outcome:` alongside the answerer
+        # metrics, so it never emitted in direct mode — the only mode that runs.
+        if self.group_spreads:
+            out["reward/core/group_spread"] = sum(self.group_spreads) / len(
+                self.group_spreads
             )
-            if self.group_spreads:
-                out["reward/outcome/group_spread"] = sum(self.group_spreads) / len(
-                    self.group_spreads
-                )
-            if self.extraction_lens:
-                out["reward/outcome/extraction_token_len"] = sum(
-                    self.extraction_lens
-                ) / len(self.extraction_lens)
 
         # reward/direct/*
         if self.direct_scored:
@@ -1329,7 +1221,6 @@ def make_modular_reward_from_cfg(
     grpo_cfg: Any,
     norm_universes: dict[str, list] | None = None,
     *,
-    answerer: AnswererClient | None = None,
     direct_gold_fn: "DirectGoldFn | None" = None,
     ground_scorer: AuxScorer | None = None,
     contrast_scorer: AuxScorer | None = None,
@@ -1339,8 +1230,9 @@ def make_modular_reward_from_cfg(
     """Build a :class:`ModularReward` from the m-series config keys.
 
     Consumes ``training.grpo.{reward_auxiliaries, reward_core, abstain,
-    answerer, probes}`` (m_series.yaml). The frozen answerer is built via
-    :func:`answerer_client.make_answerer_from_cfg` unless one is injected. The
+    probes}`` (m_series.yaml). The ``answerer`` node is still read, but only by
+    :func:`aux_scorers._resolve_judge_url` as a base-URL fallback — the frozen
+    answerer client itself was removed with the outcome core. The
     ground/contrast auxiliaries, when active, are wired to the keeper's
     ``OnlineRGround`` listwise judge through thin adapters
     (:func:`_make_aux_scorers`) — importing that client, never editing it. Tests
@@ -1350,14 +1242,6 @@ def make_modular_reward_from_cfg(
     reward_core = bool(grpo_cfg.get("reward_core", True))
     abstain = dict(grpo_cfg.get("abstain", {}) or {})
     core_mode = str(grpo_cfg.get("core_mode", "direct") or "direct")
-
-    # The frozen answerer belongs to the RETIRED outcome core only. Building
-    # it in direct mode (as the m1 wave did) wires a dead client to a server
-    # role the run never uses — misleading in configs and metadata.
-    if answerer is None and reward_core and core_mode == "outcome":
-        from .answerer_client import make_answerer_from_cfg
-
-        answerer = make_answerer_from_cfg(cfg)
 
     active_aux = [a for a in _AUX_NAMES if a in set(auxiliaries)]
     if active_aux and (ground_scorer is None and contrast_scorer is None):
@@ -1378,7 +1262,6 @@ def make_modular_reward_from_cfg(
             0.55 if grpo_cfg.get("direct_match_threshold") is None
             else grpo_cfg.get("direct_match_threshold")
         ),
-        answerer=answerer,
         ground_scorer=ground_scorer,
         contrast_scorer=contrast_scorer,
         abstain=abstain,
@@ -1781,7 +1664,7 @@ def _make_aux_scorers(
     reward-contrast.md), reusing the keeper's frozen judge + retrieval plumbing.
 
     Delegates to :func:`aux_scorers.make_aux_scorers`, which builds the shared
-    gemma-4-31b judge (same server as the answerer) plus the keeper's
+    gemma-4-31b judge plus the keeper's
     ``EmbeddingClient`` / ``NormRetriever`` and returns the two injected
     callables. Each is ``None`` when its auxiliary is inactive. Tests bypass this
     entirely by passing ``ground_scorer`` / ``contrast_scorer`` to

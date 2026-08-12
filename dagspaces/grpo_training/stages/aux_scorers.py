@@ -386,8 +386,8 @@ class _ContrastScorer:
 # Factory (config → the two callables; reuses the keeper's client plumbing)
 # ---------------------------------------------------------------------------
 def _cfg_get(node: Any, key: str, default: Any = None) -> Any:
-    """Read ``key`` from a dict-like or attr-like config node (mirrors
-    answerer_client._cfg_get so config access is uniform across m-series code)."""
+    """Read ``key`` from a dict-like or attr-like config node — uniform access
+    whether Hydra hands us a DictConfig, a plain dict, or an object."""
     if node is None:
         return default
     if isinstance(node, Mapping):
@@ -404,7 +404,8 @@ def _cfg_get(node: Any, key: str, default: Any = None) -> Any:
 
 def _resolve_judge_url(grpo_cfg: Any) -> str:
     """Resolve the aux judge URL — the SHARED gemma-4-31b server, same plumbing
-    as the answerer. Order: an explicit ``aux_judge``/``answerer`` ``base_url_env``
+    as the retired answerer used. Order: an explicit ``aux_judge``/``answerer``
+    ``base_url_env``
     env var → an explicit ``base_url`` → ``VLLM_SERVER_URL`` → localhost default.
     """
     node = _cfg_get(grpo_cfg, "aux_judge", None) or _cfg_get(grpo_cfg, "answerer", None)
@@ -431,7 +432,7 @@ def make_aux_scorers(
     """Build the ``(ground_scorer, contrast_scorer)`` pair for the active auxiliaries.
 
     The judge is **gemma-4-31b on the shared vLLM server** (same URL resolution
-    as the answerer). Retrieval reuses the keeper's ``EmbeddingClient`` +
+    as the judge). Retrieval reuses the keeper's ``EmbeddingClient`` +
     ``NormRetriever`` (Qwen3-Embedding-8B). Each returned entry is ``None`` when
     its auxiliary is not active, so the caller can unpack unconditionally.
 

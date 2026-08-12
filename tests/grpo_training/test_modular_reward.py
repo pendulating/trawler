@@ -1,13 +1,13 @@
 """Tests for `ModularReward` — the m-series modular reward stack (redesign item 4).
 
-Mocks the frozen answerer (no live server) and the listwise-judge auxiliaries
-(injected callables), so every test exercises the reward *core* — gate, routing
-table, outcome EM, the 2:1 weight rule, group-neutral failure fallback,
+Injects the direct-gold function and the listwise-judge auxiliaries as
+callables, so every test exercises the reward *core* — gate, routing table,
+R-DIRECT agreement, the 2:1 weight rule, group-neutral failure fallback,
 per-module W&B metrics — with no GPU and no network.
 
-Covers wiki/grpo_redesign/{reward-valid,reward-abstain,reward-outcome,
+Covers wiki/grpo_redesign/{reward-valid,reward-abstain,reward-direct-spec,
 reward-ground,reward-contrast,ablation-protocol,migration}.md and the frozen
-wave-1 contracts (probes / deontic_distance / answerer_client) it composes.
+wave-1 contracts (probes / deontic_distance) it composes.
 """
 
 from __future__ import annotations
@@ -28,48 +28,24 @@ from dagspaces.grpo_training.stages.modular_reward import (
 # ---------------------------------------------------------------------------
 # Mocks
 # ---------------------------------------------------------------------------
-class FakeAnswerer:
-    """Frozen-answerer stub: returns a constant answer per probe slot, or fails.
+class CountingGold:
+    """Direct-gold stub that agrees with the completion and counts invocations.
 
-    ``answer`` is the token returned for every probe (so a caller can drive
-    EM = 1 by making the probe golds match it, or EM = 0 by mismatching).
-    ``fail`` forces the retry-exhausted failure path. Exposes the same
-    ``answer_probes`` shape as :class:`AnswererClient`; ``em`` is the real
-    static method (imported from the frozen client) via ModularReward.
+    Replaces the frozen-answerer mocks: the tests that used ``.calls`` were
+    asserting that the CORE is not consulted on abstention rows, which is a
+    property of the routing table, not of any particular core.
     """
 
-    def __init__(self, answer: str = "yes", fail: bool = False):
-        self.answer = answer
-        self.fail = fail
+    def __init__(self, agree: bool = True):
+        self.agree = agree
         self.calls = 0
 
-    def answer_probes(self, extraction_flows, probes):
+    def __call__(self, flow, source_id):
         self.calls += 1
-        if self.fail:
-            return {
-                "answers": ["cannot_determine"] * len(probes),
-                "failed": True,
-                "raw": "",
-            }
-        return {"answers": [self.answer] * len(probes), "failed": False, "raw": ""}
-
-
-class FlakyAnswerer(FakeAnswerer):
-    """Succeeds on every call except the ``fail_on`` (1-indexed) one."""
-
-    def __init__(self, fail_on: int = 2, answer: str = "yes"):
-        super().__init__(answer=answer)
-        self.fail_on = fail_on
-
-    def answer_probes(self, extraction_flows, probes):
-        self.calls += 1
-        if self.calls == self.fail_on:
-            return {
-                "answers": ["cannot_determine"] * len(probes),
-                "failed": True,
-                "raw": "",
-            }
-        return {"answers": [self.answer] * len(probes), "failed": False, "raw": ""}
+        label = flow.get("appropriateness", "appropriate")
+        if not self.agree:
+            label = "inappropriate" if label == "appropriate" else "appropriate"
+        return (label, 1.0)
 
 
 def const_aux(value: float):
@@ -89,6 +65,9 @@ def extraction(sender="alice", **over) -> str:
         "subject": "carol",
         "information_type": "medical history",
         "transmission_principle": "confidentiality",
+        # R-DIRECT scores the policy's own label against the governing norm's
+        # reference label, so the fixture must carry one.
+        "appropriateness": "appropriate",
     }
     flow.update(over)
     return json.dumps(
@@ -219,15 +198,22 @@ def test_gate_strips_think_block():
 # ---------------------------------------------------------------------------
 # A-ABSTAIN routing table (all rows, incl. unknown gold)
 # ---------------------------------------------------------------------------
-def _reward(auxiliaries=(), reward_core=True, answerer=None, **kw):
-    # The class default is core_mode="direct" (R-DIRECT). These legacy tests
-    # exercise the retained frozen-answerer core, which is kept only so the
-    # negative result in reward-direct-spec.md stays reproducible.
-    kw.setdefault("core_mode", "outcome")
+def _reward(auxiliaries=(), reward_core=True, **kw):
+    """A scored-path reward for the core-agnostic tests below.
+
+    These cover A-ABSTAIN routing, R-VALID gating and weighting — none of which
+    depend on which core runs. They used the frozen-answerer core until it was
+    removed (2026-08-12); they now use R-DIRECT with a constant gold stub, which
+    keeps every completion on the scored path exactly as before.
+    """
+    kw.setdefault("core_mode", "direct")
+    kw.setdefault(
+        "direct_gold_fn",
+        lambda flow, source_id: (flow.get("appropriateness", "appropriate"), 1.0),
+    )
     return ModularReward(
         auxiliaries=auxiliaries,
         reward_core=reward_core,
-        answerer=answerer or FakeAnswerer(answer="yes"),
         abstain={"wrong": 0.1, "correct": 0.6, "unknown": 0.4},
         **kw,
     )
@@ -270,8 +256,8 @@ def test_gate_fail_scores_zero_beneath_table():
 
 
 def test_goldno_extraction_makes_no_server_calls():
-    ans = FakeAnswerer(answer="yes")
-    r = _reward(reward_core=True, answerer=ans)
+    ans = CountingGold()
+    r = _reward(reward_core=True, direct_gold_fn=ans)
     r.prompt_metadata = {"a": extract_meta(False), "b": extract_meta(None)}
     r(prompts=["a", "b"], completions=[extraction(), extraction()])
     assert ans.calls == 0  # gold-NO / unknown extractions never reach the answerer
@@ -322,25 +308,25 @@ def test_full_cell_combines_outcome_and_auxiliaries():
     r = ModularReward(
         auxiliaries=["ground", "contrast"],
         reward_core=True,
-        core_mode="outcome",   # legacy core, retained for the negative result
-        answerer=FakeAnswerer(answer="yes"),
+        core_mode="direct",
+        direct_gold_fn=CountingGold(),
         ground_scorer=const_aux(0.8),
         contrast_scorer=const_aux(0.4),
         abstain={"wrong": 0.1, "correct": 0.6, "unknown": 0.4},
     )
     r.prompt_metadata = {"p": extract_meta(True, probes=[probe("yes", "p1"), probe("no", "p2")])}
-    # answerer says "yes" to both; gold = [yes, no] → EM = 0.5.
+    # The gold stub agrees with the completion's label ⇒ R-DIRECT = 1.0. What
+    # this test pins is the 2:1 weight combination, not the core's own value.
     scores = r(prompts=["p"], completions=[extraction()])
-    expected = 0.5 * 0.5 + 0.25 * 0.8 + 0.25 * 0.4
+    expected = 0.5 * 1.0 + 0.25 * 0.8 + 0.25 * 0.4
     assert scores[0] == pytest.approx(expected)
 
 
 def test_minus_outcome_cell_skips_answerer():
-    ans = FakeAnswerer(answer="yes")
+    ans = CountingGold()
     r = ModularReward(
         auxiliaries=["ground", "contrast"],
         reward_core=False,  # -outcome
-        answerer=ans,
         ground_scorer=const_aux(0.8),
         contrast_scorer=const_aux(0.4),
         abstain={"wrong": 0.1, "correct": 0.6, "unknown": 0.4},
@@ -349,30 +335,6 @@ def test_minus_outcome_cell_skips_answerer():
     scores = r(prompts=["p"], completions=[extraction()])
     assert ans.calls == 0  # no outcome term ⇒ answerer never called
     assert scores[0] == pytest.approx(0.5 * 0.8 + 0.5 * 0.4)
-
-
-# ---------------------------------------------------------------------------
-# Group-neutral answerer-failure fallback
-# ---------------------------------------------------------------------------
-def test_group_neutral_answerer_failure():
-    # Two gold-YES extraction completions share one prompt (one group). The
-    # answerer fails on the 2nd call → the WHOLE group gets outcome 0.5.
-    r = _reward(reward_core=True, answerer=FlakyAnswerer(fail_on=2))
-    r.prompt_metadata = {"g": extract_meta(True)}
-    scores = r(prompts=["g", "g"], completions=[extraction("a"), extraction("b")])
-    assert scores[0] == pytest.approx(0.5)  # core cell → 1.0 * 0.5
-    assert scores[1] == pytest.approx(0.5)
-    assert r.last_metrics["reward/outcome/answerer_failed_frac"] == pytest.approx(1.0)
-
-
-def test_separate_groups_isolate_failure():
-    # Two gold-YES completions on DIFFERENT prompts are separate groups; a
-    # failure in one does not poison the other.
-    r = _reward(reward_core=True, answerer=FlakyAnswerer(fail_on=2))
-    r.prompt_metadata = {"g1": extract_meta(True), "g2": extract_meta(True)}
-    scores = r(prompts=["g1", "g2"], completions=[extraction("a"), extraction("b")])
-    assert scores[0] == pytest.approx(1.0)  # g1 group succeeded (EM=1)
-    assert scores[1] == pytest.approx(0.5)  # g2 group failed → neutral
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +376,7 @@ def test_attach_probes_different_chunk_can_differ():
 def test_wandb_metric_dict_shape():
     gold_items = [{"gold_force": "prohibited", "articulation": "keep private"}]
     vig = json.dumps({"items": [{"id": 1, "force": "permitted", "governing_norm": "x"}]})
-    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"))
+    r = _reward(reward_core=True)
     r.prompt_metadata = {
         "yy": extract_meta(True, probes=[probe("yes", "a"), probe("no", "b")]),
         "yn": extract_meta(True),  # will be answered too
@@ -425,13 +387,11 @@ def test_wandb_metric_dict_shape():
     completions = [extraction(), no_flow(), no_flow(), "garbage", vig]
     r(prompts=["yy", "yn", "nn", "bad", "v"], completions=completions)
     m = r.last_metrics
-    # outcome namespace
-    assert "reward/outcome/em_mean" in m
-    assert "reward/outcome/em_mean_by_force/yes" in m
-    assert "reward/outcome/em_mean_by_force/no" in m
-    assert "reward/outcome/cannot_determine_frac" in m
-    assert "reward/outcome/answerer_failed_frac" in m
-    assert "reward/outcome/group_spread" in m
+    # core namespace. The reward/outcome/* EM keys went with the frozen
+    # answerer; group_spread survives and now emits in direct mode, where it
+    # was previously nested under the answerer's `if self.n_outcome:` guard.
+    assert "reward/core/group_spread" in m
+    assert "reward/direct/agreement_mean" in m
     # vignette namespace
     assert "vignette/antithesis_frac" in m
     assert "vignette/hedge_frac" in m
@@ -441,17 +401,6 @@ def test_wandb_metric_dict_shape():
     assert "diag/direction_consistency" in m
     # gate_frac reflects the one garbage completion out of four extract rows
     assert m["reward/valid/gate_frac"] == pytest.approx(0.75)
-
-
-def test_metrics_by_force_values():
-    # answerer says "yes"; probe golds one yes one no → yes-force EM 1, no 0.
-    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"))
-    r.prompt_metadata = {"p": extract_meta(True, probes=[probe("yes", "a"), probe("no", "b")])}
-    r(prompts=["p"], completions=[extraction()])
-    m = r.last_metrics
-    assert m["reward/outcome/em_mean_by_force/yes"] == pytest.approx(1.0)
-    assert m["reward/outcome/em_mean_by_force/no"] == pytest.approx(0.0)
-    assert m["reward/outcome/em_mean"] == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +437,6 @@ def test_active_aux_without_scorer_raises():
     r = ModularReward(
         auxiliaries=["ground"],
         reward_core=True,
-        answerer=FakeAnswerer(answer="yes"),
         abstain={"wrong": 0.1, "correct": 0.6, "unknown": 0.4},
     )
     r.prompt_metadata = {"p": extract_meta(True)}
@@ -541,7 +489,7 @@ def test_goldno_chunks_kept_as_probeless_abstain_rows(tmp_path):
         "prescreen": {"target_n": 10},
         "battery": {},
     }
-    rf = _reward()
+    rf = _reward(direct_gold_fn=None)
     dataset, metadata = build_modular_dataset(
         cfg=None, grpo_cfg=grpo_cfg, chunks_df=_chunks_df(),
         norm_universes={}, reward_fn=rf, tokenizer=_StubTokenizer(),
@@ -580,14 +528,15 @@ from dagspaces.grpo_training.stages.modular_reward import (  # noqa: E402
 
 
 def test_valid_extraction_all_wrong_probes_floored_above_abstention():
-    # core cell, answerer says "yes" but gold is "no" ⇒ EM = 0 for the extraction.
+    # core cell; the governing norm disagrees with the policy's label ⇒
+    # R-DIRECT = 0 for the extraction.
     prompts = ["ext", "abs"]
     completions = [extraction(), no_flow()]
     meta = {
-        "ext": extract_meta(True, probes=[probe("no", "p1")]),  # gold-YES, EM=0
+        "ext": extract_meta(True, probes=[probe("no", "p1")]),  # gold-YES, core=0
         "abs": extract_meta(True),                              # gold-YES no-flow → 0.1
     }
-    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"))
+    r = _reward(reward_core=True, direct_gold_fn=CountingGold(agree=False))
     r.prompt_metadata = meta
     scores = r(prompts=prompts, completions=completions)
     assert scores[0] == pytest.approx(VALID_PATH_FLOOR)  # not 0.0
@@ -600,7 +549,7 @@ def test_valid_extraction_all_wrong_probes_floored_above_abstention():
 
 def test_valid_floor_does_not_depress_good_extractions():
     # EM = 1 must stay 1.0 (floor only binds when composite < floor).
-    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"))
+    r = _reward(reward_core=True)
     r.prompt_metadata = {"e": extract_meta(True, probes=[probe("yes", "p1")])}
     assert r(prompts=["e"], completions=[extraction()])[0] == pytest.approx(1.0)
 
@@ -619,16 +568,14 @@ def test_embedding_abort_propagates_not_neutralized():
     abort = RuntimeError(
         "[EmbeddingClient] 3 consecutive ... aborting instead of training on zeroed R_ground"
     )
-    r = _reward(auxiliaries=("ground",), answerer=FakeAnswerer(answer="yes"),
-                ground_scorer=_raising_aux(abort))
+    r = _reward(auxiliaries=("ground",),                 ground_scorer=_raising_aux(abort))
     r.prompt_metadata = {"e": extract_meta(True, probes=[probe("yes", "p1")])}
     with pytest.raises(RuntimeError, match="aborting instead of training"):
         r(prompts=["e"], completions=[extraction()])
 
 
 def test_ordinary_aux_error_still_group_neutral():
-    r = _reward(auxiliaries=("ground",), answerer=FakeAnswerer(answer="yes"),
-                ground_scorer=_raising_aux(ValueError("transient judge hiccup")))
+    r = _reward(auxiliaries=("ground",),                 ground_scorer=_raising_aux(ValueError("transient judge hiccup")))
     r.prompt_metadata = {"e": extract_meta(True, probes=[probe("yes", "p1")])}
     scores = r(prompts=["e"], completions=[extraction()])  # must not raise
     assert len(scores) == 1
@@ -674,7 +621,7 @@ def test_extract_meta_carries_chunk_text(tmp_path):
         "task_mix": {"extract": 1.0, "vignette": 0.0},
         "prescreen": {"target_n": 10}, "battery": {},
     }
-    rf = _reward()
+    rf = _reward(direct_gold_fn=None)
     build_modular_dataset(
         cfg=None, grpo_cfg=grpo_cfg, chunks_df=_chunks_df(),
         norm_universes={}, reward_fn=rf, tokenizer=_StubTokenizer(),
@@ -698,8 +645,7 @@ def _read_traces(path):
 
 def test_traces_written_for_every_route(tmp_path):
     trace = tmp_path / "reward_traces.jsonl"
-    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"),
-                trace_log_path=str(trace))
+    r = _reward(reward_core=True,                 trace_log_path=str(trace))
     r.prompt_metadata = {
         "scored": extract_meta(True, probes=[probe("yes", "p1")]),
         "abst":   extract_meta(False),
@@ -717,26 +663,8 @@ def test_traces_written_for_every_route(tmp_path):
         assert "score" in row and isinstance(row["score"], (int, float))
 
 
-def test_trace_scored_row_retains_probe_io_for_posthoc_rescoring(tmp_path):
-    # answers+golds must survive so micro-EM (or any re-derived gold) can be
-    # recomputed from traces without re-running the answerer.
-    trace = tmp_path / "reward_traces.jsonl"
-    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"),
-                trace_log_path=str(trace))
-    r.prompt_metadata = {"p": extract_meta(
-        True, probes=[probe("yes", "p1"), probe("no", "p2")])}
-    r(prompts=["p"], completions=[extraction()])
-
-    row = next(x for x in _read_traces(trace) if x["route"] == "scored")
-    assert row["golds"] == ["yes", "no"]
-    assert row["answers"] == ["yes", "yes"]
-    assert row["probe_ids"] == ["p1", "p2"]
-    # macro-EM of one right / one wrong across two classes = 0.5
-    assert row["outcome_term"] == pytest.approx(0.5)
-
-
 def test_traces_disabled_when_no_path(tmp_path):
-    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"))
+    r = _reward(reward_core=True)
     r.prompt_metadata = {"p": extract_meta(True)}
     r(prompts=["p"], completions=[extraction()])  # must not raise
     assert not list(tmp_path.iterdir())
@@ -744,8 +672,7 @@ def test_traces_disabled_when_no_path(tmp_path):
 
 def test_trace_failure_never_breaks_scoring(tmp_path):
     # Unwritable path: scoring must still return normally.
-    r = _reward(reward_core=True, answerer=FakeAnswerer(answer="yes"),
-                trace_log_path="/nonexistent-dir/deep/reward_traces.jsonl")
+    r = _reward(reward_core=True,                 trace_log_path="/nonexistent-dir/deep/reward_traces.jsonl")
     r.prompt_metadata = {"p": extract_meta(True)}
     out = r(prompts=["p"], completions=[extraction()])
     assert len(out) == 1

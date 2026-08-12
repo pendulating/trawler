@@ -150,10 +150,11 @@ probes:
   k_max: 4
   p_null: 0.8
 
-# RETIRED-CORE client (2026-07-28): consumed ONLY when core_mode: outcome —
-# the factory no longer builds the answerer in direct mode (the m1 wave wired
-# a dead client). Kept for reproducibility of the retired core's negative
-# result. `model` MUST equal the served model id vLLM was launched with.
+# The frozen-answerer client was REMOVED 2026-08-12 with the outcome core.
+# This node survives because aux_scorers._resolve_judge_url still reads it as
+# the base-URL fallback for the listwise judge when no `aux_judge` node is set —
+# which is the case here. Renaming or deleting it changes judge URL resolution.
+# `model` MUST equal the served model id vLLM was launched with.
 answerer: {base_url_env: VLLM_SERVER_URL, model: "${judge_model.model_source}"}
 
 # R-GROUND / R-CONTRAST retrieval breadth. reward-ground.md / reward-contrast.md
@@ -167,10 +168,10 @@ rank_weight: 0.5
 # Verifiable core (reward-direct-spec.md, 2026-07-25). "direct" = R-DIRECT: the
 # governing norm classifies each extracted flow (force x act_polarity) and the
 # reward is agreement with the policy's own appropriateness label — no answerer,
-# no judge, no server call. "outcome" selects the retired frozen-answerer core,
-# kept only so the negative result stays reproducible (handed the prohibiting
-# norm verbatim it still called ~83% of prohibited flows appropriate; total
-# learnable signal +0.042 macro).
+# no judge, no server call. "outcome" (the frozen-answerer core) was removed
+# 2026-08-12 and is now rejected: handed the prohibiting norm verbatim it still
+# called ~83% of prohibited flows appropriate, for +0.042 macro of learnable
+# signal. That negative result is recorded in wiki/grpo_redesign/reward-outcome.md.
 core_mode: direct
 
 # ══ WAVE-2 R-DIRECT KEYS (2026-07-28, m1 post-mortem R1/R2 — see
