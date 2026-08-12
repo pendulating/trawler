@@ -33,7 +33,7 @@ Five CI-aligned benchmarks spanning distinct societal contexts:
 |-----------|--------|---------------|
 | [GoldCoin-HIPAA](https://arxiv.org/abs/2309.11500) | Healthcare | CI applicability + compliance on real court cases |
 | [PrivacyLens](https://github.com/SALT-NLP/PrivacyLens) | Corporate/social | QA probing + agent action leakage judgment |
-| [CI-RL Vignettes](https://github.com/EricGLan/CI-RL) | Privacy norms | Probing accuracy (seed/vignette) + trajectory I/U/C |
+| [CIRL-729](https://github.com/EricGLan/CI-RL) | Privacy norms | Judge-free leakage / utility over the 729-action set |
 | [ConfAIDE](https://github.com/skywalker023/confaide) | Confidentiality | Likert correlation, rejection accuracy, leak/error rate |
 | [VLM-GeoPrivacy](https://arxiv.org/abs/2411.15087) | Visual geolocation | Location disclosure granularity from images |
 
@@ -47,7 +47,7 @@ Fiction novels (10 texts from Project Gutenberg)
     ▼
 ┌──────────────────────┐
 │  Norm Extraction      │  historical_norms dagspace
-│  (Qwen2.5-72B-AWQ)   │  Chunk → Reason → Extract → Cluster → Normative Universe
+│  (Gemma-4-31B-it)    │  Chunk → Reason → Extract → Cluster → Normative Universe
 └──────────┬───────────┘
            │  normative simulacra (N̂_b per text)
            ▼
@@ -58,15 +58,15 @@ Fiction novels (10 texts from Project Gutenberg)
            │  SFT checkpoint
            ▼
 ┌──────────────────────┐
-│  GRPO Training       │  grpo_training dagspace
-│  6-component reward   │  R_uncert + R_complete + R_consist + R_context + R_cohere + R_ground
-│  + judgment vignettes │  Norm application tasks interleaved at 1:1 ratio
+│  RL Stage            │  grpo_training dagspace
+│  modular reward      │  R = max(0.50·R_DIRECT + 0.25·R_GROUND + 0.25·R_CONTRAST, 0.15)
+│  GRPO + KTO arm      │  Norm-judgment vignettes interleaved with extraction
 └──────────┬───────────┘
-           │  GRPO checkpoint
+           │  m2 `full` ckpt-450 (GRPO) · k3 `verdict` (KTO)
            ▼
 ┌──────────────────────┐
 │  Benchmark Evals     │  eval_all orchestrates all 5 benchmarks
-│  5 CI benchmarks     │  goldcoin / privacylens / cirl_vignettes / confaide / vlm_geoprivacy
+│  5 CI benchmarks     │  goldcoin / privacylens / cirl / confaide / vlm_geoprivacy
 └──────────────────────┘
 ```
 
@@ -94,7 +94,7 @@ dagspaces/
 │
 ├── goldcoin_hipaa/              # GoldCoin-HIPAA evaluation
 ├── privacylens/                 # PrivacyLens evaluation
-├── cirl_vignettes/              # CI-RL probing + trajectory I/U/C evaluation
+├── cirl/                        # CIRL-729 judge-free leakage / utility
 │   └── toolemu/                 # Vendored toolemu (Apache 2.0) for agent prompts
 ├── confaide/                    # ConfAIDE 6-tier evaluation
 ├── vlm_geoprivacy_bench/        # VLM-GeoPrivacy evaluation
@@ -162,21 +162,20 @@ python -m dagspaces.historical_norms.cli pipeline=COLM_norms_fiction
 python -m dagspaces.grpo_training.cli pipeline=grpo_only_online_external model=qwen3.5-9b/base
 
 # Evaluate a single model on all benchmarks
-python -m dagspaces.eval_all.cli -m model=qwen3.5-9b/grpo-v3-vr05-lambda10
+python -m dagspaces.eval_all.cli -m model=qwen3.5-9b/m2-full-ckpt450
 
 # Sweep across models (max 3 concurrent SLURM jobs, judge on port 9015)
 python -m dagspaces.eval_all.cli --multirun +sweep=colm_1gpu_judge1
 
 # Individual benchmarks
-python -m dagspaces.goldcoin_hipaa.cli pipeline=full_eval model=qwen3-8b/grpo-ci
-python -m dagspaces.privacylens.cli pipeline=privacylens_clean model=qwen3-8b/grpo-ci
-python -m dagspaces.cirl_vignettes.cli pipeline=cirl_vignettes_eval model=qwen3-8b/grpo-ci
-python -m dagspaces.cirl_vignettes.cli pipeline=cirl_trajectory_eval model=qwen3-8b/grpo-ci
-python -m dagspaces.confaide.cli pipeline=confaide_eval model=qwen3-8b/grpo-ci
-python -m dagspaces.vlm_geoprivacy_bench.cli pipeline=mcq_eval model=qwen3-vl-8b/instruct
+python -m dagspaces.goldcoin_hipaa.cli pipeline=full_eval model=qwen3.5-9b/m2-full-ckpt450
+python -m dagspaces.privacylens.cli pipeline=privacylens_clean model=qwen3.5-9b/m2-full-ckpt450
+python -m dagspaces.cirl.cli pipeline=cirl_eval model=qwen3.5-9b/m2-full-ckpt450
+python -m dagspaces.confaide.cli pipeline=confaide_eval model=qwen3.5-9b/m2-full-ckpt450
+python -m dagspaces.vlm_geoprivacy_bench.cli pipeline=mcq_eval model=qwen3.5-9b/instruct
 
 # Debug mode (local, no SLURM, 5 samples)
-python -m dagspaces.goldcoin_hipaa.cli pipeline=full_eval model=qwen3-8b/base \
+python -m dagspaces.goldcoin_hipaa.cli pipeline=full_eval model=qwen3.5-9b/base \
   runtime.debug=true runtime.sample_n=5 hydra/launcher=null
 ```
 
@@ -192,7 +191,7 @@ python -m dagspaces.eval_all.cli --multirun +sweep=colm_2gpu          # 3 models
 
 # Ad-hoc sweep
 python -m dagspaces.eval_all.cli --multirun \
-  'model=qwen3-8b/base,qwen3-8b/grpo-ci,qwen2.5-7b/instruct' \
+  'model=qwen3.5-9b/base,qwen3.5-9b/m2-full-ckpt450,qwen3.5-9b/instruct' \
   hydra.launcher.array_parallelism=3
 ```
 
@@ -206,20 +205,38 @@ python -m dagspaces.eval_all.cli --multirun \
 
 ---
 
-## GRPO Reward Function
+## The RL-stage reward (m-series)
 
-Six components ($R = \sum w_i R_i$). Three low-weight *gating* signals saturate quickly after SFT; three discriminative components carry the learning signal:
+`training.grpo.reward_composition: modular` selects `stages/modular_reward.py`. A completion is
+routed exactly once. It scores 0 unless it parses and is schema-complete (**R-VALID**);
+abstentions and gold-no-flow chunks take a fixed **A-ABSTAIN** table with no server calls;
+everything else takes the scored path
 
-| Component | Weight | Type | Signal |
-|-----------|--------|------|--------|
-| $R_\text{uncert}$ | 0.10 | Programmatic | Schema validity, construct discrimination, confidence |
-| $R_\text{complete}$ | 0.05 | Programmatic | Proportion of non-null CI tuple fields |
-| $R_\text{consist}$ | 0.05 | Programmatic | Internal invariant checks |
-| $R_\text{context}$ | 0.20 | Embedding | Cosine similarity of stated context vs. normative universe |
-| $R_\text{cohere}$ | 0.10 | Programmatic | Reasoning trace ↔ extraction coherence |
-| $R_\text{ground}$ | 0.50 | LLM judge | Per-flow: 0.4 norm_awareness + 0.4 flow_governance + 0.2 appropriateness |
+$$R = \max(0.50 \cdot R_\text{DIRECT} + 0.25 \cdot R_\text{GROUND} + 0.25 \cdot R_\text{CONTRAST},\; 0.15)$$
 
-$R_\text{ground}$ uses **per-completion contrastive scoring**: each completion is scored against both the correct normative universe $\hat{\mathcal{N}}_b$ and a randomly selected wrong universe $\hat{\mathcal{N}}_{b'}$, with final score $R_\text{ground} = \text{clamp}(\bar{r}_\text{correct} - \lambda \cdot \bar{r}_\text{wrong}, 0, 1)$. Primary results use $\lambda{=}1.0$.
+| Term | Weight | Type | Signal |
+|------|--------|------|--------|
+| $R_\text{DIRECT}$ | 0.50 | Verifiable | Retrieve the nearest `governs_info_flow` norm, derive a reference label from deontic force × act polarity, score the policy's own appropriateness label against it (chunk-fixed denominator, $\tau{=}0.55$) |
+| $R_\text{GROUND}$ | 0.25 | Listwise judge | Normative grounding against the text's own universe $\hat{\mathcal{N}}_b$ |
+| $R_\text{CONTRAST}$ | 0.25 | Listwise judge | Discrimination against a randomly selected wrong universe $\hat{\mathcal{N}}_{b'}$ |
+
+One verifiable core, two **removable** listwise-judge auxiliaries. Weights are not tuned: the core
+weighs 2× each active auxiliary, auxiliaries weigh equally, and removal renormalises — so
+`-ground` gives 0.67/0.33 and `-aux` gives a core-only 1.00. A cell is defined by
+`reward_auxiliaries` + `task_mix` + the `reward_core` toggle; `conf/sweep/grpo_m2_grid.yaml` is
+the pre-registration record.
+
+**Naming trap.** The core's weight key is `"outcome"`, but `core_mode` defaults to `"direct"`, so
+the term that actually runs is R-DIRECT. Confirm from the launch log, which prints
+`[modular_reward] chunk-denominator R-DIRECT active (tau=..., gold_k=...)`.
+
+A **KTO arm** (`pipeline=kto_only`) trains on offline prospect-theoretic binary desirability
+labels derived from the same reward stack. The reported checkpoints are the m2 `full` GRPO cell
+at checkpoint-450 and the k3 `verdict` KTO arm, which share a merged SFT base.
+
+> The earlier six-component `directional` reward (v9 lineage) was deprecated 2026-08-05 and
+> removed 2026-08-12. See `wiki/grpo_redesign/` for the current design and
+> `wiki/grpo_training_field_notes/` for the v2→v12a history.
 
 ---
 

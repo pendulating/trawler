@@ -25,7 +25,12 @@ Manuscript: `papers/colm26_normative-simulacra/`. Experiment runbook: `EXPERIMEN
 **Benchmarks** — per-benchmark research references (see [benchmarks/README.md](benchmarks/README.md))
 - [benchmarks/confaide.md](benchmarks/confaide.md) — ConfAIde (ICLR 2024)
 - [benchmarks/privacylens.md](benchmarks/privacylens.md) — PrivacyLens (NeurIPS 2024)
+- [benchmarks/cirl.md](benchmarks/cirl.md) — CIRL-729 (judge-free leakage / utility)
 - [benchmarks/contextreasoner.md](benchmarks/contextreasoner.md) — ContextReasoner (HKUST, PPO baseline)
+
+**Reviews & records**
+- [changelog/](changelog/README.md) — dated records of changes that altered results or invalidated earlier runs
+- [reviews/](reviews/) — manuscript review records: the coherency read-through and the stale-content audit
 
 **Manuscript**
 - [copyediting.md](copyediting.md) — the camera-ready copyedit pass: `scripts/copyedit.sh` (reference integrity / the `??` check, grammar, Vale house style) plus the coherency read-through; why offsets are preserved and why `prompts/` is never copyedited
