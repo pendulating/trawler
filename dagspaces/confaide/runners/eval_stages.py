@@ -1,132 +1,78 @@
-"""Runner classes for CONFAIDE evaluation stages."""
+"""Runner classes for CONFAIDE evaluation stages.
+
+The read/transform/write bodies live in
+``dagspaces/common/runners/eval_base.py``. Only the ConfAIde-specific calls
+are here. Every stage is keyed by ``prompt.tier``.
+"""
 
 from __future__ import annotations
 
-import json
-import os
 from typing import Any
 
 import pandas as pd
 
-from dagspaces.common.eval_sanity import compute_parse_health
-from dagspaces.common.orchestrator import StageResult
-from dagspaces.common.runners.base import StageRunner
-from dagspaces.common.runners.sanity import (
-    log_sanity_to_context,
-    sanity_overrides,
-    task_model_name,
+from dagspaces.common.runners.eval_base import (
+    EvalLoadRunner,
+    EvalMetricsRunner,
+    EvalParseRunner,
+    EvalStageRunner,
+    runtime_sample_n,
 )
 
 
-class LoadDatasetRunner(StageRunner):
+def _tier(cfg: Any) -> str:
+    return str(cfg.prompt.tier)
+
+
+class LoadDatasetRunner(EvalLoadRunner):
     stage_name = "load_dataset"
 
-    def run(self, context: Any) -> StageResult:
+    def load(self, context: Any) -> pd.DataFrame:
         from ..stages.load_dataset import load_dataset
 
         cfg = context.cfg
-        tier = str(cfg.prompt.tier)
-
-        sample_n = None
-        runtime = getattr(cfg, "runtime", None)
-        if runtime:
-            sample_n = getattr(runtime, "sample_n", None)
-            if sample_n is not None:
-                sample_n = int(sample_n)
-
-        cache_dir = str(getattr(cfg.data, "cache_dir", "")) or None
-
-        df = load_dataset(tier=tier, cache_dir=cache_dir, sample_n=sample_n)
-
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        df.to_parquet(out_path, index=False)
-
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(df)},
+        return load_dataset(
+            tier=_tier(cfg),
+            cache_dir=str(getattr(cfg.data, "cache_dir", "")) or None,
+            sample_n=runtime_sample_n(cfg),
         )
 
 
-class LLMInferenceRunner(StageRunner):
+class LLMInferenceRunner(EvalStageRunner):
     stage_name = "llm_inference"
 
-    def run(self, context: Any) -> StageResult:
+    def transform(self, df: pd.DataFrame, context: Any) -> pd.DataFrame:
         from ..stages.llm_inference import run_llm_inference
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
-
-        result_df = run_llm_inference(df, context.cfg)
-
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        result_df.to_parquet(out_path, index=False)
-
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
-        )
+        return run_llm_inference(df, context.cfg)
 
 
-class ParseResponsesRunner(StageRunner):
+class ParseResponsesRunner(EvalParseRunner):
     stage_name = "parse_responses"
+    health_dagspace = "confaide"
+    label_col = "prediction"
 
-    def run(self, context: Any) -> StageResult:
+    def transform(self, df: pd.DataFrame, context: Any) -> pd.DataFrame:
         from ..stages.parse_responses import parse_responses
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
-        input_n = len(df)
+        return parse_responses(df, tier=_tier(context.cfg))
 
-        tier = str(context.cfg.prompt.tier)
-        result_df = parse_responses(df, tier=tier)
+    def health_stage(self, context: Any) -> str:
+        return f"{self.stage_name}_{_tier(context.cfg)}"
 
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        result_df.to_parquet(out_path, index=False)
-
-        thresholds, patterns = sanity_overrides(context.cfg)
-        report = compute_parse_health(
-            result_df,
-            dagspace="confaide",
-            stage=f"{self.stage_name}_{tier}",
-            model=task_model_name(context.cfg),
-            status_col="parse_status",
-            completion_col="generated_text",
-            label_col="prediction",
-            finish_reason_col="finish_reason",
-            expected_input_n=input_n,
-            refusal_patterns=patterns,
-            thresholds=thresholds,
-        )
-        metadata: dict[str, Any] = {"rows": len(result_df), "tier": tier}
-        log_sanity_to_context(context, report, metadata=metadata)
-        return StageResult(outputs={"dataset": out_path}, metadata=metadata)
+    def stage_metadata(self, context: Any, df: pd.DataFrame) -> dict[str, Any]:
+        return {"tier": _tier(context.cfg)}
 
 
-class ComputeMetricsRunner(StageRunner):
+class ComputeMetricsRunner(EvalMetricsRunner):
     stage_name = "compute_metrics"
 
-    def run(self, context: Any) -> StageResult:
-        from ..stages.compute_metrics import compute_metrics, metrics_to_dataframe
+    def compute(self, df: pd.DataFrame, context: Any) -> dict[str, Any]:
+        from ..stages.compute_metrics import compute_metrics
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
+        return compute_metrics(df, tier=_tier(context.cfg))
 
-        tier = str(context.cfg.prompt.tier)
-        metrics = compute_metrics(df, tier=tier)
+    def to_dataframe(self, metrics: dict[str, Any]) -> pd.DataFrame:
+        from ..stages.compute_metrics import metrics_to_dataframe
 
-        metrics_json_path = os.path.join(context.output_dir, "metrics.json")
-        with open(metrics_json_path, "w") as f:
-            json.dump(metrics, f, indent=2, default=str)
-
-        metrics_df = metrics_to_dataframe(metrics)
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        metrics_df.to_parquet(out_path, index=False)
-
-        return StageResult(
-            outputs={"dataset": out_path, "metrics_json": metrics_json_path},
-            metadata={"rows": len(metrics_df), "metrics": metrics},
-        )
+        return metrics_to_dataframe(metrics)

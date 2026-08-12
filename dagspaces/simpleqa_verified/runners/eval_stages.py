@@ -1,13 +1,16 @@
 """Stage-runner classes for the simpleqa_verified dagspace.
 
-One runner per stage in the pipeline yamls. Each subclasses
-:class:`dagspaces.common.runners.base.StageRunner` and consumes a
-:class:`StageExecutionContext`.
+One runner per stage in the pipeline yamls.
+
+The load, inference, and metrics stages use the shared bases in
+``dagspaces/common/runners/eval_base.py``. The three judge stages keep the
+plain ``StageRunner`` form: they write several outputs, they report JUDGE
+health rather than parse health, and ``finalize_async`` reads a sidecar
+directory instead of its node input.
 """
 
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
@@ -16,6 +19,12 @@ import pandas as pd
 from dagspaces.common.eval_sanity import compute_judge_health
 from dagspaces.common.orchestrator import StageResult
 from dagspaces.common.runners.base import StageRunner
+from dagspaces.common.runners.eval_base import (
+    EvalLoadRunner,
+    EvalMetricsRunner,
+    EvalStageRunner,
+    runtime_sample_n,
+)
 from dagspaces.common.runners.sanity import (
     log_sanity_to_context,
     sanity_overrides,
@@ -26,59 +35,30 @@ from dagspaces.common.runners.sanity import (
 # Load + inference
 # ---------------------------------------------------------------------------
 
-class LoadDatasetRunner(StageRunner):
+class LoadDatasetRunner(EvalLoadRunner):
     stage_name = "load_dataset"
 
-    def run(self, context: Any) -> StageResult:
+    def load(self, context: Any) -> pd.DataFrame:
         from ..stages.load_dataset import load_dataset
 
         cfg = context.cfg
         data_cfg = cfg.data
-
-        sample_n = None
-        runtime = getattr(cfg, "runtime", None)
-        if runtime:
-            sample_n = getattr(runtime, "sample_n", None)
-            if sample_n is not None:
-                sample_n = int(sample_n)
-
-        df = load_dataset(
+        return load_dataset(
             hf_dataset=str(getattr(data_cfg, "hf_dataset", "google/simpleqa-verified")),
             hf_config=getattr(data_cfg, "hf_config", None),
             split=str(getattr(data_cfg, "split", "eval")),
             hf_token=getattr(data_cfg, "hf_token", None),
-            sample_n=sample_n,
-        )
-
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        df.to_parquet(out_path, index=False)
-
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(df)},
+            sample_n=runtime_sample_n(cfg),
         )
 
 
-class LLMInferenceRunner(StageRunner):
+class LLMInferenceRunner(EvalStageRunner):
     stage_name = "llm_inference"
 
-    def run(self, context: Any) -> StageResult:
+    def transform(self, df: pd.DataFrame, context: Any) -> pd.DataFrame:
         from ..stages.llm_inference import run_llm_inference
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
-
-        result_df = run_llm_inference(df, context.cfg)
-
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        result_df.to_parquet(out_path, index=False)
-
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
-        )
+        return run_llm_inference(df, context.cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -224,26 +204,15 @@ class FinalizeAsyncRunner(StageRunner):
 # Standalone metrics (used by the live pipeline after judge_grade_live)
 # ---------------------------------------------------------------------------
 
-class ComputeMetricsRunner(StageRunner):
+class ComputeMetricsRunner(EvalMetricsRunner):
     stage_name = "compute_metrics"
 
-    def run(self, context: Any) -> StageResult:
-        from ..stages.compute_metrics import compute_metrics, metrics_to_dataframe
+    def compute(self, df: pd.DataFrame, context: Any) -> dict[str, Any]:
+        from ..stages.compute_metrics import compute_metrics
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
-        metrics = compute_metrics(df)
+        return compute_metrics(df)
 
-        metrics_json_path = os.path.join(context.output_dir, "metrics.json")
-        with open(metrics_json_path, "w") as f:
-            json.dump(metrics, f, indent=2, default=str)
+    def to_dataframe(self, metrics: dict[str, Any]) -> pd.DataFrame:
+        from ..stages.compute_metrics import metrics_to_dataframe
 
-        metrics_df = metrics_to_dataframe(metrics)
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        metrics_df.to_parquet(out_path, index=False)
-
-        return StageResult(
-            outputs={"dataset": out_path, "metrics_json": metrics_json_path},
-            metadata={"rows": len(metrics_df), "metrics": metrics},
-        )
+        return metrics_to_dataframe(metrics)

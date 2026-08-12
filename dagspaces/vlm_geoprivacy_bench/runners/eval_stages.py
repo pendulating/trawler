@@ -1,219 +1,105 @@
-"""Runner classes for VLM-GeoPrivacyBench evaluation stages."""
+"""Runner classes for VLM-GeoPrivacyBench evaluation stages.
+
+The read/transform/write bodies live in
+``dagspaces/common/runners/eval_base.py``. Only the benchmark-specific calls
+are here.
+
+Note that the two parse runners leave ``label_col`` unset. This benchmark
+holds its predictions in seven per-question columns (``Q1_pred`` …
+``Q7_pred``), so no single column is THE label, and the parse-health report
+runs without one.
+"""
 
 from __future__ import annotations
 
-import json
-import os
 from typing import Any
 
 import pandas as pd
 
-from dagspaces.common.eval_sanity import compute_parse_health
-from dagspaces.common.orchestrator import StageResult
-from dagspaces.common.runners.base import StageRunner
-from dagspaces.common.runners.sanity import (
-    log_sanity_to_context,
-    sanity_overrides,
-    task_model_name,
+from dagspaces.common.runners.eval_base import (
+    EvalLoadRunner,
+    EvalMetricsRunner,
+    EvalParseRunner,
+    EvalStageRunner,
+    runtime_sample_n,
 )
 
 
-class LoadDatasetRunner(StageRunner):
+class LoadDatasetRunner(EvalLoadRunner):
     stage_name = "load_dataset"
 
-    def run(self, context: Any) -> StageResult:
+    def load(self, context: Any) -> pd.DataFrame:
         from ..stages.load_dataset import load_dataset
 
         cfg = context.cfg
         data_cfg = cfg.data
-
-        sample_n = None
-        runtime = getattr(cfg, "runtime", None)
-        if runtime:
-            sample_n = getattr(runtime, "sample_n", None)
-            if sample_n is not None:
-                sample_n = int(sample_n)
-
-        exclude_sources = list(getattr(data_cfg, "exclude_sources", []) or [])
-
-        df = load_dataset(
+        return load_dataset(
             annotations_path=str(data_cfg.annotations_path),
             metadata_path=str(data_cfg.metadata_path),
             image_dir=str(data_cfg.image_dir),
-            exclude_sources=exclude_sources,
-            sample_n=sample_n,
-        )
-
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        df.to_parquet(out_path, index=False)
-
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(df)},
+            exclude_sources=list(getattr(data_cfg, "exclude_sources", []) or []),
+            sample_n=runtime_sample_n(cfg),
         )
 
 
-class VLMMCQInferenceRunner(StageRunner):
+class VLMMCQInferenceRunner(EvalStageRunner):
     stage_name = "vlm_mcq_inference"
 
-    def run(self, context: Any) -> StageResult:
+    def transform(self, df: pd.DataFrame, context: Any) -> pd.DataFrame:
         from ..stages.vlm_mcq_inference import run_mcq_inference
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
-
-        result_df = run_mcq_inference(df, context.cfg)
-
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        result_df.to_parquet(out_path, index=False)
-
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
-        )
+        return run_mcq_inference(df, context.cfg)
 
 
-class VLMFreeformInferenceRunner(StageRunner):
+class VLMFreeformInferenceRunner(EvalStageRunner):
     stage_name = "vlm_freeform_inference"
 
-    def run(self, context: Any) -> StageResult:
+    def transform(self, df: pd.DataFrame, context: Any) -> pd.DataFrame:
         from ..stages.vlm_freeform_inference import run_freeform_inference
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
-
-        result_df = run_freeform_inference(df, context.cfg)
-
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        result_df.to_parquet(out_path, index=False)
-
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
-        )
+        return run_freeform_inference(df, context.cfg)
 
 
-class ParseMCQRunner(StageRunner):
+class ParseMCQRunner(EvalParseRunner):
     stage_name = "parse_mcq"
+    health_dagspace = "vlm_geoprivacy"
 
-    def run(self, context: Any) -> StageResult:
+    def transform(self, df: pd.DataFrame, context: Any) -> pd.DataFrame:
         from ..stages.parse_responses import parse_mcq_responses
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
-        input_n = len(df)
-
-        result_df = parse_mcq_responses(df)
-
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        result_df.to_parquet(out_path, index=False)
-
-        thresholds, patterns = sanity_overrides(context.cfg)
-        report = compute_parse_health(
-            result_df,
-            dagspace="vlm_geoprivacy",
-            stage=self.stage_name,
-            model=task_model_name(context.cfg),
-            status_col="parse_status",
-            completion_col="generated_text",
-            finish_reason_col="finish_reason",
-            expected_input_n=input_n,
-            refusal_patterns=patterns,
-            thresholds=thresholds,
-        )
-        metadata: dict[str, Any] = {"rows": len(result_df)}
-        log_sanity_to_context(context, report, metadata=metadata)
-        return StageResult(outputs={"dataset": out_path}, metadata=metadata)
+        return parse_mcq_responses(df)
 
 
-class ParseFreeformRunner(StageRunner):
+class ParseFreeformRunner(EvalParseRunner):
     stage_name = "parse_freeform"
+    health_dagspace = "vlm_geoprivacy"
 
-    def run(self, context: Any) -> StageResult:
+    def transform(self, df: pd.DataFrame, context: Any) -> pd.DataFrame:
         from ..stages.parse_responses import parse_freeform_responses
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
-        input_n = len(df)
-
-        result_df = parse_freeform_responses(df)
-
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        result_df.to_parquet(out_path, index=False)
-
-        thresholds, patterns = sanity_overrides(context.cfg)
-        report = compute_parse_health(
-            result_df,
-            dagspace="vlm_geoprivacy",
-            stage=self.stage_name,
-            model=task_model_name(context.cfg),
-            status_col="parse_status",
-            completion_col="generated_text",
-            finish_reason_col="finish_reason",
-            expected_input_n=input_n,
-            refusal_patterns=patterns,
-            thresholds=thresholds,
-        )
-        metadata: dict[str, Any] = {"rows": len(result_df)}
-        log_sanity_to_context(context, report, metadata=metadata)
-        return StageResult(outputs={"dataset": out_path}, metadata=metadata)
+        return parse_freeform_responses(df)
 
 
-class GranularityJudgeRunner(StageRunner):
+class GranularityJudgeRunner(EvalStageRunner):
     stage_name = "granularity_judge"
 
-    def run(self, context: Any) -> StageResult:
+    def transform(self, df: pd.DataFrame, context: Any) -> pd.DataFrame:
         from ..stages.granularity_judge import run_granularity_judge
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
-
-        result_df = run_granularity_judge(df, context.cfg)
-
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        result_df.to_parquet(out_path, index=False)
-
-        return StageResult(
-            outputs={"dataset": out_path},
-            metadata={"rows": len(result_df)},
-        )
+        return run_granularity_judge(df, context.cfg)
 
 
-class ComputeMetricsRunner(StageRunner):
+class ComputeMetricsRunner(EvalMetricsRunner):
     stage_name = "compute_metrics"
 
-    def run(self, context: Any) -> StageResult:
-        from ..stages.compute_metrics import compute_metrics, metrics_to_dataframe
+    def compute(self, df: pd.DataFrame, context: Any) -> dict[str, Any]:
+        from ..stages.compute_metrics import compute_metrics
 
-        input_path = context.inputs["dataset"]
-        df = pd.read_parquet(input_path)
-
-        # Determine if free-form based on columns present
+        # Free-form runs carry the judged Q7 answer and no MCQ predictions.
         free_form = "Q7_gen" in df.columns and "Q1_pred" not in df.columns
+        return compute_metrics(df, free_form=free_form)
 
-        metrics = compute_metrics(df, free_form=free_form)
+    def to_dataframe(self, metrics: dict[str, Any]) -> pd.DataFrame:
+        from ..stages.compute_metrics import metrics_to_dataframe
 
-        # Save metrics as JSON
-        metrics_json_path = os.path.join(context.output_dir, "metrics.json")
-        with open(metrics_json_path, "w") as f:
-            json.dump(metrics, f, indent=2, default=str)
-
-        # Save as parquet for pipeline compatibility
-        metrics_df = metrics_to_dataframe(metrics)
-        out_path = context.output_paths["dataset"]
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        metrics_df.to_parquet(out_path, index=False)
-
-        # Metrics logging (W&B + structured log output) is handled by the
-        # orchestrator via _log_eval_metrics when it sees metrics in metadata.
-
-        return StageResult(
-            outputs={"dataset": out_path, "metrics_json": metrics_json_path},
-            metadata={"rows": len(metrics_df), "metrics": metrics},
-        )
+        return metrics_to_dataframe(metrics)
