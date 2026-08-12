@@ -17,7 +17,7 @@ system_prompt: |
 
   Every information flow is described by a 5-component tuple. Actors may be individuals, groups, institutions, or collective audiences.
 
-  1. **Subject**: The actor about whom the information pertains. The subject may be the same as sender (self-disclosure) or a third party (e.g., gossip or reporting about someone else). . If the information does not concern a specific person (e.g., general news or public events), use a descriptive label that identifies the topic of the information.
+  1. **Subject**: The actor about whom the information pertains. The subject may be the same as sender (self-disclosure) or a third party (e.g., gossip or reporting about someone else). If the information does not concern a specific person (e.g., general news or public events), use a descriptive label that identifies the topic of the information.
 
   2. **Sender**: The actor who transmits, discloses, or communicates the information. This is the active party initiating the flow.
 

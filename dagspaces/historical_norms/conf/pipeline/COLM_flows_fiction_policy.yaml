@@ -1,0 +1,123 @@
+# @package _global_
+# CI Information Flow Extraction — Fiction Texts, FINE-TUNED POLICY as extractor.
+#
+# Plan: wiki/2026-08-05_distilled_grounding_plan.md
+#
+# WHAT THIS IS: a byte-for-byte prompt clone of
+# COLM_flows_fiction_prefetched_gemma4.yaml (the gold-label run that produced
+# the camera-ready 16,200 fiction10 flows) with the ENGINE overrides re-shaped
+# for a 9B policy carrying a LoRA adapter. The measurement only means something
+# if the prompts and chunks are identical to the teacher's and ONLY the weights
+# change — so do not touch the two `prompt_*` selections below.
+#
+# Arms (see plan §3):
+#   model=qwen3.5-9b/instruct           stock backbone, no adapter
+#   model=qwen3.5-9b/sft-canonical      + SFT LoRA
+#   model=qwen3.5-9b/m2-full-ckpt450    + GRPO LoRA   (camera-ready GRPO)
+#   model=qwen3.5-9b/k3-verdict         + KTO LoRA    (camera-ready KTO)
+#
+# Usage:
+#   FICTION_CHUNKS_PATH=/path/to/chunks.parquet \
+#     python -m dagspaces.historical_norms.cli --multirun \
+#       pipeline=COLM_flows_fiction_policy \
+#       model=qwen3.5-9b/instruct,qwen3.5-9b/sft-canonical,...
+#   (scripts/run_policy_flow_extraction.sh wraps this)
+#
+# SANITY, per stage log:
+#   * "PROMPT PROVENANCE: ci_reasoning_fiction" / "ci_extraction_fiction"
+#   * "LoRA path resolved: '<...>'" — MUST be non-empty for the three tuned
+#     arms and empty for qwen3.5-9b/instruct. A silently-empty lora_path turns
+#     three arms into three copies of the base model.
+#   * prompt_name column in both output parquets
+
+defaults:
+  - override /hydra/launcher: slurm_monitor
+
+# Fiction prompt variants — IDENTICAL to COLM_flows_fiction_prefetched_gemma4.
+# Guarded by tests/historical_norms/test_prompt_wiring.py.
+prompt_ci_reasoning: ${prompt_ci_reasoning_fiction}
+prompt_ci_extraction: ${prompt_ci_extraction_fiction}
+
+runtime:
+  debug: false
+  sample_n: null
+
+pipeline:
+  output_root: ${hydra:runtime.output_dir}/COLM_flows_fiction_policy
+  allow_partial: false
+
+  sources:
+    prefetched_chunks:
+      path: ${oc.env:FICTION_CHUNKS_PATH}
+      type: parquet
+
+  graph:
+    nodes:
+      # ============================================================
+      # Stage 1: CI Reasoning (free-form; no schema constraint)
+      # ============================================================
+      ci_reasoning:
+        stage: ci_reasoning
+        depends_on: []
+        inputs:
+          dataset: prefetched_chunks
+        outputs:
+          dataset: outputs/ci_reasoning/reasoning.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 4096
+          # TP=1 x DP=4, NOT the teacher's TP=2 x DP=2. The Gemma layout exists
+          # because the 31B is KV-hungry (~0.94 MB/token) and needs two GPUs to
+          # hold a workable cache; a 9B fits one GPU with room to spare, so
+          # sharding it only buys PCIe all-reduce cost. Four independent
+          # replicas is strictly better here.
+          model.engine_kwargs.data_parallel_size: 4
+          model.engine_kwargs.tensor_parallel_size: 1
+          model.engine_kwargs.max_num_seqs: 24
+          model.engine_kwargs.gpu_memory_utilization: 0.92
+          # 24576, matching the teacher run and NOT the model yaml's 16384.
+          # The ~6k-token system prompt + book summary + chunk pushes 706/2993
+          # fiction10 prompts past 16384; clamping truncates mid-JSON, which
+          # parses as has_information_exchange=False and biases against
+          # long-summary books. KV is paged, so this only bounds the longest
+          # request. NOTE: the LoRA adapters were trained at 16384 — Qwen3.5
+          # handles the longer context natively, but if the tuned arms show a
+          # length-correlated quality cliff the teacher's own 706-chunk tail is
+          # where to look first.
+          model.engine_kwargs.max_model_len: 24576
+          # LoRA must survive the override merge. enable_lora is a no-op for
+          # the adapter-free base arm.
+          model.engine_kwargs.enable_lora: true
+          model.engine_kwargs.max_lora_rank: 64
+        launcher: slurm_gpu_4x
+        wandb_suffix: ci_reasoning
+
+      # ============================================================
+      # Stage 2: CI Extraction (guided decoding, CIExtractionResult schema)
+      # This is what makes the arms comparable: every model is CONSTRAINED to
+      # the same schema, so ci_appropriateness / ci_norms_invoked are always
+      # present and no arm can degrade into unparseable output.
+      # ============================================================
+      ci_extraction:
+        stage: ci_extraction
+        depends_on: [ci_reasoning]
+        inputs:
+          dataset: ci_reasoning.dataset
+        outputs:
+          dataset: outputs/ci_extraction/ci_flows.parquet
+        overrides:
+          runtime.debug: ${runtime.debug}
+          runtime.sample_n: ${runtime.sample_n}
+          runtime.job_memory_gb: 256
+          sampling_params.max_tokens: 2048
+          model.engine_kwargs.data_parallel_size: 4
+          model.engine_kwargs.tensor_parallel_size: 1
+          model.engine_kwargs.max_num_seqs: 24
+          model.engine_kwargs.gpu_memory_utilization: 0.92
+          model.engine_kwargs.max_model_len: 24576
+          model.engine_kwargs.enable_lora: true
+          model.engine_kwargs.max_lora_rank: 64
+        launcher: slurm_gpu_4x
+        wandb_suffix: ci_extraction

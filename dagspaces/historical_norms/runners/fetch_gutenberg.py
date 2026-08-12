@@ -5,7 +5,15 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ..orchestrator import (
+# Import from common, NOT from ..orchestrator. These helpers moved to
+# dagspaces.common.orchestrator and the local re-export was dropped, so
+# `from ..orchestrator import _collect_outputs` raised ImportError. Because
+# orchestrator.py builds _STAGE_REGISTRY at module scope, that broke
+# `import dagspaces.historical_norms.cli` outright — i.e. the whole dagspace,
+# not just this stage. Every sibling runner here migrated to
+# DataFrameStageRunner; this one was left behind. Matches the grpo_training
+# runners' convention.
+from dagspaces.common.orchestrator import (
     StageExecutionContext,
     StageResult,
     _collect_outputs,

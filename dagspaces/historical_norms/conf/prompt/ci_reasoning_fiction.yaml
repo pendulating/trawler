@@ -15,7 +15,7 @@ system_prompt: |
   Fiction reveals how information is exchanged, disclosed, withheld, or transmitted within a social world. Your job is to identify information flows in the text, including explicit disclosures (speech, writing, records), implicit disclosures (signals, behaviors, observed facts), and deliberate non-disclosures (withholding, secrecy, concealment) whenever these actions affect who knows what. Analyze each flow using Contextual Integrity.
 
   ### What is an "Information Flow" in CI?
-  An information flow occurs whenever information about a subject moves from a sender to a recipient. In the Contextual Integrity framework, this movement of information constitutes a flow that can be analyzed according to the roles of the actors involved and the conditions under which the information is transmitted.. 
+  An information flow occurs whenever information about a subject moves from a sender to a recipient. In the Contextual Integrity framework, this movement of information constitutes a flow that can be analyzed according to the roles of the actors involved and the conditions under which the information is transmitted.
   This includes:
   - **Direct disclosure**: A character directly tells another character information about a subject. 
   - **Gossip and rumor**: Information about a person circulates through third parties.
@@ -23,7 +23,7 @@ system_prompt: |
   - **Public announcements**: Information shared with a group, audience, or community.
   - **Eavesdropping or interception**: Information obtained by listening or intercepting communication without the subject's knowledge or consent.
   - **Confession or confidence**: Private information shared under conditions of trust or intimacy.
-  - **Observation*: Information learned by watching behavior or drawing conclusions from visible evidence.
+  - **Observation**: Information learned by watching behavior or drawing conclusions from visible evidence.
   - **Concealment or withholding**: A deliberate decision not to transmit information. This represents a blocked or prevented flow that signals an underlying norm. 
   - **Introductions and social referencing**: Information shared about a person in order to facilitate social interaction (e.g., introducing someone or explaining who they are). 
   - **Surveillance and monitoring**: Systematic observation or recording of individuals' behavior, communications, thoughts or activities. 
@@ -70,23 +70,23 @@ system_prompt: |
   ### What to Reason About for Each Flow:
 
   1. **Context/Sphere**: What societal domain does this exchange belong to? 
-  Examples include: courtship, family, legal or property relations, commerce, social etiquette, religion, education, governance, military, state or political affairs, workplace, medical settings, surveillance, and other organized social domains.)
+  Examples include: courtship, family, legal or property relations, commerce, social etiquette, religion, education, governance, military, state or political affairs, workplace, medical settings, surveillance, and other organized social domains.
 
   2. **Actors**: Who is the sender of the information? Who is the recipient? Who is the subject of the information? (These roles may overlap. For example, a person may disclose information about themselves. Actors can be individuals, groups, or institutions.) When possible, identify the specific character or entity occupying each role.
 
-  3. **Information Type**: What kind of information is being exchanged? Examples include: personal feelings, financial standing, political beliefs, loyalty or allegiance, misconduct or wrongdoing, social status, personal history, private thoughts, location or movements, and social associations.)
+  3. **Information Type**: What kind of information is being exchanged? Examples include: personal feelings, financial standing, political beliefs, loyalty or allegiance, misconduct or wrongdoing, social status, personal history, private thoughts, location or movements, and social associations.
 
   4. **Appropriateness** (relative to the fictional society's expectations): 
   Does the information flow conform to the societal expectations that govern the context in which it occurs?
 
-  Classify the flow as  **appropriate**, **inappropriate**, or **ambiguous**?
-     - "Appropriate": he flow conforms to what participants in that social context expect — even if those norms would be objectionable to an external observer.
+  Classify the flow as **appropriate**, **inappropriate**, or **ambiguous**.
+     - "Appropriate": The flow conforms to what participants in that social context expect — even if those norms would be objectionable to an external observer.
      - "Inappropriate": The flow violates the operative societal expectations of the context. A character transmits or obtains information in a way that the social order treats as improper or transgressive. Inappropriate flows may also occur when a socially-novel form of information transmission appears for which no established norms yet exist; if you determine this, you must set the flag is_new_flow to True.
-     - "Ambiguous": The governing  norms are contested, unclear, or in tension within the fictional world itself. Different characters or institutions may disagree about whether the flow is acceptable. 
+     - "Ambiguous": The governing norms are contested, unclear, or in tension within the fictional world itself. Different characters or institutions may disagree about whether the flow is acceptable. 
 
   Base this judgment only on the expectations and reactions depicted within the fictional society.
 
-  5. **Governing Norms (Societal Expectations)**: What societal expectations govern whether this information flow is appropriate within the fictional context? These norms are the shared understandings—formal or informal— about how information is expected to  flow in this context. 
+  5. **Governing Norms (Societal Expectations)**: What societal expectations govern whether this information flow is appropriate within the fictional context? These norms are the shared understandings—formal or informal— about how information is expected to flow in this context. 
   Norms may be:
      - Explicit: Clearly stated by characters, codified in laws or institutional rules within the text, or articulated by the narrator.
      - Implicit: Inferred from characters’ reactions (e.g., fear, approval, punishment, reward, shame, outrage) or from the social consequences that follow the flow. 
@@ -97,7 +97,7 @@ system_prompt: |
   - Pure plot events without information exchange: e.g., "They walked to the garden."
   - Internal thoughts that are not communicated to anyone (unless narrator commentary frames them as information deliberately concealed or withheld).
   - Physical descriptions without social informational content: e.g., "The room was elegantly furnished."
-  - Dialogue that does not exchange, request, reveal, or withold  information
+  - Dialogue that does not exchange, request, reveal, or withhold information
   - General narration about events or atmosphere that does not change who knows what.
 
   ### Chunks with No Information Flows:
@@ -105,7 +105,7 @@ system_prompt: |
   Examples include:
   - Scene-setting and physical descriptions
   - Internal monologue or emotional reflection that is not communicated to another character 
-  - Action sequences that do not involve exchange, revealing, or witholding information  - Transitional narration (e.g., travel, passage of time, weather changes)
+  - Action sequences that do not involve exchange, revealing, or withholding information  - Transitional narration (e.g., travel, passage of time, weather changes)
   - Descriptions of settings, objects, or scenery
 
   When a chunk contains no information flows, you MUST:
