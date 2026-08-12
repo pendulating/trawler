@@ -4,31 +4,52 @@
 Reads the parquet outputs from the historical_norms dagspace (abstracted_norms,
 ci_flows) and generates a self-contained HTML file for interactive browsing.
 
+`--corpus` resolves the canonical Gemma-4 artifacts from
+`embed_camera_ready_norms_flows.SOURCES` — the same extraction the camera-ready
+notebooks and the norm universe read. Prefer it over `--data`, which only works
+for the legacy single-directory layout (the qwen-era n2s4cir tree; note its
+extraction predates the 2026-07-12 prompt-wiring fix).
+
 Usage:
-    python -m scripts.norms_inspector \
-        --data /share/pierson/matt/n2s4cir/data/fiction10 \
-        -o norms_inspector.html
+    python -m scripts.norms_inspector --corpus fiction10 -o norms_inspector.html
 
     # Only CI flows:
-    python -m scripts.norms_inspector \
-        --data /share/pierson/matt/n2s4cir/data/fiction10 \
+    python -m scripts.norms_inspector --corpus fiction10 \
         --stages ci_flows -o flows_only.html
 
-    # Limit rows per stage:
-    python -m scripts.norms_inspector \
-        --data /share/pierson/matt/n2s4cir/data/fiction10 \
-        --max-rows 500 -o norms_inspector.html
+    # Limit rows per stage / specific books only:
+    python -m scripts.norms_inspector --corpus fiction10 \
+        --max-rows 500 --books "Pride and Prejudice" "1984" -o subset.html
 
-    # Specific books only:
+    # Attach the top-3 nearest same-book norms to every CI flow. Needs a
+    # Qwen3-Embedding-8B vLLM server (sbatch scripts/embedding_server.sub)
+    # unless the embeddings are already cached:
+    export EMBEDDING_SERVER_URL=http://klara.tech.cornell.edu:8001
+    .venv-vllm025cu129/bin/python -m scripts.norms_inspector \
+        --corpus fiction10 --neighbors 3 -o norms_inspector.html
+
+    # ... against the governing-norm pool only (what R-DIRECT indexes), in the
+    # camera-ready notebook's embedding space rather than production's:
+    .venv-vllm025cu129/bin/python -m scripts.norms_inspector \
+        --corpus fiction10 --neighbors 3 --neighbor-pool governs \
+        --embed-space shared --flow-query noappr -o nn_governs.html
+
+    # Explicit paths (e.g. a one-off run directory):
     python -m scripts.norms_inspector \
-        --data /share/pierson/matt/n2s4cir/data/fiction10 \
-        --books "Pride and Prejudice" "1984" -o subset.html
+        --norms outputs/<run>/outputs/extraction/structured_norms.parquet \
+        --flows outputs/<run>/outputs/ci_extraction/ci_flows.parquet \
+        -o adhoc.html
+
+Retrieval is stratified per source text: a flow only ever matches norms from
+its own novel, which is the same restriction the per-source normative universe
+imposes on R-GROUND at reward time. See `scripts/norm_neighbors.py`.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -39,20 +60,41 @@ import pandas as pd
 
 # ── Data loading ────────────────────────────────────────────────────────
 
+# Candidate filenames per stage, in priority order. The gemma-4 lineage has no
+# completed role-abstraction pass, so its norms artifact is `structured_norms`;
+# the qwen-era n2s4cir tree calls the same slot `abstracted_norms`.
 KNOWN_STAGES = {
-    "abstracted_norms": "abstracted_norms.parquet",
-    "ci_flows": "ci_flows.parquet",
+    "abstracted_norms": ("abstracted_norms.parquet", "structured_norms.parquet"),
+    "ci_flows": ("ci_flows.parquet",),
 }
 
 
 def discover_stages(data_dir: Path) -> dict[str, Path]:
     """Find available parquet files in the data directory."""
     found = {}
-    for key, filename in KNOWN_STAGES.items():
-        path = data_dir / filename
-        if path.exists():
-            found[key] = path
+    for key, filenames in KNOWN_STAGES.items():
+        for filename in filenames:
+            path = data_dir / filename
+            if path.exists():
+                found[key] = path
+                break
     return found
+
+
+def resolve_corpus(corpus: str) -> dict[str, Path]:
+    """Canonical Gemma-4 artifacts for a named corpus.
+
+    Delegates to `embed_camera_ready_norms_flows.SOURCES` rather than repeating
+    the paths, so the inspector, the camera-ready embeddings and the notebooks
+    can never drift onto different extractions. Norms and flows live in
+    *different* run directories, which is why `--data DIR` cannot reach them.
+    """
+    from scripts.embed_camera_ready_norms_flows import SOURCES
+
+    if corpus not in SOURCES:
+        raise ValueError(f"unknown corpus {corpus!r}; choose from {sorted(SOURCES)}")
+    src = SOURCES[corpus]
+    return {"abstracted_norms": Path(src["norms"]), "ci_flows": Path(src["flows"])}
 
 
 def _serialize(v: Any) -> Any:
@@ -128,6 +170,9 @@ NORMS_SCHEMA: list[tuple[str, list[tuple[str, str]]]] = [
         ("Quality Flags", "norm_quality_flags"),
         ("Extraction Failed?", "extraction_failed"),
         ("Reasoning Error", "reasoning_error"),
+        # gemma-4 lineage only. Worth surfacing: the 2026-07-12 prompt-wiring
+        # fix means "which prompt produced this row" is not a safe assumption.
+        ("Prompt Name", "prompt_name"),
     ]),
 ]
 
@@ -163,6 +208,18 @@ FLOWS_SCHEMA: list[tuple[str, list[tuple[str, str]]]] = [
         ("Flow Index", "ci_flow_index"),
         ("Flow Count", "ci_flow_count"),
         ("Has Info Exchange?", "has_information_exchange"),
+        # gemma-4 lineage only (absent from the qwen-era n2s4cir flows).
+        ("Prompt Name", "prompt_name"),
+        # Deliberately NOT surfaced: `flow_quality_passed` / `flow_quality_flags`.
+        # `_validate_flow_quality()` was deleted 2026-07-13 because it ran the
+        # norms-track PersonNameDetector over flow fields, enforcing a
+        # role-abstraction rule the CI prompt never states — it measured name
+        # *formatting* ("Mrs. Bennet" fails, "Elizabeth" passes) and flagged
+        # 37.6% of fiction10 flows for doing what the prompt asked. See the NOTE
+        # in historical_norms/stages/ci_extraction.py. The 2026-07-12 parquets
+        # predate the removal by a day, so the columns linger as stale residue;
+        # rendering them would resurrect a signal the pipeline deliberately
+        # killed.
     ]),
 ]
 
@@ -177,6 +234,7 @@ STAGE_CONFIG = {
             "raz_governs_info_flow", "raz_confidence_qual",
             "norm_quality_passed", "extraction_failed",
             "preliminary_normative_force", "governs_information_flow",
+            "prompt_name",
         ],
     },
     "ci_flows": {
@@ -187,10 +245,20 @@ STAGE_CONFIG = {
         "facet_cols": [
             "book_title", "ci_context", "ci_appropriateness",
             "ci_norm_source", "ci_is_new_flow", "ci_confidence_qual",
-            "has_information_exchange",
+            "has_information_exchange", "prompt_name",
         ],
     },
 }
+
+
+def _sim_bucket(sim: float) -> str:
+    """Coarse top-1-similarity band, so the facet bar can triage weak pairings."""
+    if sim < 0.5:
+        return "<0.50"
+    if sim >= 0.9:
+        return "0.90+"
+    lo = int(sim * 20) / 20  # 0.05-wide bands
+    return f"{lo:.2f}-{lo + 0.05:.2f}"
 
 
 def build_stage_data(
@@ -198,8 +266,13 @@ def build_stage_data(
     stage_key: str,
     max_rows: int | None = None,
     include_completions: bool = False,
+    neighbors: list[list[dict]] | None = None,
 ) -> tuple[list[dict], dict]:
     """Build JSON-serializable row data for one stage.
+
+    `neighbors`, when given, is row-aligned with `df` (see
+    `scripts/norm_neighbors.compute_neighbors`) and each entry's ``i`` is a
+    positional index into the norms frame.
 
     Returns (rows, stage_meta) where stage_meta has col_info and schema.
     """
@@ -255,6 +328,16 @@ def build_stage_data(
                 val = _serialize(row[c])
                 if val is not None:
                     facets[c] = str(val)
+
+        # Nearest same-book norms
+        if neighbors is not None and i < len(neighbors):
+            nbrs = neighbors[i]
+            if nbrs:
+                record["nbrs"] = nbrs
+                facets["nn_top1_sim"] = _sim_bucket(nbrs[0]["s"])
+            else:
+                facets["nn_top1_sim"] = "(none)"
+
         if facets:
             record["_facets"] = facets
 
@@ -277,6 +360,32 @@ def build_stage_data(
         "n_total": len(df),
     }
     return rows, stage_meta
+
+
+def compute_flow_neighbors(
+    norms_df: pd.DataFrame,
+    flows_df: pd.DataFrame,
+    args: argparse.Namespace,
+) -> tuple[list[list[dict]], dict]:
+    """Thin wrapper over `scripts.norm_neighbors.compute_neighbors`.
+
+    Imported lazily so the inspector keeps working with no embedding server and
+    no `requests` installed when `--neighbors` is off.
+    """
+    from scripts.norm_neighbors import compute_neighbors
+
+    return compute_neighbors(
+        norms_df,
+        flows_df,
+        k=args.neighbors,
+        space=args.embed_space,
+        flow_query=args.flow_query,
+        pool=args.neighbor_pool,
+        server_url=args.embed_server_url,
+        model_name=args.embed_model,
+        cache_dir=Path(args.embed_cache),
+        batch_size=args.embed_batch_size,
+    )
 
 
 # ── HTML template ─────────────────────────────────────────────────────────
@@ -485,6 +594,53 @@ body { font-family: var(--sans); background: var(--bg); color: var(--fg); font-s
 .ci-tuple-cell .cell-value {
   font-size: 13px; font-weight: 500; color: var(--fg);
 }
+
+/* ── Nearest norms (top-K, same book) ────────────────────── */
+.nn-block { margin-bottom: 12px; }
+.nn-title {
+  font-size: 12px; font-weight: 600; color: #555; margin-bottom: 6px;
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+}
+.nn-title .nn-space {
+  font-weight: 400; font-size: 11px; color: #888; font-family: var(--mono);
+}
+.nn-empty {
+  font-size: 12px; color: #999; font-style: italic;
+  border: 1px dashed var(--border); border-radius: 6px; padding: 8px 12px;
+}
+.nn-card {
+  border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0; padding: 8px 12px; margin-bottom: 6px;
+  background: #fdfcff;
+}
+.nn-card-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 5px;
+  flex-wrap: wrap;
+}
+.nn-rank {
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--accent);
+  border-radius: 10px; padding: 1px 8px;
+}
+.nn-sim {
+  font-size: 11px; font-weight: 600; font-family: var(--mono);
+  border-radius: 10px; padding: 1px 8px;
+}
+.nn-sim.hi { background: var(--green-bg); color: var(--green); }
+.nn-sim.mid { background: var(--orange-bg); color: var(--orange); }
+.nn-sim.lo { background: var(--red-bg); color: var(--red); }
+.nn-meta { font-size: 11px; color: #888; font-family: var(--mono); }
+.nn-gov { font-size: 11px; padding: 1px 8px; border-radius: 10px;
+  background: var(--blue-bg); color: var(--blue); font-weight: 500; }
+.nn-jump {
+  margin-left: auto; font-size: 11px; padding: 2px 9px; border-radius: 4px;
+  border: 1px solid var(--accent); background: #fff; color: var(--accent);
+  cursor: pointer; font-weight: 500;
+}
+.nn-jump:hover { background: var(--accent-light); }
+.nn-jump[disabled] { border-color: var(--border); color: #bbb; cursor: default; }
+.nn-art { font-size: 13px; font-style: italic; line-height: 1.45; margin-bottom: 4px; }
+.nn-tuple { font-size: 11.5px; color: #444; font-family: var(--mono); }
+.nn-tuple b { color: #777; font-weight: 600; }
 
 /* ── Norm articulation highlight ─────────────────────────── */
 .norm-articulation {
@@ -953,6 +1109,13 @@ function _buildSearchText(row) {
   }
   const idCols = DATA[currentStage].id_cols || [];
   for (const c of idCols) { if (row[c] != null) parts.push(String(row[c])); }
+  // Retrieved norms are searchable too — "which flows pull in a norm about X"
+  // is the main reason to have them on the card at all.
+  for (const n of (row.nbrs || [])) {
+    for (const key of ['art', 'subj', 'pe', 'act', 'cond', 'force', 'ctx']) {
+      if (n[key] != null) parts.push(String(n[key]));
+    }
+  }
   row._searchText = parts.join('\n');
   return row._searchText;
 }
@@ -1137,6 +1300,13 @@ function buildRowCard(row, filterIdx) {
       ab.textContent = f.ci_appropriateness;
       badges.appendChild(ab);
     }
+    if (row.nbrs && row.nbrs.length) {
+      const nb = document.createElement('span');
+      nb.className = 'badge nn-sim ' + _simClass(row.nbrs[0].s);
+      nb.textContent = 'nn ' + row.nbrs[0].s.toFixed(3);
+      nb.title = 'Cosine to the nearest same-book norm';
+      badges.appendChild(nb);
+    }
   }
 
   // Bookmark
@@ -1190,6 +1360,11 @@ function buildRowBody(row) {
     html += '</div>';
   }
 
+  // For ci_flows: the top-K nearest same-book norms
+  if (currentStage === 'ci_flows' && stageData.neighbors) {
+    html += buildNeighborsBlock(row, stageData.neighbors);
+  }
+
   // For abstracted_norms: show the articulation prominently
   if (currentStage === 'abstracted_norms' && f.raz_norm_articulation) {
     html += `<div class="norm-articulation" data-export="norm-articulation">${highlightSearch(esc(f.raz_norm_articulation))}</div>`;
@@ -1224,6 +1399,11 @@ function buildRowBody(row) {
 
     const hasData = fields.some(({col}) => f[col] !== undefined && f[col] !== null);
     if (!hasData) return;
+
+    // The gemma-4 lineage has no completed role-abstraction pass, so its
+    // orig_raz_* columns are absent and this group would silently degrade into
+    // a duplicate of "Raz Norm — Structured" with nothing to diff against.
+    if (group === 'Role Abstraction' && !hasRoleAbstraction(f)) return;
 
     // Role Abstraction: open by default to highlight orig vs abstracted
     const defaultOpen = (group === 'Role Abstraction' || group === 'Raz Norm \u2014 Structured'
@@ -1268,6 +1448,77 @@ function buildRowBody(row) {
   });
 
   return html;
+}
+
+// ── Nearest norms ────────────────────────────────────────────────────
+function _simClass(s) { return s >= 0.75 ? 'hi' : (s >= 0.6 ? 'mid' : 'lo'); }
+
+// A norm row carries role abstraction only if some orig_* column survived.
+function hasRoleAbstraction(f) {
+  return Object.keys(f).some(c => c.startsWith('orig_') && f[c] != null);
+}
+
+function buildNeighborsBlock(row, nm) {
+  const nbrs = row.nbrs || [];
+  const normStage = nm.norm_stage;
+  let html = '<div class="nn-block" data-export="nearest-norms">';
+  html += `<div class="nn-title">Nearest norms — same source text (top ${nm.k})`
+        + `<span class="nn-space">${esc(nm.space)} space · flow query: ${esc(nm.flow_query)}`
+        + ` · pool: ${esc(nm.pool)} (${nm.n_norms_eligible.toLocaleString()} norms)</span></div>`;
+
+  if (nbrs.length === 0) {
+    html += '<div class="nn-empty">No norm from this source text is in the active pool.</div>';
+    return html + '</div>';
+  }
+
+  nbrs.forEach(n => {
+    // `norm_stage` is null when the norms stage was not built into this file,
+    // so the jump target genuinely does not exist rather than being filtered.
+    const jumpable = normStage && DATA[normStage] &&
+                     n.i < DATA[normStage].rows.length;
+    html += '<div class="nn-card">';
+    html += '<div class="nn-card-head">';
+    html += `<span class="nn-rank">#${n.r}</span>`;
+    html += `<span class="nn-sim ${_simClass(n.s)}">cos ${n.s.toFixed(3)}</span>`;
+    if (n.gov === true) html += '<span class="nn-gov">governs info flow</span>';
+    const meta = [];
+    if (n.force) meta.push(esc(String(n.force)));
+    if (n.ctx) meta.push(esc(String(n.ctx)));
+    if (n.chunk !== undefined) meta.push('chunk ' + esc(String(n.chunk)));
+    if (meta.length) html += `<span class="nn-meta">${meta.join(' · ')}</span>`;
+    html += `<button class="nn-jump" ${jumpable ? '' : 'disabled'} `
+          + `onclick="jumpToNorm(${n.i})" title="${jumpable
+              ? 'Open this norm in the abstracted_norms stage'
+              : 'Norm row not included in this HTML build'}">norm #${n.i} &rarr;</button>`;
+    html += '</div>';
+    if (n.art) html += `<div class="nn-art">${highlightSearch(esc(String(n.art)))}</div>`;
+    const parts = [];
+    if (n.subj) parts.push(`<b>subject</b> ${esc(String(n.subj))}`);
+    if (n.pe) parts.push(`<b>element</b> ${esc(String(n.pe))}`);
+    if (n.act) parts.push(`<b>act</b> ${esc(String(n.act))}`);
+    if (n.cond) parts.push(`<b>when</b> ${esc(String(n.cond))}`);
+    if (parts.length) html += `<div class="nn-tuple">${parts.join(' &ensp;·&ensp; ')}</div>`;
+    html += '</div>';
+  });
+  return html + '</div>';
+}
+
+function jumpToNorm(normIdx) {
+  const nm = DATA[currentStage] && DATA[currentStage].neighbors;
+  const normStage = nm && nm.norm_stage;
+  if (!normStage || !DATA[normStage]) return;
+  const sel = document.getElementById('stage-select');
+  sel.value = normStage;
+  loadStage(normStage);
+  let fi = filteredRows.findIndex(r => r.idx === normIdx);
+  if (fi < 0) {
+    // Filtered out by a facet carried over from the flows stage — drop them.
+    _resetAllFilterWidgets();
+    refilter();
+    fi = filteredRows.findIndex(r => r.idx === normIdx);
+  }
+  if (fi >= 0) { currentIdx = fi; render('center'); }
+  else alert(`Norm row #${normIdx} is not present in this build (--max-rows/--books filtered it out).`);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -1477,6 +1728,9 @@ function showExportModal() {
   // Stage-specific top-level sections
   if (currentStage === 'ci_flows') {
     sections.push({id: 'ci-tuple', label: 'CI Tuple', on: true});
+    if (stageData.neighbors) {
+      sections.push({id: 'nearest-norms', label: 'Nearest Norms', on: true});
+    }
   }
   if (currentStage === 'abstracted_norms' && f.raz_norm_articulation) {
     sections.push({id: 'norm-articulation', label: 'Norm Articulation', on: true});
@@ -1489,6 +1743,7 @@ function showExportModal() {
     if (currentStage === 'ci_flows' && group === 'CI Tuple') return;
     const hasData = fields.some(({col}) => f[col] !== undefined && f[col] !== null);
     if (!hasData) return;
+    if (group === 'Role Abstraction' && !hasRoleAbstraction(f)) return;
     sections.push({id: `group-${gi}`, label: group, on: true});
   });
 
@@ -1613,6 +1868,22 @@ function _getExportCSS() {
     .field-value.bool-true { color: #2e7d32; font-weight: 600; }
     .field-value.bool-false { color: #c62828; font-weight: 600; }
     .field-value.changed { background: #fff9c4; padding: 2px 4px; border-radius: 3px; }
+    .nn-block { margin-bottom: 10px; }
+    .nn-title { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 6px; }
+    .nn-title .nn-space { font-weight: 400; font-size: 11px; color: #888; font-family: 'SF Mono',Consolas,monospace; }
+    .nn-empty { font-size: 12px; color: #999; font-style: italic; border: 1px dashed #e0e0e0; border-radius: 6px; padding: 8px 12px; }
+    .nn-card { border: 1px solid #e0e0e0; border-left: 3px solid #6a1b9a; border-radius: 0 6px 6px 0; padding: 8px 12px; margin-bottom: 6px; background: #fdfcff; }
+    .nn-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
+    .nn-rank { font-size: 11px; font-weight: 700; color: #fff; background: #6a1b9a; border-radius: 10px; padding: 1px 8px; }
+    .nn-sim { font-size: 11px; font-weight: 600; font-family: 'SF Mono',Consolas,monospace; border-radius: 10px; padding: 1px 8px; }
+    .nn-sim.hi { background: #e8f5e9; color: #2e7d32; }
+    .nn-sim.mid { background: #fff3e0; color: #ef6c00; }
+    .nn-sim.lo { background: #ffebee; color: #c62828; }
+    .nn-meta { font-size: 11px; color: #888; font-family: 'SF Mono',Consolas,monospace; }
+    .nn-gov { font-size: 11px; padding: 1px 8px; border-radius: 10px; background: #e3f2fd; color: #1565c0; font-weight: 500; }
+    .nn-art { font-size: 13px; font-style: italic; line-height: 1.45; margin-bottom: 4px; }
+    .nn-tuple { font-size: 11.5px; color: #444; font-family: 'SF Mono',Consolas,monospace; }
+    .nn-tuple b { color: #777; font-weight: 600; }
     .json-block { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; padding: 6px 8px; margin: 4px 0; font-size: 11px; }
     .json-key { color: #881391; } .json-str { color: #0b7285; } .json-num { color: #d9480f; }
     .json-bool { color: #5c940d; font-weight: 600; } .json-null { color: #868e96; font-style: italic; }
@@ -1626,6 +1897,8 @@ function _getExportHTML() {
   clone.querySelectorAll('[data-export]').forEach(el => el.removeAttribute('data-export'));
   // Remove onclick handlers from field-group-headers
   clone.querySelectorAll('.field-group-header').forEach(el => el.removeAttribute('onclick'));
+  // Jump buttons are live navigation; they mean nothing in a static export.
+  clone.querySelectorAll('.nn-jump').forEach(el => el.remove());
   return clone.innerHTML;
 }
 
@@ -1686,10 +1959,22 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument(
-        "--data", required=True,
-        help="Path to data directory containing parquet files",
+    src = parser.add_argument_group(
+        "input", "Pick exactly one of --corpus / --data, or give both explicit paths.",
     )
+    src.add_argument(
+        "--corpus", default=None, choices=["fiction10", "top100"],
+        help="Canonical Gemma-4 artifacts for this corpus, resolved from "
+             "embed_camera_ready_norms_flows.SOURCES (norms and flows live in "
+             "different run directories, so --data cannot reach both)",
+    )
+    src.add_argument(
+        "--data", default=None,
+        help="Path to a directory holding abstracted_norms.parquet (or "
+             "structured_norms.parquet) and ci_flows.parquet",
+    )
+    src.add_argument("--norms", default=None, help="Explicit norms parquet path")
+    src.add_argument("--flows", default=None, help="Explicit ci_flows parquet path")
     parser.add_argument(
         "-o", "--output", default="norms_inspector.html",
         help="Output HTML file path (default: norms_inspector.html)",
@@ -1714,28 +1999,110 @@ def main():
         "--include-completions", action="store_true",
         help="Include raw LLM completion text (excluded by default since fields are extracted)",
     )
+
+    nn = parser.add_argument_group(
+        "nearest norms",
+        "Attach the top-K nearest norms from the same source text to every CI "
+        "flow. Needs a Qwen3-Embedding-8B vLLM server "
+        "(sbatch scripts/embedding_server.sub) unless every matrix is cached.",
+    )
+    nn.add_argument(
+        "--neighbors", type=int, default=0, metavar="K",
+        help="Retrieve the top-K nearest same-book norms per CI flow (0 = off, try 3)",
+    )
+    nn.add_argument(
+        "--neighbor-pool", default="all", choices=["all", "governs"],
+        help="Norm pool to retrieve from: every articulated norm, or only those "
+             "with raz_governs_info_flow (what the R-DIRECT index restricts to). "
+             "Default: all",
+    )
+    nn.add_argument(
+        "--embed-space", default="rground", choices=["rground", "shared"],
+        help="Instruction applied to both constructs. 'rground' = "
+             "norm_universe.EMBED_INSTRUCTION, i.e. production R-GROUND "
+             "retrieval parity. 'shared' = the camera-ready notebook's "
+             "SHARED_INSTRUCTION. Default: rground",
+    )
+    nn.add_argument(
+        "--flow-query", default="production",
+        choices=["production", "noappr", "full", "descriptive"],
+        help="How a flow is serialized into a retrieval query. 'production' = "
+             "online_rground._flow_to_query; the rest are the camera-ready "
+             "prose serializations. Default: production",
+    )
+    nn.add_argument(
+        "--embed-server-url", default=os.environ.get("EMBEDDING_SERVER_URL", ""),
+        help="vLLM embedding server URL (default: $EMBEDDING_SERVER_URL)",
+    )
+    nn.add_argument("--embed-model", default=None, help="Embedding model name/path")
+    nn.add_argument(
+        "--embed-cache", default=None,
+        help="Embedding cache directory (default: outputs/norms_inspector/embeddings)",
+    )
+    nn.add_argument("--embed-batch-size", type=int, default=32)
+
     args = parser.parse_args()
 
-    data_dir = Path(args.data)
-    if not data_dir.is_dir():
-        print(f"ERROR: Data directory does not exist: {data_dir}", file=sys.stderr)
+    if args.neighbors:
+        from scripts import norm_neighbors
+
+        if args.embed_model is None:
+            args.embed_model = norm_neighbors.EMB_MODEL
+        if args.embed_cache is None:
+            args.embed_cache = norm_neighbors.DEFAULT_CACHE_DIR
+
+    # ── Resolve the input artifacts ──────────────────────────────────────
+    if args.corpus and args.data:
+        print("ERROR: pass --corpus or --data, not both", file=sys.stderr)
         sys.exit(1)
 
-    stages = discover_stages(data_dir)
+    if args.corpus:
+        try:
+            stages = resolve_corpus(args.corpus)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        origin = f"corpus {args.corpus} (canonical Gemma-4)"
+    elif args.data:
+        data_dir = Path(args.data)
+        if not data_dir.is_dir():
+            print(f"ERROR: Data directory does not exist: {data_dir}", file=sys.stderr)
+            sys.exit(1)
+        stages = discover_stages(data_dir)
+        origin = str(data_dir)
+    else:
+        stages = {}
+        origin = "explicit paths"
+
+    # Explicit paths win over whatever the corpus/dir resolved to.
+    for key, override in (("abstracted_norms", args.norms), ("ci_flows", args.flows)):
+        if override:
+            stages[key] = Path(override)
+
+    # Kept pre-filter so --neighbors can still reach the norms parquet when
+    # --stages excludes it from rendering.
+    all_stages = dict(stages)
     if args.stages:
         stages = {k: v for k, v in stages.items() if k in args.stages}
 
     if not stages:
-        print(f"ERROR: No parquet files found in {data_dir}", file=sys.stderr)
-        print(f"  Expected: {list(KNOWN_STAGES.values())}", file=sys.stderr)
+        print("ERROR: no input parquets. Pass --corpus fiction10, --data DIR, "
+              "or --norms/--flows.", file=sys.stderr)
+        print(f"  --data expects one of: {sorted({f for v in KNOWN_STAGES.values() for f in v})}",
+              file=sys.stderr)
         sys.exit(1)
 
-    print(f"Data directory: {data_dir}")
-    print(f"Stages found: {list(stages.keys())}")
+    missing = {k: v for k, v in stages.items() if not Path(v).is_file()}
+    if missing:
+        for k, v in missing.items():
+            print(f"ERROR: {k} parquet does not exist: {v}", file=sys.stderr)
+        sys.exit(1)
 
-    data = {}
-    for stage_key, pq_path in sorted(stages.items()):
-        print(f"\nProcessing: {stage_key} ...", end=" ", flush=True)
+    print(f"Input: {origin}")
+    for k, v in sorted(stages.items()):
+        print(f"  {k:18s} {v}")
+
+    def load_frame(stage_key: str, pq_path: Path) -> pd.DataFrame:
         df = pd.read_parquet(pq_path)
 
         # Drop book_summary (same per book, very large)
@@ -1756,12 +2123,60 @@ def main():
             for book in args.books:
                 mask |= df["book_title"].str.contains(book, case=False, na=False)
             df = df[mask].reset_index(drop=True)
-            print(f"(filtered to {len(df)} rows by book)", end=" ", flush=True)
+            print(f"  (filtered to {len(df)} rows by book)", flush=True)
+        return df
 
+    frames = {}
+    for stage_key, pq_path in sorted(stages.items()):
+        print(f"\nLoading: {stage_key} ...", flush=True)
+        frames[stage_key] = load_frame(stage_key, pq_path)
+        print(f"  {len(frames[stage_key])} rows")
+
+    # ── Nearest same-book norms per CI flow ──────────────────────────────
+    neighbors, neighbors_meta = None, None
+    if args.neighbors:
+        if "ci_flows" not in frames:
+            print("ERROR: --neighbors needs the ci_flows stage", file=sys.stderr)
+            sys.exit(1)
+
+        # Neighbour indices are positions in the norms frame, so they must be
+        # positions in the *rendered* one. When the norms stage is not being
+        # built, load it anyway (retrieval needs it) but disable the jump links.
+        norm_stage = "abstracted_norms" if "abstracted_norms" in frames else None
+        if norm_stage:
+            norms_df = frames[norm_stage]
+        else:
+            norms_pq = all_stages.get("abstracted_norms")
+            if norms_pq is None or not Path(norms_pq).is_file():
+                print("ERROR: --neighbors needs a norms parquet (--norms/--corpus/--data)",
+                      file=sys.stderr)
+                sys.exit(1)
+            print(f"\nLoading norms for retrieval only: {norms_pq}", flush=True)
+            norms_df = load_frame("abstracted_norms", norms_pq)
+
+        print(f"\nRetrieving top-{args.neighbors} nearest same-book norms ...")
+        try:
+            neighbors, neighbors_meta = compute_flow_neighbors(
+                norms_df, frames["ci_flows"], args)
+        except (RuntimeError, KeyError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        neighbors_meta["norm_stage"] = norm_stage
+        if norm_stage and args.max_rows and args.max_rows < len(norms_df):
+            print(f"  NOTE: --max-rows {args.max_rows} truncates the norms stage to "
+                  f"{args.max_rows} of {len(norms_df)} rows; neighbours beyond that "
+                  "are shown inline but cannot be jumped to.")
+
+    data = {}
+    for stage_key in sorted(frames):
+        print(f"\nProcessing: {stage_key} ...", end=" ", flush=True)
         rows, stage_meta = build_stage_data(
-            df, stage_key, max_rows=args.max_rows,
+            frames[stage_key], stage_key, max_rows=args.max_rows,
             include_completions=args.include_completions,
+            neighbors=neighbors if stage_key == "ci_flows" else None,
         )
+        if stage_key == "ci_flows" and neighbors_meta:
+            stage_meta["neighbors"] = neighbors_meta
         data[stage_key] = stage_meta
         print(f"{len(rows)} rows")
 

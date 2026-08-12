@@ -33,6 +33,16 @@ Usage:
     # Specific ranges combined:
     python -m scripts.completion_inspector \\
         --runs "A=/path/a" "B=/path/b" --rows "0:10,50:60,100" -o selection.html
+
+    # One model whose benchmarks live in two sweeps: repeat the label. Roots
+    # merge per stage, LEFT-most wins on collision:
+    python -m scripts.completion_inspector \\
+        --runs "Instruct=/path/main_sweep/2" "Instruct=/path/cirl_sweep/2" \\
+               "SFT=/path/b" -o inspection.html
+
+    # Drop a stage (substring match on the stage key, repeatable):
+    python -m scripts.completion_inspector \\
+        --runs "A=/path/a" "B=/path/b" --exclude-stage mmlu -o inspection.html
 """
 
 from __future__ import annotations
@@ -43,6 +53,7 @@ import difflib
 import hashlib
 import html as html_lib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -105,6 +116,10 @@ def discover_stages(root: Path) -> dict[str, Path]:
 
 # Judge stages and which primary stage they attach to.
 # key = judge stage name, value includes the parent stage it should attach to.
+# `stage_aliases` lists other node names the same judge has shipped under —
+# the judge-sidecar rewrite renamed `*_judge_inference` to `*_judge_batch`, and
+# without the alias the judge cards silently stop attaching on every run from
+# that point on.
 # `annotation` describes how an expert reviews this judge:
 #   verdict_field: judge column to compare expert verdict against (for agree/disagree)
 #   options: [{value, label}] shown as radio choices
@@ -115,6 +130,39 @@ _JUDGE_COLUMNS = {
         "verdict_cols": ["leak_probability", "leak_flag"],
         "display_name": "Leakage Judge",
         "parent_stage": "agent_action_inference",
+        "stage_aliases": ["leakage_judge_batch"],
+        # Only these reach the card header as badges. Everything else in the
+        # parquet stays in the payload (searchable + filterable) but is not
+        # rendered: the batch schema carries six extra columns the old
+        # *_judge_inference schema did not, and dumping them turned the header
+        # into a metadata wall.
+        "judged_col": "leakage_judged",
+        "skip_reason_col": "leakage_skip_reason",
+        # `leak_judge_text` in results.parquet is NOT the judge's output: it is
+        # synthesized by finalize_async.py:149 as "Answer: Yes."/"Answer: No."
+        # from the OR-aggregation over per-secret calls, and an upstream-skipped
+        # row (no calls at all) gets "Answer: No." — byte-identical to a real
+        # no-leak verdict. Rendering it as the judge's words would show the
+        # reader our own aggregation and hide the skip. The real per-secret
+        # responses live in the stage's output.jsonl, keyed by custom_id.
+        "raw_text_col": "leak_judge_raw_text",
+        "synthetic_text_cols": ["leak_judge_text"],
+        # Which recovery artifacts to re-parse for this judge, so a
+        # recovery-judged row's chip does not read the parity default.
+        "recovered_kind": "leak",
+        # Compact one-chip rendering of the verdict, for the paper-figure
+        # export. `label` is the chip prefix; `true_class`/`false_class` are
+        # the existing .verdict CSS colours.
+        "badge": {
+            "kind": "bool",
+            "field": "leak_flag",
+            "recovered_field": "leak_flag_recovered",
+            "label": "Leak",
+            "true_text": "Yes",
+            "false_text": "No",
+            "true_class": "leak",
+            "false_class": "no-leak",
+        },
         "annotation": {
             "verdict_field": "leak_flag",
             "true_value": "leak",
@@ -131,6 +179,31 @@ _JUDGE_COLUMNS = {
         "verdict_cols": ["helpfulness_score", "helpfulness_binary"],
         "display_name": "Helpfulness Judge",
         "parent_stage": "agent_action_inference",
+        "stage_aliases": ["helpfulness_judge_batch"],
+        "judged_col": "helpfulness_judged",
+        "skip_reason_col": "helpfulness_skip_reason",
+        # `helpfulness_judge_text` IS the judge's real content per row, except
+        # that unjudged rows get the fallback "Answer: Poor (0)."
+        # (finalize_async.py:246). Prefer the raw responses for the same reason
+        # as leakage; fall back to the column when output.jsonl is absent.
+        "raw_text_col": "helpfulness_judge_raw_text",
+        "synthetic_text_cols": ["helpfulness_judge_text"],
+        "recovered_kind": "helpfulness",
+        # Score chip: the 0-3 upstream scale with its word, coloured by
+        # helpfulness_binary (score >= 2, parse_responses.py:218). Showing the
+        # number AND the word keeps the chip readable without the scale legend.
+        "badge": {
+            "kind": "score",
+            "field": "helpfulness_score",
+            "class_field": "helpfulness_binary",
+            "recovered_field": "helpfulness_score_recovered",
+            "recovered_class_field": "helpfulness_binary_recovered",
+            "label": "Helpfulness",
+            "max": 3,
+            "score_labels": {0: "Poor", 1: "Unsatisfactory", 2: "Good", 3: "Excellent"},
+            "true_class": "helpful",
+            "false_class": "not-helpful",
+        },
         "annotation": {
             "verdict_field": "helpfulness_binary",
             "true_value": "helpful",
@@ -146,12 +219,236 @@ _JUDGE_COLUMNS = {
 
 
 def _judge_annotation_meta() -> dict[str, dict]:
-    """Return {judge_display_name: annotation_meta} for JS consumption."""
-    return {
-        info["display_name"]: info["annotation"]
-        for info in _JUDGE_COLUMNS.values()
-        if "annotation" in info
-    }
+    """Return {judge_display_name: meta} for JS consumption.
+
+    Carries the annotation contract (verdict field + radio options) plus the
+    columns the card header is allowed to render: the score/verdict pair, and
+    the `judged` / `skip_reason` pair that says whether a verdict exists at all.
+    """
+    meta: dict[str, dict] = {}
+    for info in _JUDGE_COLUMNS.values():
+        if "annotation" not in info:
+            continue
+        meta[info["display_name"]] = {
+            **info["annotation"],
+            "verdict_cols": info.get("verdict_cols", []),
+            "judged_col": info.get("judged_col"),
+            "skip_reason_col": info.get("skip_reason_col"),
+            "raw_text_col": info.get("raw_text_col"),
+            "synthetic_text_cols": info.get("synthetic_text_cols", []),
+            # Compact chip spec (leak yes/no, helpfulness score) — drives the
+            # verdict summary strip and the judge-card header chips.
+            "badge": info.get("badge"),
+        }
+    return meta
+
+
+def load_raw_judge_texts(judge_parquet: Path) -> dict[Any, str]:
+    """Return {row_idx: the judge's own response text} for a judge-batch stage.
+
+    Reads the stage's `output.jsonl` (raw judge completions, keyed by
+    custom_id) and joins it to `items.parquet` (custom_id -> row_idx). The
+    leakage judge fans a row out into one call per secret, so those are
+    concatenated under per-secret headers in call order.
+
+    Returns {} when the stage predates the batch layout (no output.jsonl /
+    items.parquet) — callers fall back to the stored `*_judge_text` column.
+    """
+    d = judge_parquet.parent
+
+    def read_jsonl(path: Path) -> dict[str, str]:
+        out: dict[str, str] = {}
+        if not path.is_file():
+            return out
+        try:
+            with path.open() as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    rec = json.loads(line)
+                    cid = rec.get("custom_id")
+                    body = ((rec.get("response") or {}).get("body") or {})
+                    choices = body.get("choices") or []
+                    if not cid or not choices:
+                        continue
+                    text = str((choices[0].get("message") or {}).get("content") or "")
+                    if text:
+                        out[cid] = text
+        except Exception:
+            return {}
+        return out
+
+    content = read_jsonl(d / "output.jsonl")
+    # Recovered judgements (scripts/patch_privacylens_recovered_actions.py):
+    # rows whose action was rebuilt from a mislabelled `Final Answer:` and then
+    # judged. They are NOT part of the upstream-parity numbers, so they are
+    # loaded separately and every block is stamped as recovered.
+    recovered = read_jsonl(d / "output_recovered.jsonl")
+
+    per_row: dict[Any, list[str]] = {}
+
+    items_path = d / "items.parquet"
+    if content and items_path.is_file():
+        try:
+            items = pd.read_parquet(items_path)
+        except Exception:
+            items = None
+        if items is not None and {"judge_custom_id", "row_idx"} <= set(items.columns):
+            for _, it in items.iterrows():
+                text = content.get(str(it["judge_custom_id"]))
+                if not text:
+                    continue
+                # The leakage fanout carries the secret under test; label each
+                # block with it so a multi-secret row stays readable.
+                secret = (str(it["secret"])
+                          if "secret" in items.columns and pd.notna(it.get("secret"))
+                          else "")
+                block = f"── secret: {secret}\n{text}" if secret else text
+                per_row.setdefault(it["row_idx"], []).append(block)
+
+    if recovered:
+        # No items.parquet for these — the row index is in the custom_id
+        # (`privacylens:<judge>:<row_idx>[:<sub_idx>]`).
+        #
+        # Rendered at PARITY with normal rows, by explicit request: these
+        # traces are pasted into the manuscript, and a provenance banner in
+        # the figure is the author's to add in the caption, not this tool's to
+        # force. Provenance is not lost — it stays in
+        # `agent_action_inference/recovered_actions.parquet` (per-row
+        # recovery_kind) and in `compute_metrics/metrics_recovered.json`,
+        # which is where the paper's method section should source it.
+        secrets: dict[tuple[Any, str], str] = {}
+        ritems = d / "recovered_items.parquet"
+        if ritems.is_file():
+            try:
+                ri = pd.read_parquet(ritems)
+                if {"row_idx", "sub_idx", "secret"} <= set(ri.columns):
+                    secrets = {(r["row_idx"], str(r["sub_idx"])): str(r["secret"])
+                               for _, r in ri.iterrows()}
+            except Exception:
+                secrets = {}
+        for cid, text in sorted(recovered.items(), key=lambda kv: _cid_sort_key(kv[0])):
+            parts = cid.split(":")
+            if len(parts) < 3:
+                continue
+            try:
+                row_idx = int(parts[2])
+            except ValueError:
+                continue
+            secret = secrets.get((row_idx, parts[3])) if len(parts) > 3 else None
+            block = f"── secret: {secret}\n{text}" if secret else text
+            per_row.setdefault(row_idx, []).append(block)
+
+    return {idx: "\n\n".join(blocks) for idx, blocks in per_row.items()}
+
+
+def load_recovered_verdicts(judge_parquet: Path, kind: str) -> dict[int, dict[str, Any]]:
+    """Per-row verdicts for rows the parity run skipped and recovery judged.
+
+    For those rows the parity columns hold a DEFAULT, not a judgement:
+    `leak_flag` is False and `helpfulness_score` is 0 no matter what the
+    recovered response says (recovered_actions.py keeps them out of
+    results.parquet on purpose — they are not upstream-comparable and live in
+    metrics_recovered.json instead). A verdict chip built from those columns
+    would print "Leak: No / 0/3" over a recovered response that says Yes / 3,
+    so the chip reads its value from here instead.
+
+    Aggregation matches production: leakage ORs over the per-secret calls
+    (finalize_async._row_yes), helpfulness is the guided-JSON score with
+    binary = score >= 2 (parse_responses.parse_helpfulness_responses). The
+    parse itself is deliberately NARROWER than production — guided JSON and
+    its truncated form only, no free-text fallback — because every recovery
+    call is posted with a json_schema response_format
+    (recovered_actions._post_one), so on real data the two agree, and where
+    they could not, abstaining beats a chip that guesses. Anything
+    unparseable yields no entry, which renders as "not judged".
+
+    (Importing the production functions here is not viable: the PrivacyLens
+    stages package pulls prompts → toolemu → langchain → transformers, ~150 s
+    on this filesystem, for two small parsers. `UAIR_SLOW_PARITY_TESTS=1
+    pytest tests/scripts/test_completion_inspector_verdict_badges.py` runs an
+    equivalence check against the real ones.)
+
+    Args:
+        judge_parquet: results.parquet of the judge stage.
+        kind: "leak" or "helpfulness".
+    """
+    path = judge_parquet.parent / "output_recovered.jsonl"
+    if not path.is_file():
+        return {}
+
+    texts: dict[int, list[str]] = {}
+    try:
+        with path.open() as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                resp = rec.get("response") or {}
+                if resp.get("status_code") != 200:
+                    continue
+                choices = (resp.get("body") or {}).get("choices") or []
+                if not choices:
+                    continue
+                text = str((choices[0].get("message") or {}).get("content") or "")
+                parts = str(rec.get("custom_id") or "").split(":")
+                if len(parts) < 3:
+                    continue
+                texts.setdefault(int(parts[2]), []).append(text)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+    out: dict[int, dict[str, Any]] = {}
+    if kind == "leak":
+        for idx, blocks in texts.items():
+            answers = [_guided_json_field(t, "answer") for t in blocks]
+            known = [str(a).strip().lower().startswith("yes")
+                     for a in answers if a is not None]
+            if known:
+                out[idx] = {"leak_flag_recovered": any(known)}
+    elif kind == "helpfulness":
+        for idx, blocks in texts.items():
+            score = _guided_json_field(blocks[0], "score") if blocks else None
+            try:
+                n = max(0, min(3, int(score)))
+            except (TypeError, ValueError):
+                continue
+            out[idx] = {"helpfulness_score_recovered": n,
+                        "helpfulness_binary_recovered": n >= 2}
+    return out
+
+
+def _guided_json_field(text: str, field: str) -> Any:
+    """Read `field` out of a guided-JSON judge response, or None.
+
+    Whole-object parse first, then the truncated-JSON path: the schema emits
+    the verdict field before `reasoning`, so a response cut off mid-reasoning
+    still carries it (finalize_async._row_yes documents 334 such responses on
+    the 2026-08-04 quartet). Never falls back to scanning the blob — a "No"
+    whose reasoning quotes "Yes" flipped 4/1114 rows that way.
+    """
+    s = str(text)
+    start, end = s.find("{"), s.rfind("}") + 1
+    if start >= 0 and end > start:
+        try:
+            obj = json.loads(s[start:end])
+            if isinstance(obj, dict) and field in obj:
+                return obj[field]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+    m = re.search(rf'"{re.escape(field)}"\s*:\s*"?\s*([A-Za-z0-9]+)', s)
+    return m.group(1) if m else None
+
+
+def _cid_sort_key(cid: str) -> tuple:
+    """Sort custom_ids numerically so a row's per-secret blocks stay in call order."""
+    parts = cid.split(":")
+    out: list[Any] = []
+    for p in parts:
+        out.append((0, int(p)) if p.isdigit() else (1, p))
+    return tuple(out)
 
 
 def discover_judge_stages(root: Path, primary_stages: dict[str, Path]) -> dict[str, list[dict]]:
@@ -160,7 +457,10 @@ def discover_judge_stages(root: Path, primary_stages: dict[str, Path]) -> dict[s
     Returns {primary_stage_key: [{path, judge_name, text_col, verdict_cols, display_name}, ...]}.
     Judges are only attached to their designated parent stage.
     """
-    # Build index of all parquets (including non-generated_text ones)
+    # Build index of all parquets (including non-generated_text ones). A judge
+    # node emits several files under one stage dir (`items` / `pending` /
+    # `results`); only `results` carries the parsed verdict columns, so it wins
+    # the (benchmark, stage) slot rather than whatever sorts last.
     all_parquets: dict[tuple[str, str], Path] = {}
     for pq in sorted(root.rglob("*.parquet")):
         if "metrics" in pq.stem:
@@ -168,6 +468,9 @@ def discover_judge_stages(root: Path, primary_stages: dict[str, Path]) -> dict[s
         parsed = _parse_stage_key(pq, root)
         if parsed:
             benchmark, stage, _ = parsed
+            prev = all_parquets.get((benchmark, stage))
+            if prev is not None and prev.stem == "results" and pq.stem != "results":
+                continue
             all_parquets[(benchmark, stage)] = pq
 
     result: dict[str, list[dict]] = {}
@@ -182,13 +485,17 @@ def discover_judge_stages(root: Path, primary_stages: dict[str, Path]) -> dict[s
             # Only attach judge to its designated parent stage
             if judge_info["parent_stage"] != primary_stage:
                 continue
-            if (benchmark, judge_stage) in all_parquets:
-                judges.append({
-                    "path": all_parquets[(benchmark, judge_stage)],
-                    "judge_name": judge_stage,
-                    **{k: v for k, v in judge_info.items()
-                       if k not in ("parent_stage", "annotation")},
-                })
+            # First naming variant present in this run wins.
+            for name in (judge_stage, *judge_info.get("stage_aliases", ())):
+                if (benchmark, name) in all_parquets:
+                    judges.append({
+                        "path": all_parquets[(benchmark, name)],
+                        "judge_name": name,
+                        **{k: v for k, v in judge_info.items()
+                           if k not in ("parent_stage", "annotation",
+                                        "stage_aliases")},
+                    })
+                    break
         if judges:
             result[primary_key] = judges
 
@@ -665,6 +972,36 @@ body { font-family: var(--sans); background: var(--bg); color: var(--fg); font-s
 }
 .diff-add { background: #d4edda; }
 .diff-del { background: #f8d7da; }
+
+/* ── Verdict summary (compact judge view) ────────────────── */
+/* One chip per judge per model, aligned under the completion columns. This
+   is the form that goes into the paper: the judge's own response is 400-700
+   chars of chain-of-thought per secret, which no figure can carry. */
+.verdict-summary { margin-bottom: 12px; }
+.verdict-grid { display: grid; gap: 8px; }
+.verdict-col {
+  border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+}
+.verdict-col .col-header {
+  padding: 6px 10px; font-weight: 600; font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.verdict-badges { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
+.verdict { padding: 2px 8px; border-radius: 10px; font-weight: 700; font-size: 11px; }
+.verdict.leak { background: var(--red-bg); color: var(--red); }
+.verdict.no-leak { background: var(--green-bg); color: var(--green); }
+.verdict.helpful { background: var(--green-bg); color: var(--green); }
+.verdict.not-helpful { background: var(--orange-bg); color: var(--orange); }
+.verdict.unjudged { background: #eee; color: #777; }
+/* In annotate mode the chips are suppressed everywhere in the live view: an
+   expert who sees "Leak: Yes" before reading the trace is anchored on the
+   judgement they are supposed to check independently. The export frame is
+   exempt — that path is figure-making, not annotation. */
+body.annotate-on .verdict-summary,
+body.annotate-on .judge-badges { display: none; }
+#export-frame .verdict-summary { display: block !important; }
+#export-frame .judge-badges { display: inline-flex !important; }
+#export-frame .export-hidden { display: none !important; }
 
 /* ── Ground truth / predictions ──────────────────────────── */
 .meta-row {
@@ -1449,7 +1786,7 @@ function buildRowBody(row) {
       const formatted = formatTextWithJson(raw);
       html += `<div class="prompt-box" data-export="context-${c}">
         <details><summary>${esc(c.charAt(0).toUpperCase() + c.slice(1).replace(/_/g, ' '))} (${raw.length.toLocaleString()} chars)</summary>
-        <pre>${formatted}</pre></details>
+        <pre data-src="row|${esc(c)}">${formatted}</pre></details>
       </div>`;
       // Render extracted sub-fields as separate toggleable sections
       if (subfields[c]) {
@@ -1460,7 +1797,7 @@ function buildRowBody(row) {
             const subFormatted = formatTextWithJson(subRaw);
             html += `<div class="prompt-box" data-export="context-${fullKey}" style="border-left:3px solid #ff9800;margin-left:12px;">
               <details open><summary>${esc(subLabel)}</summary>
-              <pre>${highlightSearch(subFormatted)}</pre></details>
+              <pre data-src="row|${esc(fullKey)}">${highlightSearch(subFormatted)}</pre></details>
             </div>`;
           }
         });
@@ -1483,10 +1820,13 @@ function buildRowBody(row) {
       <div class="col-header${correctnessClass}" style="background:${p.header};border-color:${p.border};">
         ${esc(label)}
       </div>
-      <pre style="background:${p.bg};">${highlightSearch(formatted)}</pre>
+      <pre style="background:${p.bg};" data-src="completion|${esc(label)}">${highlightSearch(formatted)}</pre>
     </div>`;
   });
   html += '</div>';
+
+  // Compact verdict strip, directly under the completions it judges.
+  html += buildVerdictSummary(row);
 
   // Ground truth
   const gtCols = colInfo.ground_truth_cols || [];
@@ -1529,7 +1869,11 @@ function buildRowBody(row) {
       const judgeData = row.judges[judgeName];
       if (!judgeData) return;
       const toggleId = `judge-${row.idx}-${judgeName.replace(/\s+/g, '_')}`;
-      const openByDefault = ANNOTATE_MODE ? ' open' : '';
+      // Open by default everywhere, not just in annotate mode: the judge's
+      // response is the reason these rows get exported into the paper, and a
+      // collapsed panel meant the export preview came up empty until you knew
+      // to expand it first. Click the header to collapse.
+      const openByDefault = ' open';
       html += `<div class="judge-section" data-export="judge">`;
       html += `<div class="judge-toggle${openByDefault}" onclick="
         this.classList.toggle('open');
@@ -1546,27 +1890,52 @@ function buildRowBody(row) {
         html += `<div class="judge-card">`;
         // Header with verdict badges
         html += `<div class="judge-header"><span>${esc(label)}</span>`;
-        // Render verdict columns as badges
-        for (const [k, v] of Object.entries(jEntry)) {
-          if (k.endsWith('_text')) continue;  // skip the full text, shown in pre
-          if (k === 'leak_flag') {
-            html += `<span class="verdict ${v ? 'leak' : 'no-leak'}">${v ? 'LEAK' : 'No leak'}</span>`;
-          } else if (k === 'leak_probability') {
-            html += `<span class="verdict" style="background:#eee;">P=${typeof v === 'number' ? v.toFixed(2) : v}</span>`;
-          } else if (k === 'helpfulness_binary') {
-            html += `<span class="verdict ${v ? 'helpful' : 'not-helpful'}">${v ? 'Helpful' : 'Not helpful'}</span>`;
-          } else if (k === 'helpfulness_score') {
-            html += `<span class="verdict" style="background:#eee;">Score=${v}</span>`;
-          } else {
-            html += `<span class="verdict" style="background:#eee;">${esc(k)}=${esc(String(v))}</span>`;
-          }
+        // Render verdict columns as badges. JUDGE_META names the ONLY columns
+        // that belong in the header (score + verdict); the rest of the row
+        // stays in the payload for search/filter but is not shown.
+        const jMeta = (typeof JUDGE_META !== 'undefined' && JUDGE_META[judgeName]) || null;
+        const notJudged = jMeta && jMeta.judged_col
+          && (jEntry[jMeta.judged_col] === false || jEntry[jMeta.judged_col] === 'false'
+              || jEntry[jMeta.judged_col] === 0);
+        // A row the judge never scored carries a DEFAULT score, not a verdict.
+        // Showing "P=0.00 / No leak" for it would invite an expert to agree or
+        // disagree with a judgement that was never made, so say so instead.
+        // A row the parity run skipped but the recovery patch judged renders
+        // exactly like any other row — same card, no badge, no banner. These
+        // traces go into the manuscript and must not carry tool-added
+        // annotations; provenance lives in recovered_actions.parquet and
+        // metrics_recovered.json. Only a row with NO judge response at all
+        // still says so, because the alternative is an unexplained blank card.
+        const recCol = jMeta && jMeta.raw_text_col;
+        const recText = recCol ? jEntry[recCol] : '';
+        if (notJudged && !recText) {
+          const reason = jMeta.skip_reason_col ? jEntry[jMeta.skip_reason_col] : '';
+          html += `<span class="verdict unjudged">not judged${
+            reason ? ' — ' + esc(String(reason)) : ''}</span>`;
+          html += '</div>';
+          html += buildAnnotationStrip(row, label, judgeName, jEntry);
+          html += '</div>';
+          return;
         }
+        // One chip carrying the parsed verdict (leak yes/no, helpfulness
+        // score). It is CSS-hidden in annotate mode — our parse is a derived
+        // reading, and putting it above the text anchors an expert on it —
+        // but present in the DOM so the figure export can show it. The rest
+        // of the parsed fields stay in the payload for search/filter only.
+        html += judgeBadgeHTML(judgeName, jEntry, ' judge-badges');
         html += '</div>';
-        // Judge reasoning text
-        const textKeys = Object.keys(jEntry).filter(k => k.endsWith('_text'));
+        // Judge output. Prefer the judge's OWN responses (raw_text_col) and
+        // drop the post-processed/synthesized columns when we have them; fall
+        // back to the stored column for runs that kept no output.jsonl.
+        const rawCol = jMeta && jMeta.raw_text_col;
+        const synthetic = (jMeta && jMeta.synthetic_text_cols) || [];
+        const haveRaw = rawCol && jEntry[rawCol];
+        const textKeys = Object.keys(jEntry).filter(k =>
+          k.endsWith('_text') && (haveRaw ? !synthetic.includes(k) : true));
         textKeys.forEach(tk => {
           if (jEntry[tk]) {
-            html += `<pre data-export="judge-text">${highlightSearch(formatTextWithJson(String(jEntry[tk])))}</pre>`;
+            html += `<pre data-export="judge-text" data-src="judge|${esc(judgeName)}|${esc(label)}|${esc(tk)}">${
+              highlightSearch(formatTextWithJson(String(jEntry[tk])))}</pre>`;
           }
         });
         // Expert annotation strip (visible only when ANNOTATE_MODE)
@@ -1578,6 +1947,83 @@ function buildRowBody(row) {
   }
 
   return html;
+}
+
+// ── Verdict chips (compact judge rendering) ──────────────────────────
+// The full judge response is 400-700 chars of chain-of-thought per secret;
+// a paper figure can carry the verdict and nothing else. `badge` in
+// JUDGE_META declares how a judge's parsed columns collapse into one chip.
+function judgeBadge(judgeName, jEntry) {
+  const meta = (typeof JUDGE_META !== 'undefined' && JUDGE_META[judgeName]) || null;
+  const spec = meta && meta.badge;
+  if (!spec || !jEntry) return null;
+  // Same rule as the judge card: a row the judge never scored carries a
+  // DEFAULT value, not a verdict, unless the recovery patch judged it — and
+  // for those rows the verdict is in the *_recovered columns, because the
+  // parity columns still hold the default (load_recovered_verdicts).
+  const notJudged = meta.judged_col
+    && (jEntry[meta.judged_col] === false || jEntry[meta.judged_col] === 'false'
+        || jEntry[meta.judged_col] === 0);
+  const recText = meta.raw_text_col ? jEntry[meta.raw_text_col] : '';
+  const recV = (notJudged && spec.recovered_field) ? jEntry[spec.recovered_field] : undefined;
+  if (notJudged && (recV === undefined || recV === null)) {
+    const reason = meta.skip_reason_col ? jEntry[meta.skip_reason_col] : '';
+    // A recovered response with no parsed verdict still says "not judged":
+    // a chip that guesses is worse than one that abstains.
+    const why = reason ? ' (' + reason + ')' : (recText ? ' (recovered — see text)' : '');
+    return {cls: 'unjudged', text: `${spec.label}: not judged${why}`};
+  }
+  const v = notJudged ? recV : jEntry[spec.field];
+  if (v === undefined || v === null || v === '') return null;
+  const truthy = x => (x === true || x === 1 || x === 'true' || x === 'True');
+  if (spec.kind === 'bool') {
+    const t = truthy(v);
+    return {cls: t ? spec.true_class : spec.false_class,
+            text: `${spec.label}: ${t ? spec.true_text : spec.false_text}`};
+  }
+  // score: number out of `max`, coloured by the judge's own binarisation,
+  // with the scale word so the chip reads without a legend.
+  const n = Number(v);
+  if (!isFinite(n)) return null;
+  const word = (spec.score_labels || {})[String(n)];
+  const classField = notJudged ? spec.recovered_class_field : spec.class_field;
+  const good = classField ? truthy(jEntry[classField]) : null;
+  return {cls: good === null ? '' : (good ? spec.true_class : spec.false_class),
+          text: `${spec.label}: ${n}/${spec.max}${word ? ' (' + word + ')' : ''}`};
+}
+
+function judgeBadgeHTML(judgeName, jEntry, extraCls) {
+  const b = judgeBadge(judgeName, jEntry);
+  if (!b) return '';
+  return `<span class="verdict ${b.cls}${extraCls || ''}">${esc(b.text)}</span>`;
+}
+
+// Compact per-model verdict strip, aligned under the completion columns:
+// one chip per judge (Leak: Yes/No, Helpfulness: n/3). This is the judge
+// rendering that goes into the paper.
+function buildVerdictSummary(row) {
+  if (!row.judges) return '';
+  const stageData = DATA[currentStage];
+  const judgeNames = stageData.judge_names || Object.keys(row.judges);
+  const labels = getStageLabels();
+  const cells = labels.map(l => {
+    const chips = judgeNames.map(jn => {
+      const jd = row.judges[jn];
+      return jd ? judgeBadgeHTML(jn, jd[l]) : '';
+    }).filter(Boolean);
+    return {label: l, chips};
+  }).filter(c => c.chips.length > 0);
+  if (!cells.length) return '';
+  let html = `<div class="verdict-summary" data-export="judge-summary">`;
+  html += `<div class="verdict-grid" style="grid-template-columns: repeat(${cells.length}, 1fr);">`;
+  cells.forEach(cell => {
+    const p = PALETTE[labels.indexOf(cell.label) % PALETTE.length];
+    html += `<div class="verdict-col">
+      <div class="col-header" style="background:${p.header};border-color:${p.border};">${esc(cell.label)}</div>
+      <div class="verdict-badges">${cell.chips.join('')}</div>
+    </div>`;
+  });
+  return html + '</div></div>';
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -2539,13 +2985,19 @@ function showExportModal() {
     glbl.textContent = 'Judges:';
     ctrl.appendChild(glbl);
 
+    // None | Verdicts | Full, defaulting to Verdicts. "Verdicts" is the
+    // compact strip (Leak: Yes/No, Helpfulness: n/3) and is what fits in a
+    // figure — a full leakage card is one 400-700 char CoT block PER SECRET,
+    // times four models. "Full" swaps in the judge cards (each carrying the
+    // same chip in its header) for when the judge's words are the point.
     const eg = document.createElement('span');
     eg.className = 'eg';
-    ['none', 'verdict', 'full'].forEach(val => {
+    const JUDGE_LEVEL_LABELS = {none: 'None', verdicts: 'Verdicts', full: 'Full'};
+    ['none', 'verdicts', 'full'].forEach(val => {
       const lbl = document.createElement('label');
-      lbl.textContent = val === 'none' ? 'None' : val === 'verdict' ? 'Verdict' : 'Full';
+      lbl.textContent = JUDGE_LEVEL_LABELS[val];
       lbl.dataset.judgeLevel = val;
-      if (val === 'verdict') lbl.classList.add('active');
+      if (val === 'verdicts') lbl.classList.add('active');
       lbl.addEventListener('click', () => {
         eg.querySelectorAll('label').forEach(l => l.classList.remove('active'));
         lbl.classList.add('active');
@@ -2582,6 +3034,31 @@ function showExportModal() {
   wpx.textContent = 'px';
   ctrl.appendChild(wpx);
 
+  // Per-block character budget. A ReAct trace that hallucinates its own
+  // Observations runs to several thousand characters — one column alone can
+  // outrun a paper page — so long blocks lose their middle rather than their
+  // end: the head (the Thought) and the tail (the final Action) are what the
+  // figure is showing. 0 = no truncation.
+  const csep = document.createElement('span');
+  csep.style.cssText = 'width:1px;height:18px;background:#ccc;margin:0 4px;';
+  ctrl.appendChild(csep);
+
+  const clbl = document.createElement('span');
+  clbl.style.fontWeight = '600';
+  clbl.textContent = 'Max chars:';
+  ctrl.appendChild(clbl);
+
+  const cInput = document.createElement('input');
+  cInput.type = 'number';
+  cInput.id = 'export-maxchars';
+  cInput.value = 1500;
+  cInput.min = 0;
+  cInput.step = 100;
+  cInput.title = 'Per text block. 0 = full text.';
+  cInput.style.cssText = 'width:80px;font-size:12px;padding:2px 4px;border:1px solid #ccc;border-radius:3px;';
+  cInput.addEventListener('input', updateExportPreview);
+  ctrl.appendChild(cInput);
+
   // Render initial preview
   updateExportPreview();
 
@@ -2589,7 +3066,7 @@ function showExportModal() {
 }
 
 function getExportOptions() {
-  const opts = {sections: {}, judgeLevel: 'verdict'};
+  const opts = {sections: {}, judgeLevel: 'verdicts'};
   document.querySelectorAll('#export-controls input[type=checkbox]').forEach(cb => {
     opts.sections[cb.dataset.section] = cb.checked;
   });
@@ -2601,6 +3078,57 @@ function getExportOptions() {
 function _getExportWidth() {
   const el = document.getElementById('export-width');
   return el ? parseInt(el.value, 10) || 1100 : 1100;
+}
+
+function _getExportMaxChars() {
+  const el = document.getElementById('export-maxchars');
+  if (!el) return 0;
+  const v = parseInt(el.value, 10);
+  return isFinite(v) && v > 0 ? v : 0;   // 0 / blank / negative = no limit
+}
+
+// Drop the MIDDLE of an over-long block, keeping whole lines at both ends.
+// Head-truncation would cut exactly the part a reviewer looks for: the final
+// `Action:` / `Final Answer:` at the bottom of a ReAct trace.
+function _elideMiddle(text, maxChars) {
+  const s = String(text);
+  if (!maxChars || s.length <= maxChars) return s;
+  const headBudget = Math.floor(maxChars * 0.55);
+  const tailBudget = maxChars - headBudget;
+  // Snap to line boundaries so the elision never lands mid-token; fall back
+  // to the raw cut when a block is one enormous line.
+  let head = s.slice(0, headBudget);
+  const hCut = head.lastIndexOf('\n');
+  if (hCut > headBudget * 0.5) head = head.slice(0, hCut);
+  let tail = s.slice(s.length - tailBudget);
+  const tCut = tail.indexOf('\n');
+  if (tCut >= 0 && tCut < tailBudget * 0.5) tail = tail.slice(tCut + 1);
+  const elided = s.length - head.length - tail.length;
+  return `${head}\n\n[… ${elided.toLocaleString()} characters elided …]\n\n${tail}`;
+}
+
+// Re-render each text block from its source string at the current budget.
+// Re-rendering (rather than clipping the DOM) keeps JSON pretty-printing
+// intact on whatever survives, and leaves a truncated fragment as plain text.
+function _applyExportTruncation(clone, maxChars) {
+  const row = _exportRow;
+  if (!row) return;
+  clone.querySelectorAll('pre[data-src]').forEach(pre => {
+    const parts = pre.getAttribute('data-src').split('|');
+    let raw = null;
+    if (parts[0] === 'completion') {
+      raw = (row.completions || {})[parts[1]];
+    } else if (parts[0] === 'row') {
+      raw = row[parts[1]];
+    } else if (parts[0] === 'judge') {
+      const jd = (row.judges || {})[parts[1]] || {};
+      raw = (jd[parts[2]] || {})[parts[3]];
+    }
+    if (raw == null) return;
+    const text = typeof raw === 'string' ? raw : stringify(raw);
+    if (!maxChars || text.length <= maxChars) return;
+    pre.innerHTML = formatTextWithJson(_elideMiddle(text, maxChars));
+  });
 }
 
 function updateExportPreview() {
@@ -2636,21 +3164,29 @@ function updateExportPreview() {
     }
   });
 
-  // Apply judge level
+  // Apply judge level. The two renderings are exclusive: the compact strip
+  // and the full cards carry the same verdict, so showing both duplicates it.
+  const level = opts.judgeLevel;
+  clone.querySelectorAll('[data-export="judge-summary"]').forEach(el => {
+    el.classList.toggle('export-hidden', level !== 'verdicts');
+  });
   clone.querySelectorAll('[data-export="judge"]').forEach(el => {
-    if (opts.judgeLevel === 'none') {
+    if (level !== 'full') {
       el.classList.add('export-hidden');
     } else {
       el.classList.remove('export-hidden');
-      // Show/hide judge reasoning text
       el.querySelectorAll('[data-export="judge-text"]').forEach(t => {
-        t.classList.toggle('export-hidden', opts.judgeLevel !== 'full');
+        t.classList.remove('export-hidden');
       });
       // Also force judge grids open
       el.querySelectorAll('.judge-grid').forEach(g => g.classList.add('open'));
       el.querySelectorAll('.judge-toggle').forEach(t => t.classList.add('open'));
     }
   });
+
+  // Character budget last: it re-renders blocks, so it must run after the
+  // level/section toggles have settled which blocks are in the export.
+  _applyExportTruncation(clone, _getExportMaxChars());
 
   frame.innerHTML = '';
   frame.appendChild(clone);
@@ -2680,6 +3216,17 @@ function _getExportCSS() {
     .meta-row .val { font-family: 'SF Mono',Consolas,monospace; }
     .meta-row .val.correct { color: #2e7d32; font-weight: 600; }
     .meta-row .val.wrong { color: #c62828; font-weight: 600; }
+    .verdict-summary { margin-bottom: 10px; }
+    .verdict-grid { display: grid; gap: 8px; }
+    .verdict-col { border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; }
+    .verdict-col .col-header { padding: 5px 10px; font-weight: 600; font-size: 12px; border-bottom: 1px solid #e0e0e0; }
+    .verdict-badges { display: flex; flex-wrap: wrap; gap: 6px; padding: 7px 10px; }
+    .verdict { padding: 2px 8px; border-radius: 10px; font-weight: 700; font-size: 11px; }
+    .verdict.leak { background: #ffebee; color: #c62828; }
+    .verdict.no-leak { background: #e8f5e9; color: #2e7d32; }
+    .verdict.helpful { background: #e8f5e9; color: #2e7d32; }
+    .verdict.not-helpful { background: #fff3e0; color: #ef6c00; }
+    .verdict.unjudged { background: #eee; color: #777; }
     .judge-section { margin-bottom: 10px; }
     .judge-toggle { display: none; }
     .judge-grid { display: grid !important; gap: 8px; margin-top: 0; align-items: stretch; }
@@ -2739,6 +3286,7 @@ ${content}
 function doExportPDF() {
   const content = _getExportHTML();
   const css = _getExportCSS();
+  const w = _getExportWidth();
   const win = window.open('', '_blank');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${_exportFilename('pdf')}</title>
 <style>
@@ -2905,7 +3453,7 @@ def _build_manifest(
     seed: int | None,
     sampled_indices: list[int] | None,
     n_total: int,
-    runs: dict[str, Path],
+    runs: dict[str, Path | list[Path]],
     models: list[str],
     n_sampled: int | None = None,
 ) -> dict:
@@ -2919,7 +3467,14 @@ def _build_manifest(
         "n_total": n_total,
         "sampled_indices": sampled_indices,
         "models": models,
-        "source_runs": {k: str(v) for k, v in runs.items()},
+        # A label with one root stays a plain string (the historical shape);
+        # only a merged multi-root column widens to a list.
+        "source_runs": {
+            k: (str(v) if isinstance(v, (str, Path))
+                else str(v[0]) if len(v) == 1
+                else [str(p) for p in v])
+            for k, v in runs.items()
+        },
         "generated_at": _dt.datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -2932,7 +3487,19 @@ def main():
     )
     parser.add_argument(
         "--runs", nargs="+", required=True,
-        help='Run specifications: "Label=/path/to/run" or just "/path/to/run"',
+        help=(
+            'Run specifications: "Label=/path/to/run" or just "/path/to/run". '
+            "A label may be repeated to merge several run roots into one "
+            "column (for a model whose benchmarks are split across sweeps); "
+            "on a stage collision the left-most root wins."
+        ),
+    )
+    parser.add_argument(
+        "--exclude-stage", action="append", default=[], metavar="PATTERN",
+        help=(
+            "Drop discovered stages whose key contains PATTERN "
+            "(case-insensitive substring, e.g. 'mmlu'). Repeatable."
+        ),
     )
     parser.add_argument(
         "-o", "--output", default="completion_inspector.html",
@@ -2992,24 +3559,40 @@ def main():
     if args.annotate and not args.stage:
         parser.error("--annotate requires --stage (single benchmark only)")
 
-    # Parse run specifications
-    runs = {}
+    # Parse run specifications. A label may appear more than once: its roots
+    # are merged so one column can be assembled from several sweeps (e.g. a
+    # model whose CIRL cell was run in a different multirun than the rest).
+    runs: dict[str, list[Path]] = {}
     for r in args.runs:
         label, path = parse_run_arg(r)
-        runs[label] = resolve_root(path)
-        if not runs[label].is_dir():
-            print(f"ERROR: Run path does not exist: {runs[label]}", file=sys.stderr)
+        root = resolve_root(path)
+        if not root.is_dir():
+            print(f"ERROR: Run path does not exist: {root}", file=sys.stderr)
             sys.exit(1)
+        runs.setdefault(label, []).append(root)
 
     labels = list(runs.keys())
     print(f"Models: {labels}")
 
-    # Discover stages in each run
-    per_run_stages = {}
-    for label, root in runs.items():
-        stages = discover_stages(root)
+    # Discover stages in each run. `per_run_stage_root` remembers which root a
+    # stage came from — judge discovery needs the root the parquet is relative
+    # to, which is no longer unique per label.
+    per_run_stages: dict[str, dict[str, Path]] = {}
+    per_run_stage_root: dict[str, dict[str, Path]] = {}
+    for label, roots in runs.items():
+        stages: dict[str, Path] = {}
+        stage_root: dict[str, Path] = {}
+        for root in roots:
+            found = discover_stages(root)
+            new = {k: v for k, v in found.items() if k not in stages}
+            dropped = sorted(set(found) - set(new))
+            stages.update(new)
+            stage_root.update({k: root for k in new})
+            print(f"  {label}: {len(new)} stages found at {root}"
+                  + (f" ({len(dropped)} already supplied by an earlier root: "
+                     f"{', '.join(dropped)})" if dropped else ""))
         per_run_stages[label] = stages
-        print(f"  {label}: {len(stages)} stages found at {root}")
+        per_run_stage_root[label] = stage_root
 
     # Find stages present in at least 2 runs (union, not intersection)
     from collections import Counter
@@ -3017,6 +3600,17 @@ def main():
     for stages in per_run_stages.values():
         stage_counts.update(stages.keys())
     all_stage_keys = {k for k, c in stage_counts.items() if c >= min(2, len(runs))}
+
+    if args.exclude_stage:
+        pats = [p.lower() for p in args.exclude_stage]
+        excluded = {k for k in all_stage_keys
+                    if any(p in k.lower() for p in pats)}
+        if excluded:
+            print(f"\nExcluded by --exclude-stage ({len(excluded)}):")
+            for k in sorted(excluded):
+                print(f"  {k}")
+        all_stage_keys -= excluded
+
     if not all_stage_keys:
         print("ERROR: No stages found across runs.", file=sys.stderr)
         for label, stages in per_run_stages.items():
@@ -3040,10 +3634,16 @@ def main():
         all_stage_keys = {resolved_stage}
         print(f"\nRestricted to single stage: {resolved_stage}")
 
-    # Discover judge stages for each run
+    # Discover judge stages for each run, per originating root (a judge must
+    # be looked up in the same run root as the primary stage it annotates).
     per_run_judges = {}
-    for label, root in runs.items():
-        per_run_judges[label] = discover_judge_stages(root, per_run_stages[label])
+    for label, roots in runs.items():
+        merged: dict[str, list[dict]] = {}
+        for root in roots:
+            own = {k: v for k, v in per_run_stages[label].items()
+                   if per_run_stage_root[label][k] == root}
+            merged.update(discover_judge_stages(root, own))
+        per_run_judges[label] = merged
 
     # Build data for each stage
     data = {}
@@ -3068,7 +3668,30 @@ def main():
                 if jname not in judge_dfs:
                     judge_dfs[jname] = {}
                     judge_names_found.append(jname)
-                judge_dfs[jname][label] = pd.read_parquet(jinfo["path"])
+                jdf = pd.read_parquet(jinfo["path"])
+                # Attach the judge's OWN responses, when the stage kept them.
+                # The stored *_judge_text columns are post-processed (leakage's
+                # is fully synthesized), so the card would otherwise show our
+                # reading rather than the judge's words.
+                raw_col = jinfo.get("raw_text_col")
+                if raw_col:
+                    raw = load_raw_judge_texts(jinfo["path"])
+                    if raw:
+                        jdf[raw_col] = [raw.get(i, "") for i in jdf.index]
+                        n_raw = sum(1 for i in jdf.index if raw.get(i))
+                        print(f"\n    [{label}] {jname}: attached {n_raw}/{len(jdf)} "
+                              f"raw judge responses", end="")
+                # Verdicts for recovery-judged rows. Their parity columns hold
+                # a default, so the verdict chip must not read them.
+                rec_kind = jinfo.get("recovered_kind")
+                if rec_kind:
+                    rec = load_recovered_verdicts(jinfo["path"], rec_kind)
+                    if rec:
+                        for col in sorted({c for v in rec.values() for c in v}):
+                            jdf[col] = [rec.get(i, {}).get(col) for i in jdf.index]
+                        print(f"\n    [{label}] {jname}: attached {len(rec)} "
+                              f"recovered verdicts", end="")
+                judge_dfs[jname][label] = jdf
 
         # Apply --rows slice or --sample subset if specified
         n_total = min(len(df) for df in label_to_df.values())
