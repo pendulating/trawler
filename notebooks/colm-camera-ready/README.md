@@ -5,11 +5,21 @@ simulacra* (COLM 2026) is produced by a notebook in this directory. These are
 [marimo](https://marimo.io) notebooks stored as plain Python — run them directly
 (`python <notebook>.py`) or open them with `marimo edit`.
 
-> **Read this first: two delivery modes.** Some notebooks write straight into
-> `papers/colm26_normative-simulacra/`. Others write only into this directory's `figures/` and
-> `tables/`, and their output reached the paper by **manual copy**. Re-running a manual-copy
-> notebook does **not** update the paper. The table below marks which is which; when in doubt,
-> diff the local artifact against the paper's copy before assuming they agree.
+> **Read this first: two delivery modes, and both can bite.**
+>
+> Some notebooks write straight into `papers/colm26_normative-simulacra/`. Others write only into
+> this directory's `figures/` and `tables/`, and their output reached the paper by **manual copy** —
+> re-running one of those does *not* update the paper.
+>
+> The direct writers have the opposite hazard. Verified 2026-08-12: several paper tables carry
+> **hand edits made after generation** — `source_texts.tex` was switched to `\scriptsize`, and
+> `corpus_scaling.tex`'s caption gained a clause about the 2026-07-12 prompt-wiring fix. Re-running
+> `gen_corpus_tables.py` silently reverts all of it. The *numbers* regenerate correctly (fiction10
+> 2,993 / 16,200 / 10,034 and top100 15,875 / 90,091 / 53,492, matching `04_results.tex`); it is the
+> typography and prose that get clobbered.
+>
+> **So: always `git -C papers/colm26_normative-simulacra diff` after running a direct writer**, and
+> re-apply anything you did not mean to lose.
 
 Use the canonical venv:
 

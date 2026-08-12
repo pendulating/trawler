@@ -281,6 +281,9 @@ CI_FLOW_PIPELINE_AUDIT.md
 /annotation_runs/
 /papers_to_ocr/
 /important_colm_runs/
+# Offline (never-synced) W&B runs, moved aside so scripts/clean_wandb.py
+# cannot reclaim them — they exist nowhere else.
+/wandb_offline_keep/
 wandb_cache/
 papers/*.html
 
