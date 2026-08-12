@@ -489,9 +489,8 @@ def run_grpo_training_stage(
     print(f"[grpo_training] Chunks: {len(chunks_df)}")
     print(f"[grpo_training] Norm universes: {len(norm_universes)} sources")
 
-    # Build composite reward function
-    from .rewards import CompositeRewardFunction
-
+    # reward_weights survives the v9 removal only as the R_ground gate below
+    # (weights[5] decides whether online R_ground is worth standing up).
     weights = grpo_cfg.get("reward_weights", [0.2, 0.15, 0.15, 0.15, 0.15, 0.2])
     # Resolve GRPO thinking mode: explicit training-config override wins,
     # else derive from the model's thinking_mode field (single source of truth).
@@ -734,44 +733,30 @@ def run_grpo_training_stage(
     # v9-ckpt100 keeper checkpoint; True is the corrected fall-through for the
     # per-component ablation. Enabling it changes the composite reward value.
     _confidence_fallthrough = bool(grpo_cfg.get("confidence_fallthrough", False))
-    # m-series dispatch: reward_composition="modular" selects the parallel
-    # ModularReward stack (wiki/grpo_redesign/migration.md item 4). Every other
-    # value — the keeper's "directional", plus "additive"/"gated" — keeps
-    # selecting CompositeRewardFunction byte-for-byte (the config-dispatch
-    # invariant guarded by tests). Additive code: the branch is the only change.
+    # The m-series ModularReward stack is the only reward path. The v9
+    # "directional" composition and its "additive"/"gated" siblings were
+    # removed with CompositeRewardFunction once the keeper was deprecated
+    # (CLAUDE.md); anything other than "modular" is now a config error rather
+    # than a silent fall-through to a retired reward.
     from .modular_reward import is_modular_composition
-    _modular = is_modular_composition(_composition)
-    if _modular:
-        from .modular_reward import make_modular_reward_from_cfg
-        reward_fn = make_modular_reward_from_cfg(
-            cfg, grpo_cfg, norm_universes,
-            # Until 2026-07-25 traces were passed only to the legacy branch
-            # while the print below fired for both — the m1 wave produced no
-            # traces despite announcing them.
-            trace_log_path=trace_log_path,
-            trace_every_n_calls=trace_every,
+    if not is_modular_composition(_composition):
+        raise ValueError(
+            f"reward_composition={_composition!r} is no longer supported. The v9 "
+            f"directional/additive/gated compositions were removed along with "
+            f"CompositeRewardFunction; use reward_composition: modular."
         )
-        print(f"[grpo_training] Modular reward stack: "
-              f"auxiliaries={reward_fn.auxiliaries}, reward_core={reward_fn.reward_core}, "
-              f"weights={reward_fn.weights}")
-    else:
-        reward_fn = CompositeRewardFunction(
-            weights=weights,
-            norm_universes=norm_universes,
-            reward_cache=reward_cache,
-            context_embedding_model=context_embedding_model,
-            source_contexts=source_contexts,
-            trace_log_path=trace_log_path,
-            trace_every_n_calls=trace_every,
-            online_rground=online_rground,
-            no_flow_scoring=_nf_scoring,
-            judgment_weights=_judgment_weights,
-            composition=_composition,
-            abstention_penalty=_abstention_penalty,
-            confidence_fallthrough=_confidence_fallthrough,
-        )
-        print(f"[grpo_training] No-flow scoring mode: {_nf_scoring}, "
-              f"reward composition: {_composition}")
+    from .modular_reward import make_modular_reward_from_cfg
+    reward_fn = make_modular_reward_from_cfg(
+        cfg, grpo_cfg, norm_universes,
+        # Until 2026-07-25 traces were passed only to the legacy branch
+        # while the print below fired for both — the m1 wave produced no
+        # traces despite announcing them.
+        trace_log_path=trace_log_path,
+        trace_every_n_calls=trace_every,
+    )
+    print(f"[grpo_training] Modular reward stack: "
+          f"auxiliaries={reward_fn.auxiliaries}, reward_core={reward_fn.reward_core}, "
+          f"weights={reward_fn.weights}")
     reward_fn.enable_thinking_grpo = enable_thinking_grpo
     print(f"[grpo_training] Reward traces → {trace_log_path} (every {trace_every} calls)")
 

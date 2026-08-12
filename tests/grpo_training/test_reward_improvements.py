@@ -4,7 +4,6 @@ Covers the pure-logic pieces introduced by the Phase 2–5 redesign
 (see wiki/changelog/2026-06-09_grpo_phase1_optimizer_revision.md):
 
 * ``_rankings_to_scores`` — listwise rank → per-candidate reward blending
-* ``CompositeRewardFunction`` gated vs additive composition
 * gold-aware ``r_context`` for no-flow completions
 * ``select_prompts_by_reward_std`` — variance pre-screening selection
 * ``check_promotion_gates`` — trainer-state / trace gate evaluation
@@ -26,13 +25,6 @@ from dagspaces.grpo_training.stages.prompt_screening import (
     _apply_flow_variance_filter,
     select_prompts_by_reward_std,
 )
-from dagspaces.grpo_training.stages.rewards import (
-    CompositeRewardFunction,
-    r_context,
-    r_uncert,
-)
-
-WEIGHTS = [0.10, 0.05, 0.05, 0.20, 0.10, 0.50]
 
 
 # ---------------------------------------------------------------------------
@@ -90,120 +82,6 @@ class TestRankingsToScores:
 
 
 # ---------------------------------------------------------------------------
-# Gated composition
-# ---------------------------------------------------------------------------
-
-class TestComposition:
-    def test_additive_matches_weighted_sum(self):
-        fn = CompositeRewardFunction(weights=WEIGHTS, composition="additive")
-        components = [1.0, 1.0, 1.0, 0.5, 0.5, 0.5]
-        expected = sum(w * c for w, c in zip(WEIGHTS, components))
-        assert fn._combine(components) == pytest.approx(expected)
-
-    def test_gated_is_gate_times_disc(self):
-        fn = CompositeRewardFunction(weights=WEIGHTS, composition="gated")
-        components = [1.0, 1.0, 1.0, 0.5, 0.5, 0.5]
-        # Perfect gating → gate=1.0; disc = weight-normalized mean = 0.5
-        assert fn._combine(components) == pytest.approx(0.5)
-
-    def test_gated_zero_gate_zeroes_reward(self):
-        fn = CompositeRewardFunction(weights=WEIGHTS, composition="gated")
-        assert fn._combine([0.0, 0.0, 0.0, 1.0, 1.0, 1.0]) == 0.0
-
-    def test_gated_saturated_gate_preserves_disc_ordering(self):
-        # Two completions with identical (saturated) gates must be ordered
-        # purely by their discriminative components — the additive offset
-        # dilution this mode removes.
-        fn = CompositeRewardFunction(weights=WEIGHTS, composition="gated")
-        better = fn._combine([1.0, 1.0, 1.0, 0.2, 0.2, 0.9])
-        worse = fn._combine([1.0, 1.0, 1.0, 0.2, 0.2, 0.3])
-        # With gate=1.0 the gap is the r_ground difference at its
-        # normalized discriminative weight.
-        expected_gap = (0.9 - 0.3) * WEIGHTS[5] / sum(WEIGHTS[3:])
-        assert better - worse == pytest.approx(expected_gap)
-
-    def test_unknown_composition_rejected(self):
-        with pytest.raises(ValueError):
-            CompositeRewardFunction(weights=WEIGHTS, composition="multiplicative")
-
-    # --- v9 directional composition: R = gate × content -------------------
-    # gate = norm-mean of {r_uncert, r_complete, r_consist, r_cohere} (idx 0,1,2,4);
-    # content = norm-mean of {r_context, r_ground} (idx 3,5).
-
-    def test_directional_is_gate_times_content(self):
-        fn = CompositeRewardFunction(weights=WEIGHTS, composition="directional")
-        # Perfect gate (all four format/coherence components = 1.0) → gate=1.0;
-        # content = weight-normalized mean of r_context=0.5, r_ground=0.5 = 0.5.
-        assert fn._combine([1.0, 1.0, 1.0, 0.5, 1.0, 0.5]) == pytest.approx(0.5)
-
-    def test_directional_cohere_is_in_the_gate(self):
-        # r_cohere (idx 4) moved from discriminative into the gate: zeroing it
-        # must scale the whole reward down, not just drop one additive term.
-        fn = CompositeRewardFunction(weights=WEIGHTS, composition="directional")
-        good_coh = fn._combine([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
-        bad_coh = fn._combine([1.0, 1.0, 1.0, 1.0, 0.0, 1.0])
-        assert good_coh == pytest.approx(1.0)
-        # gate drops to (0.10+0.05+0.05)/0.30 = 2/3; content stays 1.0.
-        assert bad_coh == pytest.approx((0.10 + 0.05 + 0.05) / 0.30)
-
-    def test_directional_zero_gate_zeroes_reward(self):
-        fn = CompositeRewardFunction(weights=WEIGHTS, composition="directional")
-        assert fn._combine([0.0, 0.0, 0.0, 1.0, 0.0, 1.0]) == 0.0
-
-    def test_directional_content_ordered_by_grounding(self):
-        # Same (saturated) gate → ordered purely by content; r_ground dominates
-        # r_context within content.
-        fn = CompositeRewardFunction(weights=WEIGHTS, composition="directional")
-        better = fn._combine([1.0, 1.0, 1.0, 0.2, 1.0, 0.9])
-        worse = fn._combine([1.0, 1.0, 1.0, 0.2, 1.0, 0.3])
-        expected_gap = (0.9 - 0.3) * WEIGHTS[5] / (WEIGHTS[3] + WEIGHTS[5])
-        assert better - worse == pytest.approx(expected_gap)
-
-    def test_directional_keeps_r_context(self):
-        # r_context still contributes to content (kept, light): raising it lifts
-        # the reward even with grounding held fixed.
-        fn = CompositeRewardFunction(weights=WEIGHTS, composition="directional")
-        lo = fn._combine([1.0, 1.0, 1.0, 0.0, 1.0, 0.5])
-        hi = fn._combine([1.0, 1.0, 1.0, 1.0, 1.0, 0.5])
-        assert hi > lo
-        assert hi - lo == pytest.approx(WEIGHTS[3] / (WEIGHTS[3] + WEIGHTS[5]))
-
-
-# ---------------------------------------------------------------------------
-# Unjustified-abstention penalty (2026-06-12)
-# ---------------------------------------------------------------------------
-
-class TestAbstentionPenalty:
-    """The penalty fires ONLY on abstain-when-gold-says-flow, and only when
-    enabled. It must never touch correct abstention (gold False), unknown gold
-    (None), or any extracting completion — otherwise it would punish the model
-    for correctly declining to hallucinate a flow.
-    """
-
-    def test_disabled_by_default(self):
-        fn = CompositeRewardFunction(weights=WEIGHTS, composition="gated")
-        assert fn.abstention_penalty == 0.0
-        # Even an abstain-on-gold-flow completion is untouched when disabled.
-        assert fn._is_unjustified_abstention(True, True) is False
-
-    def test_negative_penalty_rejected(self):
-        with pytest.raises(ValueError):
-            CompositeRewardFunction(weights=WEIGHTS, abstention_penalty=-0.1)
-
-    def test_fires_only_on_abstain_with_gold_flow(self):
-        fn = CompositeRewardFunction(weights=WEIGHTS, abstention_penalty=0.2)
-        # The one case that should be penalized:
-        assert fn._is_unjustified_abstention(True, True) is True
-        # Correct abstention (gold says no flow) — never penalized:
-        assert fn._is_unjustified_abstention(True, False) is False
-        # Unknown gold — hedged, never penalized:
-        assert fn._is_unjustified_abstention(True, None) is False
-        # Extracting completions — never penalized regardless of gold:
-        assert fn._is_unjustified_abstention(False, True) is False
-        assert fn._is_unjustified_abstention(False, False) is False
-
-
-# ---------------------------------------------------------------------------
 # Gold-aware r_context for no-flow completions
 # ---------------------------------------------------------------------------
 
@@ -212,24 +90,6 @@ NO_FLOW_COMPLETION = json.dumps({
     "has_information_exchange": False,
     "flows": [],
 })
-
-
-class TestRContextNoFlow:
-    def test_correct_no_flow_rewarded(self):
-        assert r_context(NO_FLOW_COMPLETION, None, [], None,
-                         gold_has_exchange=False) == pytest.approx(0.9)
-
-    def test_false_no_flow_zeroed(self):
-        assert r_context(NO_FLOW_COMPLETION, None, [], None,
-                         gold_has_exchange=True) == 0.0
-
-    def test_unknown_gold_hedged(self):
-        assert r_context(NO_FLOW_COMPLETION, None, [], None,
-                         gold_has_exchange=None) == pytest.approx(0.4)
-
-    def test_parse_failure_still_zero(self):
-        assert r_context("not json at all", None, [], None,
-                         gold_has_exchange=False) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -250,20 +110,6 @@ _NO_CONFIDENCE_COMPLETION = json.dumps({
         "transmission_principle": "confidentiality",
     }],
 })
-
-
-class TestRUncertConfidenceFallthrough:
-    """A confidence-less flow: schema(0.6) + discrimination(0.2) = 0.8 base."""
-
-    def test_keeper_default_drops_confidence_facet(self):
-        # Keeper (v9-ckpt100) behaviour: the None-chain stops at the non-numeric
-        # confidence_qual="uncertain", float() raises, facet-3 contributes 0.0.
-        assert r_uncert(_NO_CONFIDENCE_COMPLETION) == pytest.approx(0.8)
-
-    def test_fallthrough_recovers_documented_default(self):
-        # Corrected: fall through to confidence_quant=5 → 0.2 * 5/10 = 0.1.
-        assert r_uncert(_NO_CONFIDENCE_COMPLETION,
-                        confidence_fallthrough=True) == pytest.approx(0.9)
 
 
 # ---------------------------------------------------------------------------
@@ -891,36 +737,6 @@ class TestAppropriatenessMultiplicative:
                 embedding_client=_FakeEmbeddingClient(), judge_client=_FakeRankingJudge(),
                 norm_retriever=_FakeRetriever(), scoring_mode="ranked",
                 ranking_prompt_template="x", app_floor=1.5)
-
-
-class TestDirectionalAbstention:
-    """v9 directional mode: no-flow completions bypass the gate×content combine
-    and are scored directly by gold-label correctness (no_flow_reward), with no
-    post-hoc abstention penalty (which would double-count)."""
-
-    # r_ground weight 0 → the no-flow path needs no judge/cache.
-    W = [0.10, 0.05, 0.05, 0.20, 0.10, 0.0]
-
-    def _fn(self, **kw):
-        return CompositeRewardFunction(
-            weights=self.W, composition="directional",
-            prompt_metadata={
-                "pc": {"source_id": "b", "gold_has_exchange": False},
-                "pw": {"source_id": "b", "gold_has_exchange": True},
-                "pu": {"source_id": "b", "gold_has_exchange": None},
-            }, **kw)
-
-    def test_no_flow_scored_by_gold(self):
-        scores = self._fn()(prompts=["pc", "pw", "pu"],
-                            completions=[NO_FLOW_COMPLETION] * 3)
-        assert scores[0] == pytest.approx(0.6)   # correct abstention (gold=False)
-        assert scores[1] == pytest.approx(0.1)   # wrong abstention (gold=True)
-        assert scores[2] == pytest.approx(0.4)   # unknown gold
-
-    def test_no_flow_ignores_post_hoc_penalty(self):
-        scores = self._fn(abstention_penalty=0.4)(
-            prompts=["pw"], completions=[NO_FLOW_COMPLETION])
-        assert scores[0] == pytest.approx(0.1)   # 0.1, not 0.1 - 0.4
 
 
 class _FakeFlatGroundingJudge:

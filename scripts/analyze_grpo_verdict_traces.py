@@ -41,7 +41,7 @@ import os
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
-from dagspaces.grpo_training.stages.rewards import _parse_judgment_completion
+from dagspaces.grpo_training.stages.parsing import parse_judgment_completion as _parse_judgment_completion
 
 # Direction-multiplier tier boundaries (deontic.appropriateness_multiplier at
 # the production floors app_floor=0.4 / app_floor_prohibit=0.1): correct 1.0,

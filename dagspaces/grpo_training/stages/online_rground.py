@@ -24,7 +24,7 @@ from .deontic import (
     direction_multiplier,
     governing_norm_force,
 )
-from .rewards import _parse_completion
+from .parsing import parse_completion as _parse_completion
 
 
 def _flow_to_query(flow: dict[str, Any]) -> str:

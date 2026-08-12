@@ -6,10 +6,11 @@ post hoc. Covers:
 
 * ``_vignette_gold_counts`` — realised yes/no mix over dataset/metadata rows
   (feeds the prescreen report and training_metadata.json)
-* ``CompositeRewardFunction._push_vignette_health`` — per-call ``vignette/*``
-  accuracy + drift stats (``last_vignette_health``; W&B push is fail-safe)
 * ``scripts.analyze_grpo_verdict_traces.analyze`` — the offline forensics
   aggregation over raw trace entries
+
+The ``CompositeRewardFunction._push_vignette_health`` cases were removed with
+the v9 reward stack; ``last_vignette_health`` has no m-series equivalent.
 
 See wiki/grpo_training_field_notes/2026-07-01_v11_probe_midrun_forensics.md.
 """
@@ -17,10 +18,6 @@ See wiki/grpo_training_field_notes/2026-07-01_v11_probe_midrun_forensics.md.
 from __future__ import annotations
 
 from dagspaces.grpo_training.stages.prompt_screening import _vignette_gold_counts
-from dagspaces.grpo_training.stages.rewards import CompositeRewardFunction
-
-WEIGHTS = [0.10, 0.05, 0.05, 0.20, 0.10, 0.50]
-
 
 def _vig_row(gold, task="norm_judgment"):
     return {"task_type": task, "gold_judgment": gold}
@@ -43,58 +40,6 @@ class TestVignetteGoldCounts:
 
 _YES = '{"judgment": "yes", "reasoning": "sharing is expected here", "norms_considered": []}'
 _NO = '{"judgment": "no", "reasoning": "the norm prohibits disclosure", "norms_considered": []}'
-
-
-class TestVignetteHealth:
-    def _fn(self):
-        fn = CompositeRewardFunction(weights=WEIGHTS)
-        fn.prompt_metadata = {
-            "py": {"task_type": "norm_judgment", "gold_judgment": "yes",
-                   "source_norm_articulation": "one must share the news"},
-            "pn": {"task_type": "norm_judgment", "gold_judgment": "no",
-                   "source_norm_articulation": "one must not reveal the secret"},
-        }
-        return fn
-
-    def test_per_class_accuracy_and_drift(self):
-        fn = self._fn()
-        # gold-yes answered yes (correct); gold-no answered yes (the
-        # over-permit drift the says_yes_gold_no metric watches).
-        fn(prompts=["py", "pn"], completions=[_YES, _YES])
-        h = fn.last_vignette_health
-        assert h["vignette/n_yes"] == 1.0
-        assert h["vignette/n_no"] == 1.0
-        assert h["vignette/acc_gold_yes"] == 1.0
-        assert h["vignette/acc_gold_no"] == 0.0
-        assert h["vignette/says_yes_gold_no"] == 1.0
-        assert h["vignette/says_no_gold_yes"] == 0.0
-        assert h["vignette/unparsed_frac"] == 0.0
-
-    def test_over_forbid_direction(self):
-        fn = self._fn()
-        fn(prompts=["py"], completions=[_NO])
-        h = fn.last_vignette_health
-        assert h["vignette/acc_gold_yes"] == 0.0
-        assert h["vignette/says_no_gold_yes"] == 1.0
-        # No gold-no completions this call → per-class keys absent, not 0.
-        assert "vignette/acc_gold_no" not in h
-
-    def test_unparsed_counted_but_not_drift(self):
-        fn = self._fn()
-        fn(prompts=["pn"], completions=["not json at all"])
-        h = fn.last_vignette_health
-        assert h["vignette/n_no"] == 1.0
-        assert h["vignette/acc_gold_no"] == 0.0
-        assert h["vignette/unparsed_frac"] == 1.0
-        # A parse failure is not an affirmative "yes" — drift stays 0.
-        assert h["vignette/says_yes_gold_no"] == 0.0
-
-    def test_no_vignettes_no_push(self):
-        fn = CompositeRewardFunction(weights=WEIGHTS)
-        fn.prompt_metadata = {}
-        fn(prompts=["x"], completions=[
-            '{"reasoning": "r", "has_information_exchange": false, "flows": []}'])
-        assert fn.last_vignette_health == {}
 
 
 class TestVerdictTraceAnalysis:

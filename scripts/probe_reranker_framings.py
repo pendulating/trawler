@@ -20,7 +20,7 @@ from dagspaces.grpo_training.stages.clients import (
     RerankerJudgeClient,
     RERANKER_GROUNDING_INSTRUCTION,
 )
-from dagspaces.grpo_training.stages.rewards import _parse_completion
+from dagspaces.grpo_training.stages.parsing import parse_completion as _parse_completion
 from scripts.validate_reranker_judge import _spearman, _pearson
 
 TRACES = ("multirun/2026-06-17_grpo_redesign_full_v4/13-42-30/0/"

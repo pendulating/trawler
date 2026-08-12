@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # Import the production client so the validation scores flows exactly as
 # training would (same query construction, same /rerank call).
 from dagspaces.grpo_training.stages.clients import RerankerJudgeClient
-from dagspaces.grpo_training.stages.rewards import _parse_completion
+from dagspaces.grpo_training.stages.parsing import parse_completion as _parse_completion
 from dagspaces.grpo_training.stages.online_rground import _flow_to_query, _flatten_flow
 
 

@@ -507,7 +507,7 @@ def _sample_and_score(
     #  - extract_frac_by_prompt: fraction of a prompt's G samples that
     #    extracted >=1 flow — the flow-decision-variance signal option 3
     #    screens on (a prompt with extract_frac 0 unanimously abstained).
-    from .rewards import _parse_completion
+    from .parsing import parse_completion as _parse_completion
     n_no_flow = 0
     extract_frac_by_prompt: dict[str, float] = {}
     for prompt_key, out in zip(prompt_keys, outputs):

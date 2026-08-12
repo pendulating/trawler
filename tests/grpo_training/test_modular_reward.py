@@ -467,9 +467,9 @@ def test_is_modular_composition_dispatch():
 
 
 def test_grpo_training_uses_dispatch_helper():
-    # The keeper guard: grpo_training must route through is_modular_composition,
-    # so a non-modular composition (directional/additive) keeps selecting
-    # CompositeRewardFunction.
+    # grpo_training must route through is_modular_composition. Since the v9
+    # CompositeRewardFunction was removed, a non-modular composition is now a
+    # hard error rather than a fall-through to the retired stack.
     import inspect
 
     from dagspaces.grpo_training.stages import grpo_training
@@ -477,8 +477,9 @@ def test_grpo_training_uses_dispatch_helper():
     src = inspect.getsource(grpo_training)
     assert "is_modular_composition" in src
     assert "make_modular_reward_from_cfg" in src
-    # The legacy branch is still present and unconditional-per-else.
-    assert "CompositeRewardFunction(" in src
+    # No construction of the retired v9 class remains (prose mentioning it in a
+    # comment is fine; a call site is not).
+    assert "CompositeRewardFunction(" not in src
 
 
 def test_active_aux_without_scorer_raises():
