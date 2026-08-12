@@ -26,6 +26,24 @@ from dagspaces.common.runners.sanity import (
 )
 
 
+def _judged_subset(df: pd.DataFrame, judged_col: str) -> pd.DataFrame:
+    """Rows the judge actually answered, for judge-response health metrics.
+
+    A row skipped upstream (no ``Action:`` in the final action) was never sent
+    to a judge, so it has no response to parse. Counting it as a parse failure
+    conflates format adherence — which ``compute_format_health`` already
+    reports as ``agent_action_format_rate`` — with judge parse health, and
+    pushes ``parseable_rate`` below its 0.7 fail gate on any format-weak model.
+    Falls back to the full frame when the column is absent (live-judge mode /
+    older artifacts).
+    """
+    if judged_col not in df.columns:
+        return df
+    mask = df[judged_col].fillna(True).astype(bool)
+    subset = df.loc[mask]
+    return subset if len(subset) else df
+
+
 class LoadDatasetRunner(StageRunner):
     stage_name = "load_dataset"
 
@@ -240,6 +258,54 @@ class HelpfulnessJudgeInferenceRunner(StageRunner):
         return StageResult(outputs={"dataset": out_path}, metadata=metadata)
 
 
+class RecoveredActionsRunner(StageRunner):
+    """Re-judge rows the upstream ``Action:`` gate skipped, beside parity.
+
+    No-ops unless ``judge.recover_mislabelled_actions=true``. Writes only
+    ``*_recovered`` artifacts; the parity metrics.json is never touched, so
+    enabling this cannot move a published number. See
+    ``stages/recovered_actions.py`` for the rationale and the tool-name caveat.
+    """
+
+    stage_name = "privacylens_recovered_actions"
+
+    def run(self, context: Any) -> StageResult:
+        from ..stages.recovered_actions import run_recovered_actions
+
+        judge_cfg = getattr(context.cfg, "judge", None)
+        enabled = bool(getattr(judge_cfg, "recover_mislabelled_actions", False))
+        out_json = context.output_paths.get("metrics_json")
+        if not enabled:
+            print("[recovered_actions] disabled "
+                  "(judge.recover_mislabelled_actions=false) — skipping.", flush=True)
+            return StageResult(outputs={}, metadata={"enabled": False})
+
+        judge_url = str(getattr(judge_cfg, "base_url", "") or
+                        os.environ.get("JUDGE_SERVER_URL", ""))
+        if not judge_url:
+            raise ValueError(
+                "judge.recover_mislabelled_actions=true but no judge base_url — "
+                "set JUDGE_SERVER_URL or judge.base_url."
+            )
+
+        outputs_dir = os.path.join(context.output_root, "outputs")
+        meta = run_recovered_actions(
+            outputs_dir,
+            judge_url=judge_url,
+            concurrency=int(getattr(judge_cfg, "recover_concurrency", 8) or 8),
+        )
+        meta["enabled"] = True
+        print(f"[recovered_actions] {meta.get('gate_failing', 0)} gate-failing rows; "
+              f"coverage {meta.get('coverage_rate', 0)}; "
+              f"leak parity={meta.get('leakage_rate_parity_only')} "
+              f"union={meta.get('leakage_rate_union')}", flush=True)
+        outputs = {}
+        written = meta.get("metrics_json")
+        if written and out_json:
+            outputs["metrics_json"] = written
+        return StageResult(outputs=outputs, metadata=meta)
+
+
 class PrivacylensFinalizeAsyncRunner(StageRunner):
     """Drain async-judge outputs and run compute_metrics.
 
@@ -292,8 +358,18 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
             thresholds=thresholds,
         )
 
+        # Parse health is about the JUDGE's responses, so it must be measured
+        # over rows the judge actually answered. Rows skipped upstream for
+        # no_action_format were never sent and now carry an empty
+        # leak_judge_text (finalize_async no longer fabricates "Answer: No."
+        # for them) — leaving them in would read every format skip as a parse
+        # failure and drive parseable_rate straight through the 0.7 fail gate
+        # on exactly the format-weak models this gate exists to describe.
+        # Format adherence has its own metric: compute_format_health above.
+        leak_judged_df = _judged_subset(result["leakage_df"], "leakage_judged")
+        help_judged_df = _judged_subset(result["helpfulness_df"], "helpfulness_judged")
         leak_report = compute_parse_health(
-            result["leakage_df"],
+            leak_judged_df,
             dagspace="privacylens",
             stage="leakage_judge_finalize",
             model=model,
@@ -301,12 +377,12 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
             completion_col="leak_judge_text",
             label_col="leak_flag",
             finish_reason_col="finish_reason",
-            expected_input_n=int(result["leakage_meta"]["rows"]),
+            expected_input_n=len(leak_judged_df),
             refusal_patterns=patterns,
             thresholds=thresholds,
         )
         help_report = compute_parse_health(
-            result["helpfulness_df"],
+            help_judged_df,
             dagspace="privacylens",
             stage="helpfulness_judge_finalize",
             model=model,
@@ -314,7 +390,7 @@ class PrivacylensFinalizeAsyncRunner(StageRunner):
             completion_col="helpfulness_judge_text",
             label_col="helpfulness_score",
             finish_reason_col="finish_reason",
-            expected_input_n=int(result["helpfulness_meta"]["rows"]),
+            expected_input_n=len(help_judged_df),
             refusal_patterns=patterns,
             thresholds=thresholds,
         )

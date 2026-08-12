@@ -38,3 +38,15 @@ pipeline:
         outputs:
           dataset: outputs/compute_metrics/metrics.parquet
           metrics_json: outputs/compute_metrics/metrics.json
+
+      # Re-judges the rows the upstream `Action:` gate skipped, using an
+      # action rebuilt from their mislabelled `Final Answer:`. No-ops unless
+      # judge.recover_mislabelled_actions=true. Runs AFTER finalize because it
+      # reads that stage's leakage_judged / leak_flag columns, and writes only
+      # *_recovered artifacts — parity metrics.json is never touched.
+      recovered_actions:
+        stage: privacylens_recovered_actions
+        depends_on: [finalize]
+        inputs: {}
+        outputs:
+          metrics_json: outputs/compute_metrics/metrics_recovered.json

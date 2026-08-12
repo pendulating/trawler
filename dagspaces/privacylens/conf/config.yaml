@@ -37,6 +37,15 @@ judge:
   max_workers: 8
   temperature: 0.0                 # shared with batch-export (body.temperature)
   max_tokens: 1024                 # shared with batch-export (body.max_tokens)
+  # Re-judge rows the upstream `Action:` gate skipped, after rebuilding their
+  # action from a mislabelled ReAct `Final Answer:`. Writes a PARALLEL set of
+  # *_recovered artifacts (metrics_recovered.json et al) and never touches the
+  # parity ones — the strict gate is what keeps this column comparable to
+  # published upstream numbers. OFF by default: turning it on adds one judge
+  # pass over the skipped rows (~1300 calls on a 493-row cell at ~25% skip).
+  # See stages/recovered_actions.py for why those rows are worth recovering.
+  recover_mislabelled_actions: false
+  recover_concurrency: 8
   batch:
     # Batch-export-mode config. Only consulted when mode=batch_export.
     # Async mode IGNORES this — body.model is resolved from the live

@@ -29,6 +29,7 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             PerturbCultureRunner,
             PrivacylensFinalizeAsyncRunner,
             QAProbeInferenceRunner,
+            RecoveredActionsRunner,
         )
 
         # PrivacyLens-under-CIRL-protocol stages (ported from the retired
@@ -61,6 +62,7 @@ def get_stage_registry() -> dict[str, "StageRunner"]:
             "compute_metrics": ComputeMetricsRunner(),
             # Async-judge finalize: drain output.jsonl + parse + metrics.
             "privacylens_finalize_async": PrivacylensFinalizeAsyncRunner(),
+            "privacylens_recovered_actions": RecoveredActionsRunner(),
             # PrivacyLens-under-CIRL-protocol
             "cirl_load_dataset": CirlLoadDatasetRunner(),
             "cirl_probe_inference": CirlLLMInferenceRunner(),
