@@ -23,7 +23,10 @@ import shutil
 import sys
 from typing import List, Tuple
 
-_DATE_DIR_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+# Hydra writes bare ``YYYY-MM-DD`` dirs, but the sweep launchers name theirs
+# ``YYYY-MM-DD_<experiment>``. Anchoring on ``$`` matched 1 of 168 entries under
+# multirun/, so this script silently reclaimed almost nothing until 2026-08-12.
+_DATE_DIR_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[_-].*)?$")
 
 
 def _parse_date(s: str) -> dt.date:
@@ -53,10 +56,40 @@ def _human(n: int) -> str:
     return f"{n:.1f} PB"
 
 
-def _collect(root: str, cutoff: dt.date) -> List[Tuple[str, dt.date]]:
+def _load_protected(path: str | None) -> set[str]:
+    """Read a newline-delimited protect list into a set of basenames.
+
+    Entries may be bare names (``2026-07-28_grpo_m2_full``) or paths
+    (``multirun/2026-07-28_grpo_m2_full/21-31-11/...``); only the run-directory
+    component is compared, so a deep artifact path protects its whole run dir.
+    Blank lines and ``#`` comments are ignored.
+    """
+    if not path:
+        return set()
+    out: set[str] = set()
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p for p in line.replace("\\", "/").split("/") if p]
+            for i, p in enumerate(parts):
+                if _DATE_DIR_RE.match(p):
+                    out.add(p)
+                    break
+            else:
+                if parts:
+                    out.add(parts[-1])
+    return out
+
+
+def _collect(root: str, cutoff: dt.date,
+             protected: set[str] | None = None) -> List[Tuple[str, dt.date]]:
     if not os.path.isdir(root):
         raise SystemExit(f"not a directory: {root}")
+    protected = protected or set()
     hits: List[Tuple[str, dt.date]] = []
+    skipped: List[str] = []
     for name in sorted(os.listdir(root)):
         m = _DATE_DIR_RE.match(name)
         if not m:
@@ -65,8 +98,16 @@ def _collect(root: str, cutoff: dt.date) -> List[Tuple[str, dt.date]]:
             d = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
         except ValueError:
             continue
-        if d <= cutoff:
-            hits.append((os.path.join(root, name), d))
+        if d > cutoff:
+            continue
+        if name in protected:
+            skipped.append(name)
+            continue
+        hits.append((os.path.join(root, name), d))
+    if skipped:
+        print(f"protected ({len(skipped)} kept despite matching the cutoff):")
+        for name in skipped:
+            print(f"  KEEP  {name}")
     return hits
 
 
@@ -80,10 +121,13 @@ def main(argv: List[str] | None = None) -> int:
                     help="list what would be deleted, delete nothing")
     ap.add_argument("-y", "--yes", action="store_true",
                     help="skip confirmation prompt")
+    ap.add_argument("--protect-from", metavar="FILE", default=None,
+                    help="newline-delimited list of run dirs (or paths into "
+                         "them) that must never be deleted")
     args = ap.parse_args(argv)
 
     cutoff = _parse_date(args.before)
-    hits = _collect(args.path, cutoff)
+    hits = _collect(args.path, cutoff, _load_protected(args.protect_from))
 
     if not hits:
         print(f"no date-folders in {args.path!r} with date <= {cutoff}")
