@@ -1,0 +1,3 @@
+# Spellings to always flag, even though a dictionary might tolerate them.
+moreso
+vermillion

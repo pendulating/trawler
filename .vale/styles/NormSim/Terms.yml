@@ -1,0 +1,22 @@
+---
+# Project and benchmark names, canonicalized. Only *incorrect* spellings are
+# listed on the left, so correct usage never trips the rule.
+extends: substitution
+message: "Use '%s' rather than '%s'."
+level: warning
+ignorecase: false
+swap:
+  'Privacylens|PrivacyLENS|privacy lens|Privacy Lens': PrivacyLens
+  'Goldcoin|GOLDCOIN|Gold Coin|gold coin': GoldCoin
+  'HIPPA|Hippa': HIPAA
+  'Confaide|CONFAIDE|ConfAide|Conf-AIde': ConfAIde
+  'VLLM|Vllm|vllm': vLLM
+  'Lora|LORA(?:-| )': LoRA
+  'Grpo|GRPo': GRPO
+  'Qwen-3|qwen3|QWen': Qwen3
+  'contextual Integrity|Contextual integrity': contextual integrity
+  'huggingface|Huggingface|HuggingFace': Hugging Face
+  'Wandb|WandB|wandb': Weights & Biases
+  'dataset s|data set|data-set': dataset
+  'fine tuning|finetuning': fine-tuning
+  'fine tune|finetune': fine-tune

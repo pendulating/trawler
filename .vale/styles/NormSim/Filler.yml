@@ -1,0 +1,27 @@
+---
+# academic-writing-mini.md: "Use strong constructive verbs... Avoid weak verbs
+# and unnecessary passive voice." These are the stock academic throat-clearings
+# that dilute a claim; the replacement is usually to delete or tighten.
+extends: substitution
+# NB: Vale fills substitution's %s as (replacement, observed), in that order.
+message: "Tighten: prefer '%s' over '%s'."
+level: suggestion
+ignorecase: true
+swap:
+  'utilize|utilise': use
+  'utilizes|utilises': uses
+  'in order to': to
+  'a number of': several
+  'a large number of': many
+  'due to the fact that': because
+  'in spite of the fact that': although
+  'it should be noted that': ''
+  'it is important to note that': ''
+  'the vast majority of': most
+  'at this point in time': now
+  'in the event that': if
+  'has the ability to': can
+  'is able to': can
+  'with regard to|with respect to the fact': regarding
+  'serves to': ''
+  'basically|essentially': ''

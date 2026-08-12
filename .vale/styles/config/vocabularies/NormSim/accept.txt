@@ -1,0 +1,100 @@
+#
+# --- Contextual-integrity / normative theory ---
+# --- ML / systems vocabulary ---
+# --- Misc ---
+# --- Model families and named methods ---
+# --- People cited in the manuscript ---
+# --- Possessives and plurals of project acronyms ---
+# --- Statistics (corpus-comparison appendix) ---
+# --- Statistics ---
+# A bare lowercase entry here will produce false "Use 'x' instead of 'X'"
+# Entries are case-sensitive regexes, one per line. Vale.Terms additionally
+# Terms Vale's dictionary does not know but that are correct here.
+# alerts the first time the word starts a sentence.
+# enforces that prose matches an entry's casing exactly, so every term that can
+# open a sentence or a section heading is written with a leading [Xx] class.
+Appleby
+Bagdasarian
+Benjamini
+Benthall
+CI's
+Choksi
+Cristo
+DeBERTa[0-9A-Za-z.\-]*
+Franchi
+Frobenius
+GPUs
+GRPO's
+Gemma[0-9A-Za-z.\-]*
+Gini
+Gruetser
+Hochberg
+Hodges
+Jha
+Kahneman
+LLMs
+Lehmann
+Madiha
+Mellem
+Middlemarch
+Misra
+Nissenbaum
+Qwen[0-9A-Za-z.\-]*
+Raz
+SFT's
+Stoyanovich
+Suciu
+TRL's
+Tandon
+Triedman
+Tversky
+Ujval
+Whitney
+Wilcoxon
+Youden('s)?
+Zahrah
+[Aa]utoregress(ion|ive)
+[Cc]anonicaliz(e|es|ed|ing|ation)
+[Cc]heckpoint(ing|s)?
+[Cc]odebook
+[Cc]onsequentialist
+[Cc]orpora's
+[Dd]eontic
+[Dd]eontological
+[Dd]escriptives?
+[Ee]lse's
+[Ee]ntropies
+[Ee]num
+[Ee]xplorable
+[Gg]eneralizability
+[Hh]oc
+[Hh]yperparameters?
+[Ll]abelings?
+[Ll]istwise
+[Ll]ossy
+[Oo]perationaliz(e|es|ed|ing|ation)
+[Oo]verfit(s|ting)?
+[Pp]arameteriz(e|es|ed|ing|ation|ations)
+[Pp]repends?
+[Pp]rescriptiv(e|ism)
+[Pp]ydantic
+[Qq]uintiles
+[Rr]enormaliz(e|es|ed|ing)
+[Rr]epurpose
+[Rr]erankers?
+[Rr]esampl(e|es|ed|ing)
+[Rr]ollouts?
+[Ss]corable
+[Ss]ubsampl(e|es|ed|ing)
+[Ss]ubstrings?
+[Ss]uperset
+bolding
+disclosive
+hubbed
+mDeBERTa[0-9A-Za-z.\-]*
+parseable
+telescreen
+unfloored
+unparseable
+unscoreable
+vLLM's

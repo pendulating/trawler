@@ -1,0 +1,14 @@
+---
+# academic-writing-mini.md:
+#   "Gloss terms with 'i.e.' (commas/parentheses) and give examples with
+#    '(e.g., ...)'."
+# Both take a trailing comma. RE2 has no lookahead, so the pattern matches the
+# abbreviation plus one following character and relies on that char not being
+# a comma.
+extends: existence
+message: "Write '%s' with a trailing comma ('e.g.,' / 'i.e.,')."
+level: warning
+nonword: true
+tokens:
+  - 'e\.g\.[^,]'
+  - 'i\.e\.[^,]'

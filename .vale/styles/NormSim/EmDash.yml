@@ -1,0 +1,13 @@
+---
+# academic-writing-mini.md, "Punctuation (important)":
+#   "Do NOT use em dashes. Set off asides with commas or parentheses;
+#    introduce elaborations and lists with a colon."
+# `--` (en dash) is left alone: it is the correct LaTeX spelling of a
+# numeric range, e.g. "Tables 5--10".
+extends: existence
+message: "Avoid the em dash. Use commas, parentheses, or a colon."
+level: error
+nonword: true
+tokens:
+  - '---'
+  - '—'

@@ -1,0 +1,80 @@
+---
+# academic-writing-mini.md: "Expand every acronym on first use:
+#   'vision-language model (VLM)'."
+# `conditional` fires on `first` unless `second` also appears in the file.
+extends: conditional
+message: "'%s' is used without being expanded on first use."
+level: suggestion
+scope: text
+ignorecase: false
+# The acronym, standing alone.
+first: '\b([A-Z]{2,6})\b'
+# ...defined as "Some Expanded Phrase (ACR)".
+second: '\(([A-Z]{2,6})\)'
+# Vale evaluates `conditional` per file, and this manuscript is split across
+# ~11 .tex files, so an acronym defined in 01_intro.tex still looks undefined
+# in 04_results.tex. The whole known acronym set is therefore listed here and
+# the rule acts as an alarm for *newly introduced* undefined acronyms.
+# When you introduce a new acronym, expand it on first use and add it below.
+exceptions:
+  - AI
+  - API
+  # --- This paper's established acronyms ---
+  - AWQ
+  - CI
+  - CIRL
+  - COLM
+  - DFT
+  - DLI
+  - FULL
+  - GPT
+  - GRPO
+  - HIPAA
+  - HR
+  - IFT
+  - JSD
+  - KL
+  - KTO
+  - LEAK
+  - MMLU
+  - NLL
+  - NVIDIA
+  - NY
+  - NYC
+  - NYU
+  - OSS
+  - PCA
+  - QR
+  - QA
+  - RTX
+  - SFT
+  - SOTA
+  - TRL
+  - TVD
+  - VLM
+  - WEIRD
+  - XNLI
+  - BLEU
+  - CPU
+  - CSV
+  - EU
+  - GPU
+  - HTML
+  - HTTP
+  - ID
+  - IID
+  - JSON
+  - LLM
+  - MIT
+  - NLP
+  - PDF
+  - RAM
+  - RL
+  - SGD
+  - TODO
+  - UK
+  - URL
+  - US
+  - USA
+  - XML
+  - YAML
