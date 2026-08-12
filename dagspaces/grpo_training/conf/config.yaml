@@ -27,13 +27,15 @@ embedding_model:
 # Judge model for R_ground reward prep.
 # model_source doubles as the `model` field in OpenAI-style API calls to
 # the external judge server (klara:8002), so it MUST match the served name.
-# Qwen3.6-27B is the COLM-paper canonical (keeper-era) judge. NB: since the
-# 2026-07-16 Gemma migration, scripts/judge_server.sub defaults to
-# Gemma-4-31B-it — launch it with JUDGE_MODEL pointed here or the served name
-# mismatches model_source. See
+# Gemma-4-31B-it is the canonical judge as of the 2026-07-23 revision
+# (wiki/normative-simulacra.md) and matches scripts/judge_server.sub's own
+# default, so a fresh launch now agrees out of the box. Until 2026-08-12 this
+# defaulted to the keeper-era Qwen3.6-27B while judge_server.sub served
+# Gemma-4-31B-it, so any launch that did not override one of the two failed on
+# a served-name mismatch. Do not reuse Qwen3.6-27B for new runs. See
 # wiki/changelog/2026-07-20_grpo_methodology_congruency_review.md §3.1.
 judge_model:
-  model_source: ${oc.env:JUDGE_MODEL_PATH,/share/pierson/matt/zoo/models/Qwen3.6-27B}
+  model_source: ${oc.env:JUDGE_MODEL_PATH,/share/pierson/matt/zoo/models/Gemma-4-31B-it}
   engine_kwargs:
     tensor_parallel_size: 2
     max_model_len: 16384
