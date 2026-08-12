@@ -1,0 +1,42 @@
+# @package _global_
+# m2 wave-A GRPO arm `vignette` — checkpoint-450 (epoch 3.00 of 3).
+#
+# leave-one-out: the JUDGMENT TASK removed (task_mix.vignette 0.0, extract 1.0);
+# reward components are otherwise the full stack. Appendix B labels this arm -judg.
+# (NB the 21-31-11 dir for this arm is the port-collision false start — 22-00-49 is the real run)
+#
+# Source run: multirun/2026-07-28_grpo_m2_-vignette/22-00-49/cell=minus_vignette
+#   (job 567011, 450/450 steps, COMPLETED; promotion gates HOLD — but the gates
+#    that decided that are the ones wiki §17 showed to be defective, which is
+#    why this arm is being read on external gold instead.)
+#
+# LoRA-eval pattern (cf. sft-canonical.yaml / k3-*.yaml): backbone in
+# `model_source`, adapter in `lora_path`, `enable_lora` + `max_lora_rank: 64`.
+# `model_source` is this cell's MERGED SFT, not stock Qwen3.5-9B, because that
+# is the policy GRPO updated from. That merged SFT is
+# Qwen3.5-9B + the `sft-canonical` adapter
+# (2026-07-15_sft_canonical_gemma4/00-07-44/2) — i.e. the SAME lineage as the
+# camera-ready table's "Qwen3.5-9B / SFT" row, and a DIFFERENT lineage from the
+# v9 keeper (contentless-v6, qwen-teacher era).
+#
+# COMPARISON DISCIPLINE: read against `qwen3.5-9b/k3-base` co-run in the same
+# sweep (byte-identical merged-SFT weights). Do NOT read against the v9 numbers
+# in the paper — different SFT lineage and pre-parity-review PrivacyLens/GoldCoin
+# protocol.
+model:
+  model_source: /share/pierson/matt/UAIR/multirun/2026-07-28_grpo_m2_-vignette/22-00-49/cell=minus_vignette/grpo_only_online_external/outputs/grpo/checkpoint/_merged_sft
+  model_family: qwen3.5
+  lora_path: /share/pierson/matt/UAIR/multirun/2026-07-28_grpo_m2_-vignette/22-00-49/cell=minus_vignette/grpo_only_online_external/outputs/grpo/checkpoint/checkpoint-450
+  thinking_mode: off
+  chat_template_kwargs:
+    enable_thinking: false
+  engine_kwargs:
+    max_model_len: 16384
+    max_num_seqs: 16
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    enforce_eager: true
+    enable_lora: true
+    max_lora_rank: 64
+  batch_size: 0
+  concurrency: 1
