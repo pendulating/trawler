@@ -1,0 +1,169 @@
+# @package _global_
+# RECOVERY SWEEP — the four-way RL comparison (Instruct / SFT / K-VERDICT /
+# M2-FULL) re-measured in ONE batch, with the cells that are currently drifted
+# or missing.
+#
+# WHY. The side-by-side inspector built on 2026-08-04
+# (scripts/completion_inspector.py, rl_arms_inspector.html) assembles its four
+# columns from three different sweeps, and two of them cannot be read as a
+# controlled comparison:
+#
+#   DRIFTED — `qwen3.5-9b/instruct`. Its cells come from
+#             2026-07-17_eval_canonical_instruct/21-21-52/2, three weeks and
+#             several protocol changes away from the other three (all
+#             2026-08-03). Its CIRL column does not exist at all in that run:
+#             it predates the cirl dagspace swap, so it carries the retired
+#             `cirl_vignettes` benchmark, and the inspector has to borrow
+#             CIRL-729 from 2026-07-23_eval_cirl729_canonical/03-29-20/2 — a
+#             THIRD batch. ConfAIde anchors alone re-measure +/-2pts between
+#             batches, so every Instruct-vs-arm gap currently confounds the
+#             arm with the batch.
+#
+#   MISSING — `qwen3.5-9b/k3-verdict` has no MMLU cell (the K4 launch passed
+#             `+benchmark_filter=ci_only`) and no CIRL metrics (that run
+#             omitted `+runtime.allow_unreliable_metrics=true`, so the stage
+#             hit the sanity gate and aborted before writing metrics; the
+#             completions exist, the scores do not). The repair sweep written
+#             for exactly this, k3_arms_cirl_mmlu_backfill_2026_08_03, was
+#             CANCELLED 100 seconds after launch (job 724454, SIGTERM at
+#             2026-08-03T20:47:47, one minute after submitting the CIRL child
+#             job) and left nothing behind but load_dataset.parquet. That
+#             sweep is superseded by this one, not resumed — running it would
+#             re-open the same cross-batch problem it was written before we
+#             knew about.
+#
+#   CROSS-BATCH — even the two "good" arms are not directly comparable to each
+#             other. K-VERDICT is from k3_arms_ci_eval/14-28-30 and M2-FULL
+#             from m2_arms_all_eval/22-40-24: two separate sweeps on the same
+#             day, each with its OWN co-run k3-base. Comparing them today is
+#             only legal via their respective bases.
+#
+# CELLS (4). One batch, one protocol, one engine, full benchmark suite. The
+# reference cell is FIRST so collectors that default `--ref` to cell 0 line up
+# (cf. scripts/collect_k3_eval.py).
+#
+#   qwen3.5-9b/k3-base            reference — the merged SFT policy both RL
+#                                 arms were trained from (Qwen3.5-9B +
+#                                 sft-canonical, the camera-ready table's
+#                                 "Qwen3.5-9B / SFT" lineage). Co-running it is
+#                                 mandatory, not optional: cross-sweep base
+#                                 numbers are not a valid control.
+#   qwen3.5-9b/instruct           stock Qwen3.5-9B — the no-finetuning floor.
+#   qwen3.5-9b/k3-verdict         KTO arm `verdict`, final checkpoint.
+#   qwen3.5-9b/m2-full-ckpt450    GRPO arm `full`, checkpoint-450 (epoch 3.00).
+#
+# Re-running k3-base and m2-full even though they already have complete
+# 2026-08-03 cells is the point of the sweep, not waste: four columns measured
+# in one batch is the only artifact that licenses reading all six pairwise
+# gaps. Roughly 4-5h wall at parallelism 3 (the 13-cell m2 sweep took ~11h).
+#
+# KNOWN, DELIBERATE ASYMMETRY. `instruct.yaml` runs max_num_seqs 32 with
+# cudagraphs; the other three run max_num_seqs 16 with enforce_eager (a LoRA /
+# merged-checkpoint convention). These are throughput settings, not sampling
+# settings — every benchmark's temperature and max_tokens come from the
+# benchmark config and are identical across cells. The model yamls are left
+# untouched on purpose: forking `instruct` here would make this cell
+# non-comparable with the canonical Instruct row in the camera-ready table,
+# which is a worse problem than the one it would fix.
+#
+# WHAT THIS SWEEP DOES NOT FIX. Nothing here re-opens the m2 or K4 verdicts.
+# Both arms were read on external gold and neither displaced the keeper; a
+# batch-matched re-measurement is a cleaner read of the same null, and any
+# gap it surfaces still has to clear the measured re-run noise floor
+# (notebooks/colm-camera-ready/ variance gate) before it means anything.
+#
+# BENCHMARKS: the full all_benchmarks set with NO benchmark_filter — goldcoin,
+# privacylens, cirl (CIRL-729), confaide, vlm_geoprivacy (qwen3.5 is in
+# eval_all/orchestrator.py `_VLM_FAMILIES`), and the mmlu capability control.
+# The unfiltered set is load-bearing: `ci_only` is what cost k3-verdict its
+# MMLU column in the first place. simpleqa_verified stays off (`enabled: false`
+# in the pipeline).
+#
+# READ WITH parse health, not scores alone:
+#   - CIRL: report the *_scorable rates. NEVER *_lenient — it scores silence as
+#     perfect privacy. A cell below the scorable floor renders N/A by design.
+#     k3-base parsed only 2.33% of CIRL actions into the strict
+#     <think>/<answer> format on 2026-08-03; expect N/A cells here and read
+#     them as "structurally unscoreable", not as a failed run.
+#   - GoldCoin: sub-1pt macro-F1 gaps are noise (temp 0.2; 2/214 flipped
+#     predictions moved macro-F1 0.9pt).
+#   - ConfAIde: tier2a/2b run at max_tokens=32 (tier3_control 16) — check
+#     finish_reason before calling a low score a parser failure.
+#   - PrivacyLens: the judge is self-attested into the judge-batch manifest
+#     from /v1/models (dagspaces/common/judge_export.py), so the camera-ready
+#     EXPECTED_JUDGE=Gemma-4-31B-it check resolves from artifacts. The
+#     sidecar's `--model` label comes from ${oc.env:JUDGE_MODEL,Qwen3.6-27B}
+#     and is W&B telemetry only — a stale label there does NOT mean the wrong
+#     judge ran.
+#
+# HIJACK NOTE (why no `unset VLLM_SERVER_URL` here). server.env ships
+# VLLM_SERVER_URL pointing at the judge port for the answerer client, and
+# ensure_dotenv re-loads it inside every stage job — unsetting it in this
+# setup block would accomplish nothing. On 2026-08-03 that stray var routed
+# all five CI benchmarks of k3_arms_ci_eval/09-02-18 to the judge port (404 on
+# every request, parseable_rate 0.0000, cells empty). The fix landed in
+# `_resolve_server_url` (dagspaces/common/vllm_inference.py): a URL with no
+# matching VLLM_SERVER_MODEL identity is refused and inference falls back to a
+# local engine, loudly. This sweep relies on that guard.
+#
+# Required cluster setup — PrivacyLens is the only judge-dependent benchmark:
+#   sbatch scripts/judge_server.sub     # must serve Gemma-4-31B-it on /v1/models
+#
+# Usage:
+#   bash scripts/run_eval_rl_quartet_recovery.sh
+
+experiment:
+  name: eval_rl_quartet_recovery
+
+# CIRL-729 paper protocol, matching eval_cirl729_canonical_2026_07_22,
+# eval_rl_stage_keeper_2026_08_03 and m2_arms_all_2026_08_03: a model that
+# ignores the strict <think>/<answer> format scores -1 rather than hard-failing
+# the sanity gate with an empty cell. Without this flag the CIRL stage ABORTS
+# and the cell renders "—" ("we chose not to report") instead of the truthful
+# N/A ("the benchmark ran and the model is structurally unscoreable"). Those
+# are different claims and the camera-ready notebook keeps them distinct. This
+# omission is precisely what cost k3-verdict its CIRL metrics on 2026-08-03 —
+# do not drop it.
+benchmarks:
+  cirl:
+    extra_args:
+      - +runtime.allow_unreliable_metrics=true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 3, NOT 4. Each cell is a monitor that fans out child GPU jobs; the
+    # 2026-08-03 K4 sweep wedged the SLURM controller at 5 ("sbatch: Socket
+    # timed out on send/recv") and again, less severely, at 3. 3 matches the
+    # canonical full-roster sweep and keeps the judge under its observed
+    # capacity (judge_sidecar max_inflight=16/cell x 3 = 48 < ~55 concurrent).
+    #
+    # Do NOT drop to the slurm_monitor.yaml default of 1: that silently
+    # SERIALIZES the sweep (cost the k3 training trio a day on 2026-08-01).
+    array_parallelism: 3
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      # Pin the engine for the whole sweep so all four cells are compared under
+      # one vLLM version rather than a per-cell mix.
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      # Reference cell FIRST so collectors that default --ref to the first cell
+      # line up (cf. scripts/collect_k3_eval.py).
+      model: >-
+        qwen3.5-9b/k3-base,
+        qwen3.5-9b/instruct,
+        qwen3.5-9b/k3-verdict,
+        qwen3.5-9b/m2-full-ckpt450

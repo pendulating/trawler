@@ -1,0 +1,121 @@
+# @package _global_
+# PrivacyLens VARIANCE instrument — the RL quartet, N=3 repeats per cell.
+#
+# WHY THIS EXISTS. The camera-ready variance gate
+# (notebooks/colm-camera-ready/, 2026-08-03) bands every "best" against a
+# measured re-run noise floor — but PrivacyLens has no floor. The instrument
+# that produced the others (eval_judgefree_variance_n3_2026_07_20) is
+# explicitly JUDGE-FREE: "PrivacyLens is judged and deliberately absent". So
+# its three columns render as unmeasurable, and any PrivacyLens arm gap in the
+# paper is currently unbanded.
+#
+# That gap is not hypothetical. Re-running the quartet's PrivacyLens on
+# 2026-08-07 under an identical protocol moved K-VERDICT's leakage
+# 0.4678 -> 0.4886 (2.1pt) and its format rate 0.724 -> 0.714, while instruct
+# moved 0.2pt. A 2.1pt swing is larger than several of the arm-vs-arm gaps the
+# paper would like to read, so those gaps cannot be interpreted until this
+# sweep says how big the noise is.
+#
+# WHAT A REPEAT VARIES. PrivacyLens pins `sampling_params.seed: 777` at
+# temperature 0.2, so a naive re-run replays the same draws. This sweep sweeps
+# `variance_seed` (101/102/103, matching the judge-free instrument's seeds and
+# deliberately matching NO canonical run) and injects it into the agent pass.
+# Each rep is therefore an independent draw of the agent's actions, judged by
+# the same greedy (temp 0.0) judge. The reported dispersion is the TOTAL
+# run-to-run noise of the published numbers, which is what the gate needs.
+#
+# TWO NOISE COMPONENTS, AND WHY ONLY ONE IS SWEPT HERE. The 2.1pt K-VERDICT
+# move happened at a FIXED seed (both runs used 777) — so engine
+# nondeterminism (continuous-batching order, kernel numerics) is already known
+# to be non-trivial on its own, without any sampling variance. Rather than
+# spend 8 more cells re-measuring that, the two existing 777-seeded quartet
+# runs (2026-08-04_eval_rl_quartet_recovery/15-51-04 and
+# 2026-08-07_eval_pl_quartet_clean/14-18-47) serve as a 2-point fixed-seed
+# estimate. Compare it against this sweep's varied-seed dispersion:
+#   varied >> fixed  -> sampling dominates; averaging seeds tightens the band
+#   varied ~= fixed  -> engine nondeterminism dominates; more seeds do NOT
+#                       help and the floor is irreducible without pinning
+#                       batch order
+# Report both. A single pooled number would hide which lever matters.
+#
+# CELLS (12) = 4 models x 3 seeds. The quartet, matched to the runs the gate
+# has to band:
+#   qwen3.5-9b/k3-base, /instruct, /k3-verdict, /m2-full-ckpt450
+# Grouped by model so a cell's three reps run back-to-back off a warm
+# /scratch registry.
+#
+# BOTH READINGS ARE MEASURED. `judge.recover_mislabelled_actions=true` is on,
+# so every rep emits metrics.json (strict upstream parity) AND
+# metrics_recovered.json (full 493-row coverage). The paper reports both, so
+# both need a band — and the recovered reading may well be the TIGHTER one,
+# since parity's denominator itself moves with the format rate (69-78% for the
+# fine-tuned cells) while recovered is always 493.
+#
+# METRICS TO BAND (per cell, across the 3 reps): leakage_rate_among_parseable,
+# helpful_rate_among_parseable, adjusted_leakage_rate, agent_action_format_rate
+# from metrics.json; leakage_rate_union, helpful_rate_union, coverage_rate from
+# metrics_recovered.json. Report SD and range, not just SD — n=3.
+#
+# JUDGE. Requires a judge server from the post-2026-08-07 .sub
+# (disable_any_whitespace). An older server reintroduces 4.6-9.8% truncated
+# leakage calls, which would inflate the measured variance with an artifact
+# this sweep is not trying to measure.
+#
+# SIZING. ~40-50 min/cell (qa_probe 1479 rows + agent_action 493 + judge drain
+# + recovery pass). 12 cells at 3-wide ≈ 3-3.5 h.
+#
+# Usage:
+#   bash scripts/run_eval_pl_variance_n3.sh
+
+experiment:
+  name: eval_pl_variance_n3
+
+# The per-rep sampling seed. Swept 101/102/103 below; also the rep identifier
+# in .hydra/overrides.yaml, which is how the collector groups reps.
+variance_seed: 101
+
+benchmark_filter:
+  include:
+    - privacylens
+
+benchmarks:
+  privacylens:
+    extra_args:
+      # The one thing that differs between reps of a cell.
+      - sampling_params.seed=${variance_seed}
+      # Band the recovered reading too — it is reported alongside parity.
+      - judge.recover_mislabelled_actions=true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 3. Each cell is a monitor fanning out child GPU jobs against one shared
+    # judge; 5 wedged the SLURM controller on 2026-08-03 and 3 is the
+    # canonical full-roster setting. Judge load stays inside observed capacity
+    # (sidecar max_inflight 16/cell x 3 = 48, plus recover_concurrency 8/cell
+    # during the finalize tail).
+    array_parallelism: 3
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      # Cross product: 4 models x 3 seeds = 12 cells, grouped by model.
+      model: >-
+        qwen3.5-9b/k3-base,
+        qwen3.5-9b/instruct,
+        qwen3.5-9b/k3-verdict,
+        qwen3.5-9b/m2-full-ckpt450
+      variance_seed: 101,102,103

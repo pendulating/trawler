@@ -1,0 +1,97 @@
+# @package _global_
+# REPAIR pass for eval_rl_quartet_recovery (2026-08-04, run dir 15-51-04).
+#
+# NOT a re-run of the sweep. This config carries only the shared protocol
+# (engine pin, judge URL, CIRL paper-protocol flag) — WHICH cells and WHICH
+# benchmarks it repairs are supplied on the command line by
+# scripts/run_eval_quartet_repair.sh, which derives them from the run's own
+# artifacts via scripts/repair_eval_all_run.py. That is why there is no
+# `sweeper.params.model` block here: a hand-written cell list would be stale by
+# the time the sweep it repairs has finished.
+#
+# WHAT WENT WRONG (both failures are one ten-minute SLURM controller wobble at
+# 2026-08-04 16:39-16:50, not a model or config fault):
+#
+#   cell 1 / instruct       `sbatch: Batch job submission failed: Socket timed
+#                           out on send/recv` — the wedge the recovery sweep's
+#                           array_parallelism: 3 comment warns about, at 3.
+#                           ConfAIde died mid-benchmark (tier2a / tier2b /
+#                           tier3_control landed; tier3_free / info / sharing
+#                           were never submitted) and vlm_geoprivacy never
+#                           submitted at all.
+#
+#   cell 2 / k3-verdict     CIRL was declared failed — "has not produced any
+#                           output (state: COMPLETED)" — while the job was in
+#                           fact still running. submitit read a stale job state
+#                           during the same wobble. The child job then finished
+#                           cleanly at 17:27 and wrote
+#                           2/cirl/cirl/outputs/llm_inference/dataset.parquet
+#                           (729 rows; its result.pkl says 'success'). By then
+#                           the monitor had moved on, so parse_responses and
+#                           compute_metrics never ran.
+#
+# CIRL IS RE-RUN, NOT SALVAGED — on purpose. k3-verdict's 729 completions are
+# intact on disk and the two missing stages are CPU-only, so a salvage would
+# cost nothing and take a minute. It is still the wrong trade here: the DAG
+# orchestrator has no node-level resume (there is no skip-if-exists anywhere in
+# dagspaces/common/orchestrator.py), so salvaging means hand-feeding an
+# orphaned parquet into parse+score outside the production path, on the one
+# cell whose CIRL column this whole exercise exists to fill. ~35 min of GPU
+# buys provenance that needs no asterisk. If GPU time is ever the binding
+# constraint, the salvage path is: a pipeline yaml declaring the existing
+# parquet as a `source` and running only parse_responses + compute_metrics.
+#
+# PER-CELL FILTERS, ONE INVOCATION EACH. Hydra's sweeper takes a cartesian
+# product, so a single sweep with include=[confaide,vlm,cirl,mmlu] over both
+# cells would re-run four benchmarks that are already fine. The launcher script
+# issues one single-cell multirun per affected cell instead, SEQUENTIALLY —
+# after a controller wobble, the last thing this repair should do is put three
+# monitors back on the controller at once.
+#
+# Required cluster setup — PrivacyLens is the only judge-dependent benchmark
+# (and is not expected in the current repair list, but a derived plan may
+# include it):
+#   sbatch scripts/judge_server.sub     # must serve Gemma-4-31B-it
+#
+# Usage:
+#   bash scripts/run_eval_quartet_repair.sh
+#   bash scripts/run_eval_quartet_repair.sh --dry-run   # print the plan only
+
+experiment:
+  name: eval_rl_quartet_repair
+
+# Same CIRL paper protocol as the sweep being repaired
+# (eval_rl_quartet_recovery_2026_08_04): strict-format misses score -1 and are
+# recorded rather than aborting the stage. Dropping this is what cost
+# k3-verdict its CIRL metrics on 2026-08-03; it must survive into the repair or
+# the repair reproduces the original hole.
+benchmarks:
+  cirl:
+    extra_args:
+      - +runtime.allow_unreliable_metrics=true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 1. Each invocation is a single cell, and the launcher script runs the
+    # invocations one after another. This is deliberately more conservative
+    # than the recovery sweep's 3: this pass exists because the controller
+    # wedged, and it repairs at most a handful of benchmarks.
+    array_parallelism: 1
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      # Same engine pin as the run being repaired, so repaired cells are
+      # comparable with the cells that survived it.
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002

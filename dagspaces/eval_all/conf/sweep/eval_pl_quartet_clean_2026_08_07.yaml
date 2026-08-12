@@ -1,0 +1,111 @@
+# @package _global_
+# PrivacyLens re-run for the RL quartet, on a judge stack with the three
+# 2026-08-06/07 defects fixed at source. Supersedes the post-hoc patch
+# artifacts in multirun/2026-08-04_eval_rl_quartet_recovery/15-51-04.
+#
+# WHAT WAS WRONG, AND WHAT A RE-RUN ACTUALLY FIXES. Three separate problems
+# were tangled together in the 2026-08-04 quartet; only one of them was a bug
+# a re-run clears on its own, so all three were fixed in code first:
+#
+#   1. FABRICATED VERDICTS (fixed by this re-run). finalize_async stamped
+#      `leak_judge_text="Answer: No."` / `"Answer: Poor (0)."` on rows the
+#      judge was never asked about — byte-identical to real verdicts. Those
+#      rows now get "" (finalize_async.py). Scores are unchanged; the artifact
+#      simply stops asserting a judgement that never happened.
+#
+#   2. JUDGE TRUNCATION (fixed in the judge server). 334/4721 leakage calls
+#      (4.6-9.8% per cell) returned finish_reason=length with the guided JSON
+#      unterminated — Gemma degenerating into "\n    " padding INSIDE the
+#      reasoning string until max_tokens=1024. Normal responses run ~145
+#      tokens, so these were pure whitespace, not long reasoning. Nothing
+#      detected it: classify_response_line called a 200-with-choices `ok`, and
+#      eval_sanity's truncated_rate only ever saw task-model frames. The
+#      verdicts survived by luck of schema field order (YesNoResult emits
+#      `answer` before `reasoning`).
+#      scripts/judge_server.sub now passes
+#        --structured-outputs-config '{"backend":"xgrammar","disable_any_whitespace":true}'
+#      SMOKE-TESTED 2026-08-07 by replaying the exact 98 requests that
+#      truncated: 0/98 still truncate, 0 unparseable, 0 whitespace-padded,
+#      completion_tokens median 138 / max 195. The judge is greedy (temp 0.0),
+#      so same prompts + same model means this is a real fix, not resampling.
+#      REQUIRES a judge server launched from the updated .sub — an older
+#      server silently reintroduces the truncation.
+#
+#   3. FORMAT-GATE SKIPS (handled, NOT eliminated — by design). 394 rows
+#      across the three fine-tuned cells emit a ReAct `Final Answer:` instead
+#      of `Action:`, so upstream's gate skips them. That is model behaviour,
+#      not a bug, and the agent pass is near-deterministic (temperature 0.2,
+#      seed 777), so a re-run reproduces it. The gate stays untouched because
+#      it is what keeps this column comparable to published upstream numbers.
+#      Instead `judge.recover_mislabelled_actions=true` re-judges those rows
+#      from a rebuilt action and writes a PARALLEL metrics_recovered.json.
+#      metrics.json remains strict upstream parity.
+#
+# CELLS (4) — the quartet, matched to the 2026-08-04 batch:
+#   qwen3.5-9b/k3-base           SFT reference (merged sft-canonical)
+#   qwen3.5-9b/instruct          stock Qwen3.5-9B, the no-finetuning floor
+#   qwen3.5-9b/k3-verdict        KTO arm `verdict`, final checkpoint
+#   qwen3.5-9b/m2-full-ckpt450   GRPO arm `full`, checkpoint-450
+#
+# WHAT YOU GET PER CELL: metrics.json (strict parity, unchanged semantics),
+# metrics_recovered.json (full 493-row coverage), n_judge_truncated in the
+# finalize metadata, and no fabricated verdicts anywhere. The post-hoc
+# *_recovered artifacts under 15-51-04 can be deleted once this lands.
+#
+# COMPARABILITY. All four fixes are number-neutral — verified against the
+# existing artifacts (0 verdict changes across all 334 truncated responses),
+# so these cells stay comparable with the rest of the camera-ready corpus.
+#
+# READ WITH the format rate. Leakage `*_among_parseable` is computed over
+# 69-78% of rows for the fine-tuned cells vs 100% for instruct; the recovered
+# variant is the like-for-like read. Never quote one without the other.
+#
+# Required cluster setup:
+#   sbatch scripts/judge_server.sub    # MUST be the updated .sub (see 2 above)
+#
+# Usage:
+#   bash scripts/run_eval_pl_quartet_clean.sh
+
+experiment:
+  name: eval_pl_quartet_clean
+
+benchmarks:
+  privacylens:
+    extra_args:
+      # Reaches BOTH the export pipeline and the finalize pipeline —
+      # eval_all/orchestrator.py:544 appends extra_args to the finalize
+      # command too, which is where the recovered_actions node lives.
+      - judge.recover_mislabelled_actions=true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 3, not 4. Each cell is a monitor fanning out child GPU jobs against one
+    # shared judge; the 2026-08-03 K4 sweep wedged the SLURM controller at 5
+    # and again at 3. Judge load stays inside observed capacity:
+    # sidecar max_inflight 16/cell x 3 = 48, plus recover_concurrency 8/cell
+    # only during the finalize tail (< ~55 concurrent).
+    array_parallelism: 3
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      # Reference cell FIRST so collectors defaulting --ref to cell 0 line up.
+      model: >-
+        qwen3.5-9b/k3-base,
+        qwen3.5-9b/instruct,
+        qwen3.5-9b/k3-verdict,
+        qwen3.5-9b/m2-full-ckpt450

@@ -1,0 +1,147 @@
+# @package _global_
+#
+# ┌──────────────────────────────────────────────────────────────────────┐
+# │  NO-GO — DO NOT RUN. Kept as the record of a falsified hypothesis.   │
+# │  This sweep's own smoke test disproved the premise below.            │
+# └──────────────────────────────────────────────────────────────────────┘
+#
+# RESULT (2026-08-03). Two 20-row probes at max_tokens=12288 — 6x phi-4's
+# budget and 3x openthinker's — did NOT reduce truncation. They made it worse:
+#
+#     phi-4/sft-canonical            truncated 54% -> 55%, scorable 46.0% -> 45.0%
+#     openthinker3-7b/sft-canonical  truncated 56% -> 65%, scorable 44.2% -> 35.0%
+#
+# Every capped row stopped at EXACTLY 12288 tokens (44-65k characters), while
+# rows that terminate normally finish in a median of 392 / 830 tokens. The
+# runaway text is a degenerate loop emitting the SFT JSON schema instead of
+# CIRL's <think>/<answer>: phi-4 repeats one 80-char phrase 82x; openthinker
+# emits unbounded `"has_criminal_conviction_others": false, ...` fields.
+#
+# CONCLUSION. These cells are non-termination + an SFT format regression — a
+# property of the checkpoints, not of the token budget we set. Their N/A
+# verdict in the camera-ready table is CORRECT, and no budget change repairs
+# it. Running this sweep would spend ~24h of shared GPU reproducing that N/A.
+# Do not resurrect it without a different hypothesis (and note that a
+# repetition penalty would break greedy paper parity).
+#
+# Probes: multirun/2026-08-03_eval_cirl729_tokenfix_SMOKE_NOGO_debug20/
+#     17-12-17  phi-4/sft-canonical
+#     17-53-09  openthinker3-7b/sft-canonical
+# Both are sample_n=20 debug runs, named so that no notebook SWEEP_GLOBS entry
+# can mistake them for real 729-row cells.
+#
+# ─── ORIGINAL (NOW FALSIFIED) RATIONALE, kept verbatim below ───────────────
+#
+# CIRL-729 token-budget repair — converts two structural N/A cells.
+#
+# WHY. The camera-ready table renders CIRL Lk/Util as N/A when fewer than half
+# of the 729 actions produce a complete, scoreable message (`scorable_rate`,
+# dagspaces/cirl/stages/compute_metrics.py). Three cells fail that bar, and the
+# causes are not the same:
+#
+#   gpt-oss-20b/sft-canonical      13.4%   631/729 rows EMPTY (harmony final
+#                                          channel) — a model finding, NOT in
+#                                          this sweep; a token bump cannot fix
+#                                          an empty channel (0 rows truncated).
+#   openthinker3-7b/sft-canonical  44.2%   407/729 rows TRUNCATED
+#   phi-4/sft-canonical            46.0%   394/729 rows TRUNCATED
+#
+# The latter two are OUR token budget, not model incapacity: `finish_reason ==
+# "length"` on ~55% of rows, generations cut mid-message. cirl/stages/
+# llm_inference.py floors max_tokens at 2048 and bumps reasoning models to
+# 4096 — openthinker3-7b hits the 4096 ceiling (median truncated generation
+# ~14.8k chars), phi-4 hits 2048 (~10.5k chars). Both families also cap
+# `max_model_len` at 8192, so the budget must be raised at the ENGINE too.
+#
+# PAIRING. The sweep re-runs BOTH conditions of each affected family, not just
+# the failing SFT arm. A paired Zero-shot -> SFT delta computed across two
+# different token budgets is not a like-for-like contrast, and the camera-ready
+# table reports exactly that delta (Phase D). openthinker3-7b/instruct also has
+# 77 truncated rows of its own, so it is not merely along for the ride.
+#
+# SCOPE. CIRL only, via benchmark_filter — these arms must not disturb any
+# other column. Judge-free, so no judge server and no contention.
+#
+# EXPECTATION, NOT PROMISE. Removing truncation should lift both cells over the
+# bar, but openthinker3-7b/sft-canonical has a documented SFT format regression
+# (wiki: canonical SFT broke its format discipline), so it may still land under
+# CIRL_SCORABLE_MIN. That is then a real finding and the cell stays N/A.
+#
+# SMOKE TEST FIRST. max_model_len 8192 -> 16384 doubles the KV cache; phi-4 is
+# 14B on a 48GB A6000. max_num_seqs is halved to 8 to pay for it, but this
+# combination has NOT been run on this cluster. Launch ONE arm and confirm it
+# neither OOMs nor silently falls back before dispatching all four:
+#
+#   /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/python \
+#       -m dagspaces.eval_all.cli \
+#       +sweep=eval_cirl729_tokenfix_2026_08_03 \
+#       model=phi-4/sft-canonical runtime.debug=true runtime.sample_n=20
+#
+# Then the full sweep (ABSOLUTE venv python — the submitit driver bakes the
+# monitor srun python from sys.executable; see the sweep-driver-venv trap):
+#   /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/python \
+#       -m dagspaces.eval_all.cli --multirun \
+#       +sweep=eval_cirl729_tokenfix_2026_08_03
+#
+# AFTER IT LANDS: run `scripts/rescore_cirl_scorable.py` so the new cells carry
+# the *_scorable keys, then re-run the camera-ready notebook. `experiment.name`
+# is matched by the notebook's SWEEP_GLOBS (`*_eval_cirl729_tokenfix/*`), so
+# per-cell latest-run-wins supersedes the truncated rows for these four cells
+# and no others.
+
+experiment:
+  name: eval_cirl729_tokenfix
+
+benchmark_filter:
+  include:
+    - cirl
+
+benchmarks:
+  cirl:
+    extra_args:
+      # Paper-protocol recording of strict-format misses (Matt's 2026-07-22
+      # ruling): a format miss speaks to the benchmark, so it scores -1 and is
+      # recorded rather than hard-failing the sanity gate. Same flag the
+      # canonical CIRL-729 sweep carries — without it these arms would abort
+      # instead of writing metrics.
+      - +runtime.allow_unreliable_metrics=true
+      # The repair itself. 12288 output tokens inside a 16384 context leaves
+      # ~4k for the prompt (CIRL action prompts run ~1-2k), and clears the
+      # observed truncation by ~3x. max_num_seqs is halved to fund the larger
+      # KV cache.
+      - sampling_params.max_tokens=12288
+      - model.engine_kwargs.max_model_len=16384
+      - model.engine_kwargs.max_num_seqs=8
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # Four light arms, but each now holds a much bigger KV cache — keep two
+    # resident at a time rather than the canonical sweep's four.
+    array_parallelism: 2
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      # vLLM 0.25 pin, matching every other camera-ready CIRL sweep so these
+      # rows compose with the rest of the table under one engine version.
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+  sweeper:
+    params:
+      # Both conditions of both truncating families — see PAIRING above.
+      # gpt-oss-20b/sft-canonical is deliberately ABSENT: its failure is an
+      # empty harmony final channel, which no token budget repairs.
+      model: >-
+        phi-4/instruct,
+        phi-4/sft-canonical,
+        openthinker3-7b/instruct,
+        openthinker3-7b/sft-canonical

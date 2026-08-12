@@ -1,0 +1,152 @@
+# @package _global_
+# m2 wave-A (GRPO) arms on EXTERNAL gold — the full benchmark suite.
+#
+# WHY THIS RUNS AT ALL. m2 wave A was called a clean negative (all four cells
+# HOLD, trend gains -0.003..+0.006 against a 0.02 bar, final label-J
+# 0.002/0.011/-0.025) and, per the "no benchmark evals on HOLD" protocol, no
+# arm was ever measured on a held-out benchmark. Every number that decided
+# that verdict came from the INTERNAL reward instrument, and wiki §17
+# (2026-08-03) showed that instrument's appropriateness gold is not the
+# construct the policy was trained on: `make_direct_chunk_gold`'s top-1
+# retrieved-norm deontic force agrees with the teacher's own
+# `ci_appropriateness` at kappa 0.053 (11.0% vs 25.8% inappropriate priors),
+# while SFT trains on `ci_appropriateness` (`sft_data_prep.py:233`). The
+# `direct_discrimination` gate — the one that failed in every cell (core
+# Youden J = 0.0015) — is computed against that gold. The m2 HOLD was decided
+# by an instrument that measures a different construct.
+#
+# External benchmarks never touch that gold. They are the only uncontaminated
+# read on what these arms actually learned. Same argument that revived K4 for
+# the k-series (k3_arms_ci_2026_08_03.yaml); this is its m-series counterpart.
+#
+# CELLS (13).
+#   qwen3.5-9b/k3-base          reference — the merged SFT all four arms
+#                               started from. NOT a new yaml: k3-base already
+#                               points at m2_core/.../_merged_sft, and all four
+#                               cells' `_merged_sft` are the same 18,819,722,392-
+#                               byte merge of Qwen3.5-9B + the sft-canonical
+#                               adapter. Co-running it is mandatory, not
+#                               optional: ConfAIde anchors re-measure +/-2pts
+#                               across batches, so cross-sweep base numbers are
+#                               not a valid control.
+#   m2-core-ckpt{50..450}       the full 9-checkpoint trajectory of the `core`
+#                               arm (every 50 steps, epochs 0.33 -> 3.00).
+#   m2-{full,outcome,vignette}-ckpt450   the other three arms at final.
+#
+# WHY A TRAJECTORY ON `core` AND NOT JUST FINALS. Every GRPO arm in this
+# project peaked EARLY and regressed late: v9's keeper is ckpt-100 (epoch
+# ~0.58) and had plateaued by ckpt-200; v10 peaked ckpt-250 and regressed to
+# 0.45 Forbid recall by 350; v11's probe was Pareto-dominated at 350 relative
+# to 200. A finals-only sweep would confound "the reward taught nothing" with
+# "the last checkpoint drifted", which is exactly the ambiguity this sweep
+# exists to remove. m2-core-ckpt100 (epoch 0.67) is the matched-epoch analog of
+# v9-ckpt100.
+#
+# ARMS ARE NOT PRE-SELECTED. No cell was chosen by internal-gate performance —
+# selecting on the defective instrument would import the defect into the eval
+# design.
+#
+# SELECTION HAZARD — READ BEFORE PROMOTING ANYTHING. Nine checkpoints of one
+# arm scored on held-out gold is a search over the test set. A best-of-nine
+# here is a DISCOVERY, not a promotion: it licenses "the m2 null is a late-run
+# artifact, look again", not a camera-ready row. Any arm that displaces the
+# keeper needs a pre-registered checkpoint and a fresh confirmation run, and
+# every gap must clear the measured re-run noise floor
+# (notebooks/colm-camera-ready/ variance gate).
+#
+# COMPARISON DISCIPLINE. Compare each cell to `k3-base` IN THIS SWEEP. Do NOT
+# compare to the v9 numbers in the paper: different SFT lineage (m2/k-series
+# sit on sft-canonical, the Gemma-4-teacher contentless-v6 rebuild; v9 sits on
+# the qwen-teacher-era SFT) and PrivacyLens protocol drift since the keeper era
+# (tool-pin + Thought-strip restored, parser fix) make those cells
+# non-comparable. m2 arms ARE lineage-comparable with the camera-ready table's
+# "Qwen3.5-9B / SFT" row and with the k-series K4 cells.
+#
+# BENCHMARKS: the full all_benchmarks set, NO benchmark_filter — goldcoin,
+# privacylens, cirl (CIRL-729), confaide, vlm_geoprivacy (runs: qwen3.5 is in
+# eval_all/orchestrator.py `_VLM_FAMILIES`) and the mmlu capability control.
+# simpleqa_verified stays off (`enabled: false` in the pipeline). MMLU is the
+# reason to run the unfiltered set rather than K4's `ci_only`: these arms took
+# 3 full epochs of RL at lr 2e-5, and "did the RL crater baseline knowledge?"
+# is a question the CI benchmarks cannot answer.
+#
+# READ WITH parse health, not scores alone:
+#   - CIRL: report the *_scorable rates. NEVER *_lenient — it scores silence as
+#     perfect privacy. A cell below the scorable floor renders N/A by design.
+#   - GoldCoin: sub-1pt macro-F1 gaps are noise (temp 0.2; 2/214 flipped
+#     predictions moved it 0.9pt).
+#   - ConfAIde: tier2a/2b run at max_tokens=32 (tier3_control 16) — check
+#     finish_reason before calling a low score a parser failure.
+#   - PrivacyLens: judge is self-attested into the judge-batch manifest from
+#     /v1/models, so the camera-ready EXPECTED_JUDGE=Gemma-4-31B-it check
+#     resolves from artifacts, not from this config.
+#
+# Required cluster setup — PrivacyLens is the only judge-dependent benchmark:
+#   sbatch scripts/judge_server.sub     # must report /v1/models before launch
+#
+# Usage:
+#   bash scripts/run_eval_m2_arms.sh
+
+experiment:
+  name: m2_arms_all_eval
+
+# CIRL-729 paper protocol, matching eval_cirl729_canonical_2026_07_22 and
+# eval_rl_stage_keeper_2026_08_03: a model that ignores the strict
+# <think>/<answer> format scores -1 rather than hard-failing the sanity gate
+# with an empty cell. Without this the CIRL stage ABORTS and the cell renders
+# "—" ("we chose not to report") instead of the truthful N/A ("the benchmark
+# ran and the model is structurally unscoreable"). The m2 arms are extraction-
+# trained and their CIRL format discipline is unknown, so this is load-bearing
+# here — it is what happened to the k-series cells on their first pass.
+benchmarks:
+  cirl:
+    extra_args:
+      - +runtime.allow_unreliable_metrics=true
+
+hydra:
+  mode: MULTIRUN
+  launcher:
+    # 3, NOT 13. Each cell is a monitor that fans out child GPU jobs; the
+    # 2026-08-03 K4 sweep wedged the SLURM controller at 5 ("sbatch: Socket
+    # timed out on send/recv") and again, less severely, at 3. 3 matches the
+    # canonical full-roster sweep and keeps the judge under its observed
+    # capacity (judge_sidecar max_inflight=16/cell x 3 = 48 < ~55 concurrent).
+    #
+    # Do NOT drop to the slurm_monitor.yaml default of 1: that silently
+    # SERIALIZES the sweep (cost the k3 training trio a day on 2026-08-01).
+    array_parallelism: 3
+    setup:
+      - export PATH=$HOME/.local/bin:${oc.env:TRAWLER_SLURM_BIN,/usr/local/slurm/current/bin}:$PATH
+      - export HYDRA_FULL_ERROR=1
+      - source ~/.bashrc
+      # Pin the engine for the whole sweep so all thirteen cells are compared
+      # under one vLLM version rather than a per-cell mix.
+      - source /share/pierson/matt/UAIR/.venv-vllm025cu129/bin/activate
+      - unset WANDB_DISABLED
+      - if [ -n "$WANDB_MODE" ]; then export WANDB_MODE="$WANDB_MODE"; fi
+      - if [ -n "$WANDB_BASE_URL" ]; then export WANDB_BASE_URL="$WANDB_BASE_URL"; fi
+      - if [ -n "$WANDB_GROUP" ]; then export WANDB_GROUP="$WANDB_GROUP"; fi
+      - export WANDB_SILENT=true
+      - export WANDB_DISABLE_SERVICE=true
+      - export TOKENIZERS_PARALLELISM=false
+      - export PYTHONUNBUFFERED=1
+      - export PYTHONPATH=${oc.env:TRAWLER_PROJECT_ROOT,/share/pierson/matt/UAIR}:$PYTHONPATH
+      - export JUDGE_SERVER_URL=http://klara.tech.cornell.edu:8002
+  sweeper:
+    params:
+      # Reference cell FIRST so collectors that default --ref to the first cell
+      # line up (cf. scripts/collect_k3_eval.py).
+      model: >-
+        qwen3.5-9b/k3-base,
+        qwen3.5-9b/m2-core-ckpt50,
+        qwen3.5-9b/m2-core-ckpt100,
+        qwen3.5-9b/m2-core-ckpt150,
+        qwen3.5-9b/m2-core-ckpt200,
+        qwen3.5-9b/m2-core-ckpt250,
+        qwen3.5-9b/m2-core-ckpt300,
+        qwen3.5-9b/m2-core-ckpt350,
+        qwen3.5-9b/m2-core-ckpt400,
+        qwen3.5-9b/m2-core-ckpt450,
+        qwen3.5-9b/m2-full-ckpt450,
+        qwen3.5-9b/m2-outcome-ckpt450,
+        qwen3.5-9b/m2-vignette-ckpt450

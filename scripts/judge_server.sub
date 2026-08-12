@@ -193,6 +193,20 @@ mkdir -p "$REPO_DIR/.slurm_jobs/judge-server"
 # ----------------------------- LAUNCH SERVER ----------------------------- #
 echo "[$(date)] Launching judge server..."
 
+# Guided-JSON whitespace control. Every judge request is a guided-JSON call
+# (YesNoResult / HelpfulnessResult), and on 2026-08-04 4.6-9.8% of leakage
+# calls per cell came back finish_reason=length with the JSON unterminated —
+# the model degenerating into "\n    " padding INSIDE the reasoning string
+# until it hit max_tokens=1024. Normal responses run ~145 tokens, so these are
+# pure whitespace, not long reasoning. `disable_any_whitespace` forces compact
+# JSON and removes the token budget that padding consumes.
+#
+# The backend must be pinned: vLLM's validator rejects disable_any_whitespace
+# on the default "auto" backend (config/structured_outputs.py:64) — it is only
+# supported for xgrammar and guidance. xgrammar is what "auto" already selects
+# for JSON-schema requests, so pinning it changes the engine in name only.
+JUDGE_STRUCTURED_OUTPUTS="${JUDGE_STRUCTURED_OUTPUTS:-{\"backend\":\"xgrammar\",\"disable_any_whitespace\":true}}"
+
 SERVE_ARGS=(
     "$JUDGE_PYTHON" "$JUDGE_VLLM_SCRIPT" serve "$JUDGE_MODEL_LOAD"
     --served-model-name "$JUDGE_MODEL"
@@ -200,6 +214,7 @@ SERVE_ARGS=(
     --host 0.0.0.0
     --tensor-parallel-size "$JUDGE_TP"
     --max-model-len "$JUDGE_MAX_MODEL_LEN"
+    --structured-outputs-config "$JUDGE_STRUCTURED_OUTPUTS"
 )
 # Only needed for TP>1 on PCIe (no NVLink)
 if [ "$JUDGE_TP" -gt 1 ]; then
