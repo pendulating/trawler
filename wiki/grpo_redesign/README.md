@@ -1,7 +1,14 @@
 # GRPO ground-up redesign: the modular training stack
 
-**Date started:** 2026-07-16 · **Revised:** 2026-07-16 (grounded in Memory-R1's
-outcome-driven GRPO) · **Status:** design master — subpages in progress
+**Date started:** 2026-07-16 · **Revised:** 2026-08-05 · **Status:** design
+master, and **the shipped camera-ready design** — the m2 `full` cell
+(`multirun/2026-07-28_grpo_m2_full/21-31-11/cell=full`, step 450) is the
+paper's GRPO model as of 2026-08-05, promoted by author ruling over its own
+failed promotion gates; see [../2026-07-31_kto_plan.md](../2026-07-31_kto_plan.md)
+§19 for the decision, the red gates it ships with, and the benchmark-distrust
+rationale. NB the shipped core is **`R-DIRECT`** ([reward-direct-spec.md](reward-direct-spec.md)),
+not the `R-OUTCOME` frozen answerer this page's diagram and inventory describe:
+the answerer was measured and abandoned (spec §"Why the answerer is gone").
 · **Owner:** Matt + assistant sessions
 
 ## Why (read this first)

@@ -1,6 +1,13 @@
 # v9 GRPO — design scrutiny and camera-ready ablation requirements
 
-**Date:** 2026-08-03 · **Status:** proposed, not yet run · **Owner:** Matt
+**Date:** 2026-08-03 · **Status:** ⚠️ **SUPERSEDED 2026-08-05** — v9 is
+deprecated and the ablations proposed here will not be run. The camera-ready
+reports the m2 `full` GRPO cell and the k3 `verdict` KTO arm
+([2026-07-31_kto_plan.md](2026-07-31_kto_plan.md) §19). §2's evidence audit
+remains live and load-bearing: it is the record of which v9-era support numbers
+must NOT be reused, and §2.5's power analysis of GoldCoin's 20-case Forbid
+split is part of the benchmark-distrust argument behind the §19 ruling.
+· **Owner:** Matt
 
 Written after the k-series pivot ended with v9-ckpt100 still the keeper. Every
 claim below is verified against the **run configs on disk**, not against wiki

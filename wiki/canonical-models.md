@@ -34,8 +34,10 @@ at the top is a result about *that checkpoint*.
 | `qwen3.5-9b/instruct` | `Qwen3.5-9B` | `Qwen3_5ForConditionalGeneration` | 262k | 19 GB |
 
 **Qwen3.5-9B is the training subject** — the SFT and GRPO work
-([grpo-reward.md](grpo-reward.md)) is done on this model, and `qwen3.5-9b/v9-ckpt100`
-is the current keeper. The 2B and 4B rungs exist so "does normative-simulacra
+([grpo_redesign/](grpo_redesign/README.md)) is done on this model. The camera-ready
+models are the **m2 `full` GRPO cell** and the **k3 `verdict` KTO arm**
+(both 2026-08-05; see [2026-07-31_kto_plan.md](2026-07-31_kto_plan.md) §19).
+`qwen3.5-9b/v9-ckpt100` is **deprecated** and no longer the keeper. The 2B and 4B rungs exist so "does normative-simulacra
 training help?" can be asked at three scales rather than asserted at one.
 
 **Gemma-4 is the gold-label family**, not a training target: `gemma-4-31b/instruct`
