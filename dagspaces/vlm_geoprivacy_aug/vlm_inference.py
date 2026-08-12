@@ -4,6 +4,21 @@ Reuses GPU/env helpers from dagspaces.common.vllm_inference but handles
 image inputs via vLLM's multi-modal API.  Falls back to native
 transformers for model architectures that vLLM no longer supports
 (e.g. Mllama / Llama 3.2 Vision, dropped after vLLM 0.10.2).
+
+**This module is a FORK of ``dagspaces/vlm_geoprivacy_bench/vlm_inference.py``.**
+It adds per-row prompts, for the hypothetical variants: ``prompt_col`` on the
+vLLM path, and ``sys_msg_col`` / ``usr_text_col`` on the transformers fallback
+path. The per-row logic runs inside the batch loops, so a wrapper cannot add
+it — the fork is deliberate.
+
+The rest of this module must stay equal to the benchmark module. A copy that
+falls behind is not a theory here: on 2026-08-12 a review found three
+benchmark corrections that never reached this dagspace, in
+``model_prompts.py``, ``stages/granularity_judge.py``, and
+``stages/compute_metrics.py``. Those three files are now shared, not copied.
+If you correct a defect in the benchmark module, apply it here as well.
+``tests/vlm_geoprivacy_aug/test_bench_sharing.py`` guards the shared files;
+it cannot guard this one.
 """
 
 from __future__ import annotations
