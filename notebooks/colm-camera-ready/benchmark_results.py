@@ -108,6 +108,26 @@ def _(mo):
        render **N/A** rather than blank. **CIRL Net is unchanged.** Phase B2b
        has the decomposition; `scripts/rescore_cirl_scorable.py` back-filled
        the metric onto existing runs (CPU only, no re-run, backups kept).
+    8. **The RL stage is the m2/k3 pair now, not v9 (2026-08-05).**
+       v9-ckpt100 is deprecated; the camera-ready reports the **m2 `full`**
+       GRPO cell and the **k3 `verdict`** KTO arm
+       (`wiki/2026-07-31_kto_plan.md` §19). This is a provenance upgrade as
+       much as a model swap: v9 sat on a qwen-teacher-era SFT base
+       (contentless-v6), so its RL delta was never separable from an SFT
+       lineage difference, whereas m2-full and k3-verdict train from the
+       **same** merged SFT (Qwen3.5-9B + the `sft-canonical` adapter of
+       2026-07-15) and are therefore comparable to each other. The
+       `*_eval_rl_stage_keeper/*` glob is removed and must not be re-added.
+       The block reads from the **2026-08-04 quartet** — Instruct / SFT base
+       / GRPO / KTO measured in ONE batch, plus two cell-level repair passes
+       — because the previous arrangement drew its four columns from three
+       different sweeps, and ConfAIde anchors alone re-measure ±2pt between
+       batches. The KTO supervision-depth ablations (citation / scrutinize /
+       SFT-control) ran in a separate batch and keep their own block with
+       their own co-run base; do not read a verdict-vs-citation gap across
+       the two blocks. Row identity is now resolved per (sweep, override) via
+       `SWEEP_OVERRIDE_TO_ROW`, so the quartet's own `instruct` and `k3-base`
+       cells cannot silently supersede the canonical rows.
 
     ### Excluded sweeps (deliberate — do not add without reading their yaml)
 
@@ -156,10 +176,22 @@ def _(mo):
 
     ### What the variance gate does NOT cover (state these, don't imply them)
 
-    - **The three PrivacyLens columns have no measured noise floor at all.**
-      The variance record is judge-free by construction (no judge server,
-      sidecar disabled), so QA Acc / Adj Lk / Helpful get **no** band. They
-      are marked `°` and their leaders are *nominal*, not established.
+    - **The PrivacyLens bands cover the RL block only.** As of 2026-08-07 the
+      three PrivacyLens columns DO have a measured floor — the quartet ×
+      6 sampling seeds (`*_eval_pl_variance_n3`, 24 cells) — so the RL rows
+      are gated like every other column. Every OTHER row's PrivacyLens cells
+      are still unbanded: the judge-free record is judge-free by construction
+      (no judge server, sidecar disabled), and this sweep only reps the four
+      RL arms. Those cells stay marked `°` with *nominal* leaders. Whether the
+      RL band transfers to a 2B or a Llama row is untested and should not be
+      assumed — format adherence, which drives most of this noise, differs
+      wildly across families.
+    - **PrivacyLens noise is dominated by the format gate, not the judge.**
+      The reps vary the agent's sampling draw; the judge is greedy. Leakage
+      and Helpful are computed `among_parseable`, so a rep that shifts *which*
+      rows clear the `Action:` gate moves the denominator itself. Measured
+      format-rate spread reaches 6.5pt (range) on a single arm — larger than
+      several arm-vs-arm gaps in these columns.
     - **SFT training-seed variance is not measured anywhere.** Each SFT row
       is a single training run; the variance record reps *inference*, not
       training. The only training-seed replication in the project is the
@@ -230,14 +262,31 @@ def _():
         # sample_n=20 runs and would otherwise supersede the real 729-row
         # cells under latest-run-wins.
         #
-        # ── RL stage (2026-08-03) ─────────────────────────────────────────
-        # Both sweeps are Gemma-4-31B-it-judged and post-parity-review, so
-        # they compose with the canonical corpus under the same protocol.
-        # Each carries its OWN SFT base cell — see the RL_* rows below for
-        # why that base is not optional.
+        # ── RL stage (camera-ready, 2026-08-04/05) ────────────────────────
+        # All Gemma-4-31B-it-judged and post-parity-review, so they compose
+        # with the canonical corpus under the same protocol.
         #
-        # KTO (k-series) arms + their base. Two run dirs, deliberately named
-        # rather than globbed with `*`:
+        # THE QUARTET — the camera-ready RL comparison, and the reason the
+        # v9 sweep below is gone. Instruct / SFT base / GRPO (m2 full) / KTO
+        # (k3 verdict), all four re-measured in ONE batch so no arm-vs-arm
+        # gap is confounded with a batch. That control matters here: ConfAIde
+        # anchors alone re-measure ±2pt between batches, and the previous
+        # arrangement assembled its columns from three separate sweeps.
+        #   15-51-04  the recovery sweep (all four cells)
+        #   23-56-40  repairs instruct's confaide + vlm, lost to a SLURM
+        #             controller wobble ("sbatch: Socket timed out")
+        #   00-27-00  repairs k3-verdict's cirl, whose child job was declared
+        #             failed on a stale squeue read while still running
+        # The repairs compose cell-by-cell under latest-run-wins.
+        "*_eval_rl_quartet_recovery/15-51-04",
+        "*_eval_rl_quartet_repair/23-56-40",
+        "*_eval_rl_quartet_repair/00-27-00",
+        # KTO ablation arms (citation / scrutinize / SFT-control) + their own
+        # co-run base. A SEPARATE batch from the quartet, which is why they
+        # render as their own block with their own "SFT base" row: reading a
+        # citation-vs-verdict gap across these two sweeps would charge the
+        # batch to the arm. Two run dirs, deliberately named rather than
+        # globbed with `*`:
         #   14-28-30  the good run — goldcoin/privacylens/confaide/vlm
         #   11-46-24  supplies ONLY k3-base's confaide cell, which 14-28-30
         #             lost to a SLURM submission wedge
@@ -249,13 +298,26 @@ def _():
         # vlm_geoprivacy metrics ARE real (that benchmark never routed
         # through the hijacked path), but 14-28-30 covers those cells, so
         # the run is excluded rather than relied on.
+        # m2 wave A — the GRPO per-component reward ablation, full suite.
+        # 13 cells; only the five below are mapped to rows. The nine
+        # m2-core-ckpt{50..400} trajectory cells are deliberately unmapped:
+        # they answer "when did core peak", which is a figure, not a row.
+        "*_m2_arms_all_eval/*",
+        # MMLU for the five k3 cells, run 2026-08-08. The 2026-08-03 K4 launch
+        # passed `+benchmark_filter=ci_only`, so the ablation block had no MMLU
+        # column at all; the original backfill was SIGTERM'd 100s in. This run
+        # carries ONLY mmlu, so under per-cell latest-run-wins it cannot
+        # supersede any CI column from 14-28-30.
+        "*_k3_arms_cirl_mmlu_backfill/*",
         "*_k3_arms_ci_eval/14-28-30",
         "*_k3_arms_ci_eval/11-46-24",
-        # GRPO keeper + its matched SFT base, re-run under the current
-        # protocol. The keeper's published 2026-06-24 numbers are NOT usable
-        # here: pre-flip GoldCoin, pre-parser-fix + Qwen3.6-judged
-        # PrivacyLens, and the retired `cirl_vignettes` metric.
-        "*_eval_rl_stage_keeper/*",
+        # REMOVED 2026-08-05: "*_eval_rl_stage_keeper/*" — the v9-ckpt100
+        # keeper and its qwen-teacher-era SFT base. v9 is deprecated
+        # (wiki/2026-07-31_kto_plan.md §19); the camera-ready GRPO model is
+        # the m2 `full` cell, which sits on the SAME merged SFT as the KTO
+        # arm. Do NOT re-add this glob to "compare against v9": that base is
+        # a different SFT lineage (contentless-v6, qwen-teacher corpus), so
+        # any v9-vs-m2 gap is a lineage difference, not an RL result.
     ]
 
     # Judge every judged cell must have come from. Matched as a substring of
@@ -315,22 +377,62 @@ def _():
     # The sweep was abandoned. See the Phase B2b table.
     CIRL_SCORABLE_MIN = 0.5
 
+    # Strict-format parse gate. `eval_sanity.DEFAULT_FAIL_THRESHOLDS` fails a
+    # stage at parseable_rate < 0.7, and a sweep that omits
+    # `+runtime.allow_unreliable_metrics=true` aborts there before writing
+    # metrics. Whether a cell aborted is therefore a property of the LAUNCH,
+    # not the model: `qwen3.5-9b/k3-base` renders values in the quartet batch
+    # (flag passed) and rendered "—" in the k3 batch (flag omitted) from
+    # byte-identical weights and an identical 17/729 parse rate.
+    #
+    # Marking every cell below the gate makes that visible wherever it occurs,
+    # so a reader never has to infer format collapse from a suspiciously low
+    # score — or, worse, read one batch's silence as a different finding from
+    # another batch's number.
+    PARSE_GATE_MIN = 0.7
+
     # The teacher/judge model, evaluated as a subject. Its label carries the
     # warning inline so the row cannot be copied out of the table without it.
     TEACHER_ROW = "Gemma-4-31B-it (teacher/judge — self-judged)"
 
-    # ── RL-stage rows (2026-08-03) ────────────────────────────────────────
-    # Both RL blocks sit on Qwen3.5-9B but on SFT lineages that are NOT the
-    # `sft-canonical` adapter behind the "Qwen3.5-9B / SFT" row above:
-    #   GRPO  qwen-teacher-era SFT (2026-06-23 v9 run)
-    #   KTO   the m2 merged SFT   (2026-07-28 m2 run)
-    # So each block carries its OWN "SFT base" condition and every RL delta
-    # must be read against that base, never against the canonical SFT row —
-    # otherwise the lineage difference is charged to the RL stage. The labels
-    # say "own SFT base" inline so a row cannot be lifted out of the table
-    # without the caveat, the same discipline as TEACHER_ROW.
-    GRPO_ROW = "Qwen3.5-9B + GRPO (own SFT base)"
-    KTO_ROW = "Qwen3.5-9B + KTO (own SFT base)"
+    # ── RL-stage rows (camera-ready, 2026-08-05) ──────────────────────────
+    # The reported RL models are the m2 `full` GRPO cell and the k3 `verdict`
+    # KTO arm (ruling: wiki/2026-07-31_kto_plan.md §19; v9-ckpt100 is
+    # deprecated). They share a base: both trained from the same merged SFT
+    # (Qwen3.5-9B + the `sft-canonical` adapter of
+    # 2026-07-15_sft_canonical_gemma4/00-07-44/2 — every m2 cell's
+    # `_merged_sft` is the same 18,819,722,392-byte merge), so for the first
+    # time the two RL arms are directly comparable to each other rather than
+    # only to their own bases. The quartet sweep measures all four cells in
+    # one batch to make that comparison legal end-to-end.
+    #
+    # CORRECTED 2026-08-05 (an earlier version of this comment claimed the
+    # opposite). This base IS the same model as the "Qwen3.5-9B / SFT" row
+    # above: `m2_core/.../_merged_sft` is Qwen3.5-9B plus the very adapter
+    # `sft-canonical.yaml` points at
+    # (2026-07-15_sft_canonical_gemma4/00-07-44/2), merged into the weights
+    # instead of applied at runtime. The block keeps its own "SFT base"
+    # condition because the BATCH differs, not the weights.
+    #
+    # That is worth more than a caveat: it makes "SFT base" a same-weights
+    # replicate of the canonical SFT row across two batches, and the measured
+    # gap is LARGE where the columns are weakest — PrivacyLens Helpful +10.1pt
+    # (judged, and the 07-17 actions predate the F3/F4 protocol fixes),
+    # ConfAIde r +4.2, VLM Q7 -5.2, against 0.0 on GoldCoin Appl. and PL QA
+    # Acc. Read RL deltas against the base INSIDE the block; a delta taken
+    # against the canonical SFT row is mostly batch.
+    RL_ROW = "Qwen3.5-9B RL stage (own SFT base; one batch)"
+    # The KTO supervision-depth ablations ran in a DIFFERENT batch, with
+    # their own co-run base. They keep a separate block for that reason: a
+    # verdict-vs-citation gap read across the two sweeps would charge the
+    # batch to the arm. The camera-ready KTO arm is `KTO verdict` in RL_ROW,
+    # measured in the quartet; this block is its ablation context.
+    KTO_ABL_ROW = "Qwen3.5-9B KTO ablations (own SFT base; separate batch)"
+    # m2 wave A: the per-component GRPO reward ablation. `core` runs all six
+    # components; `outcome` and `vignette` are leave-one-out arms; `full` is
+    # the pre-registered full stack whose failure to beat core (`full !> core`)
+    # triggered the wave-B NO-GO. Evaluated on the full suite 2026-08-03.
+    GRPO_ABL_ROW = "Qwen3.5-9B GRPO reward ablation (own SFT base; separate batch)"
 
     # ── Rows: the canonical 11, in size-then-family order ─────────────────
     ROW_ORDER = [
@@ -350,19 +452,40 @@ def _():
         # SFT data and the judge that scores every PrivacyLens row.
         (TEACHER_ROW, ["Reference"]),
         # ── RL stage. Each block is self-contained: read the RL conditions
-        # against the "SFT base" row directly above them, never against the
-        # canonical Qwen3.5-9B/SFT row (different SFT lineage).
-        (GRPO_ROW, ["SFT base", "GRPO"]),
+        # against the "SFT base" row inside the same block, never against the
+        # canonical Qwen3.5-9B/SFT row (different SFT lineage) and never
+        # across the two blocks (different batch).
+        #
+        # The camera-ready pair. Zero-shot is carried inside the block, from
+        # the quartet's OWN instruct cell, so all four numbers come from one
+        # batch; the canonical Qwen3.5-9B/Zero-shot row above is a different
+        # (2026-07-17) batch and is left untouched.
+        (RL_ROW, ["Zero-shot", "SFT base", "GRPO (full reward)", "KTO (label only)"]),
         # SFT control = plain SFT loss on the KTO dataset's desirable rows
         # only. It isolates whether KTO's use of UNdesirable examples adds
         # anything over ordinary fine-tuning on the same corrected text.
+        # GRPO per-component ablation. All arms are checkpoint-450 (epoch
+        # 3.00), the PRE-REGISTERED comparison point — not the best one: every
+        # GRPO arm in this project peaked early and regressed late. Read as a
+        # null result; wave A was a clean negative on the internal instrument
+        # and these external cells are the uncontaminated read of it.
         (
-            KTO_ROW,
+            GRPO_ABL_ROW,
             [
                 "SFT base",
-                "KTO verdict",
-                "KTO citation",
-                "KTO scrutinize",
+                "Full",
+                "- aux",
+                "- core",
+                "- judg",
+            ],
+        ),
+        (
+            KTO_ABL_ROW,
+            [
+                "SFT base",
+                "KTO (label only)",
+                "KTO (label + norm)",
+                "KTO (label + rationale)",
                 "SFT control",
             ],
         ),
@@ -390,15 +513,74 @@ def _():
         OVERRIDE_TO_ROW[f"{_slug}/instruct"] = (_disp, "Zero-shot")
         OVERRIDE_TO_ROW[f"{_slug}/sft-canonical"] = (_disp, "SFT")
     OVERRIDE_TO_ROW["gemma-4-31b/instruct"] = (TEACHER_ROW, "Reference")
-    # RL stage. Each block's base maps into its OWN row, so the two lineages
-    # can never be silently pooled.
-    OVERRIDE_TO_ROW["qwen3.5-9b/v9-base"] = (GRPO_ROW, "SFT base")
-    OVERRIDE_TO_ROW["qwen3.5-9b/v9-ckpt100"] = (GRPO_ROW, "GRPO")
-    OVERRIDE_TO_ROW["qwen3.5-9b/k3-base"] = (KTO_ROW, "SFT base")
-    OVERRIDE_TO_ROW["qwen3.5-9b/k3-verdict"] = (KTO_ROW, "KTO verdict")
-    OVERRIDE_TO_ROW["qwen3.5-9b/k3-citation"] = (KTO_ROW, "KTO citation")
-    OVERRIDE_TO_ROW["qwen3.5-9b/k3-scrutinize"] = (KTO_ROW, "KTO scrutinize")
-    OVERRIDE_TO_ROW["qwen3.5-9b/k3-sftctrl"] = (KTO_ROW, "SFT control")
+    # The KTO ablation block. These four overrides appear in exactly one
+    # sweep, so a plain override→row mapping is unambiguous for them.
+    OVERRIDE_TO_ROW["qwen3.5-9b/k3-citation"] = (KTO_ABL_ROW, "KTO (label + norm)")
+    OVERRIDE_TO_ROW["qwen3.5-9b/k3-scrutinize"] = (KTO_ABL_ROW, "KTO (label + rationale)")
+    OVERRIDE_TO_ROW["qwen3.5-9b/k3-sftctrl"] = (KTO_ABL_ROW, "SFT control")
+    OVERRIDE_TO_ROW["qwen3.5-9b/k3-base"] = (KTO_ABL_ROW, "SFT base")
+
+    # ── Sweep-scoped row identity ─────────────────────────────────────────
+    # Two overrides mean DIFFERENT rows depending on which batch they came
+    # from, so a plain override→row map cannot express them:
+    #   qwen3.5-9b/instruct  is the canonical Zero-shot row in the 2026-07-17
+    #                        sweep, and the quartet's OWN Zero-shot cell in
+    #                        the 2026-08-04 batch. Pooling them would let the
+    #                        newer batch silently supersede the canonical row
+    #                        under latest-run-wins.
+    #   qwen3.5-9b/k3-base   is the ablation block's base in the k3 sweep and
+    #                        the quartet block's base in the quartet sweep.
+    #                        They are byte-identical WEIGHTS but different
+    #                        BATCHES, and the whole point of the quartet is
+    #                        that a batch is not a free variable.
+    # Keyed by (multirun-key substring, override); consulted before
+    # OVERRIDE_TO_ROW, so it wins where both would match.
+    SWEEP_OVERRIDE_TO_ROW = {
+        ("eval_rl_quartet", "qwen3.5-9b/instruct"): (RL_ROW, "Zero-shot"),
+        ("eval_rl_quartet", "qwen3.5-9b/k3-base"): (RL_ROW, "SFT base"),
+        ("eval_rl_quartet", "qwen3.5-9b/m2-full-ckpt450"): (RL_ROW, "GRPO (full reward)"),
+        ("eval_rl_quartet", "qwen3.5-9b/k3-verdict"): (RL_ROW, "KTO (label only)"),
+        # The k3 sweep's own verdict cell stays in the ablation block, where
+        # it is the ladder's bottom rung read against that batch's base. The
+        # camera-ready verdict number is the quartet one, above.
+        ("k3_arms_ci_eval", "qwen3.5-9b/k3-verdict"): (KTO_ABL_ROW, "KTO (label only)"),
+        # Same cell, MMLU-only backfill run. Without this the backfill's
+        # k3-verdict would fall through to the quartet mapping and land in the
+        # RL block, silently overwriting the camera-ready MMLU number with the
+        # ablation batch's.
+        ("k3_arms_cirl_mmlu_backfill", "qwen3.5-9b/k3-verdict"): (
+            KTO_ABL_ROW, "KTO (label only)"),
+        # The GRPO ablation block. `m2-full-ckpt450` appears in BOTH this
+        # sweep and the quartet; the quartet cell is the camera-ready
+        # head-to-head number, this one is the ablation block's own arm read
+        # against its own batch's base.
+        ("m2_arms_all_eval", "qwen3.5-9b/k3-base"): (GRPO_ABL_ROW, "SFT base"),
+        # Condition names follow the PRE-REGISTERED grid
+        # (dagspaces/grpo_training/conf/sweep/grpo_m2_grid.yaml), which is the
+        # protocol record, and match Appendix B's labels exactly:
+        #   cell        reward_auxiliaries   task_mix.vignette   core
+        #   core        []                   0.18                on   -> "- aux"
+        #   full        [ground, contrast]   0.18                on   -> "Full"
+        #   -outcome    [ground, contrast]   0.18                OFF  -> "- core"
+        #   -vignette   [ground, contrast]   0.00                on   -> "- judg"
+        # NB the run DIRECTORY names are not the design: `core` is the
+        # auxiliary-free arm, and `-outcome` removes the verifiable core. That
+        # core is R-DIRECT, not R-OUTCOME: the weights dict keys the core slot
+        # "outcome" for historical reasons, but every m2 run sets
+        # `grpo.core_mode=direct` (verified in each run's .hydra/config.yaml),
+        # and the frozen-answerer "outcome" mode is retained only for
+        # reproducibility of an earlier negative result. The header comment in
+        # conf/model/qwen3.5-9b/m2-core-ckpt450.yaml calls `core` "all six
+        # components", which the grid contradicts; the grid wins.
+        ("m2_arms_all_eval", "qwen3.5-9b/m2-full-ckpt450"): (
+            GRPO_ABL_ROW, "Full"),
+        ("m2_arms_all_eval", "qwen3.5-9b/m2-core-ckpt450"): (
+            GRPO_ABL_ROW, "- aux"),
+        ("m2_arms_all_eval", "qwen3.5-9b/m2-outcome-ckpt450"): (
+            GRPO_ABL_ROW, "- core"),
+        ("m2_arms_all_eval", "qwen3.5-9b/m2-vignette-ckpt450"): (
+            GRPO_ABL_ROW, "- judg"),
+    }
 
     # Judged columns for THIS row are self-judged (judge == subject) — an
     # optimistic bound, not a like-for-like score.
@@ -589,6 +771,22 @@ def _():
         "*_eval_judgefree_variance/*",
         "*_eval_judgefree_variance_gptoss/*",
         "*_eval_judgefree_variance_topup/*",
+        # PrivacyLens noise floor (2026-08-07). The judge-free record above is
+        # judge-free BY CONSTRUCTION, which is why the three PrivacyLens
+        # columns were ungated until now. This sweep closes that hole: the RL
+        # quartet x 6 sampling seeds (101-103 in block 21-24-24, 104-106 in
+        # 23-06-00), PrivacyLens only, judged by Gemma-4-31B-it on the
+        # post-2026-08-07 judge (disable_any_whitespace — an older judge
+        # truncates 4.6-9.8% of leakage calls and would inflate the very
+        # dispersion being measured).
+        #
+        # Two seed blocks, not one repeated block: re-running the same seeds
+        # would give n=2 per seed (an engine-nondeterminism estimate), not six
+        # independent draws. Engine-only noise is separately estimable from
+        # the two 777-seeded quartet runs and is SMALL (format-rate drift
+        # 0.0/0.0/1.0/0.4 pt across the four arms) next to the seed-to-seed
+        # spread, so distinct seeds is where the information is.
+        "*_eval_pl_variance_n3/*",
     ]
 
     # Which noise source a column's reps actually measure. "sampled" = reps
@@ -605,6 +803,14 @@ def _():
         "CIRL::Util": "greedy",
         "CIRL::Net": "greedy",
         "MMLU::Acc": "greedy",
+        # PrivacyLens runs its agent pass at temperature 0.2 (seed 777
+        # canonically), so its reps vary the draw exactly like GoldCoin's.
+        # The judge itself is greedy (temp 0.0), so judge nondeterminism is
+        # NOT what these reps measure — they measure the agent's action
+        # varying, and the judged consequences of that.
+        "PrivacyLens::QA Acc": "sampled",
+        "PrivacyLens::Adj Lk↓": "sampled",
+        "PrivacyLens::Helpful": "sampled",
     }
 
     # A cell needs at least this many reps before its own spread is usable.
@@ -627,16 +833,34 @@ def _():
     # cell claim to be quieter than its benchmark's typical cell.
     NOISE_USE_COLUMN_MEDIAN_FLOOR = True
 
-    # Columns with NO variance data (the judged PrivacyLens trio) can't be
-    # gated. True = still bold their nominal leader but mark the column `°`
-    # and say in the legend that the lead is unestablished. Flip to False to
-    # suppress bolding there entirely.
+    # Columns whose band must NOT travel beyond the cells that were actually
+    # repped. The PrivacyLens floor is measured on the RL quartet only (four
+    # Qwen3.5-9B arms), and most of that noise comes from the `Action:` format
+    # gate moving the `among_parseable` denominator. Format adherence differs
+    # wildly across families — 100% for instruct, 69-80% for the fine-tuned
+    # Qwen arms, and the Llama/HARC rows fail it for entirely different
+    # reasons — so a band measured on Qwen3.5-9B says nothing about Phi-4's
+    # PrivacyLens cell. Without this, the column-median fallback silently
+    # gates all 19 rows off 4 measurements.
+    NOISE_NO_TRANSFER_COLS = {
+        "PrivacyLens::QA Acc",
+        "PrivacyLens::Adj Lk↓",
+        "PrivacyLens::Helpful",
+    }
+
+    # Cells with NO variance data can't be gated. Since 2026-08-07 this is a
+    # per-CELL condition, not a whole-column one: the PrivacyLens columns are
+    # banded for the RL block (see the pl_variance sweep above) and unbanded
+    # everywhere else. True = still bold a nominal leader among ungated cells
+    # but mark it `°` and say in the legend that the lead is unestablished.
+    # Flip to False to suppress bolding there entirely.
     BOLD_UNMEASURED_COLUMNS = True
     return (
         BOLD_UNMEASURED_COLUMNS,
         CIRL_SCORABLE_MIN,
         COLUMNS,
         EXPECTED_JUDGE,
+        PARSE_GATE_MIN,
         JUDGE_ATTESTED_MULTIRUNS,
         MULTIRUN_GLOB_ROOT,
         NOISE_MIN_REPS,
@@ -648,6 +872,7 @@ def _():
         ROW_ORDER,
         SELF_JUDGED_ROWS,
         SWEEP_GLOBS,
+        SWEEP_OVERRIDE_TO_ROW,
         TEACHER_ROW,
         VARIANCE_GLOBS,
         VARIANCE_REP_TYPE,
@@ -678,8 +903,10 @@ def _(
     JUDGE_ATTESTED_MULTIRUNS,
     MULTIRUN_GLOB_ROOT,
     OVERRIDE_TO_ROW,
+    PARSE_GATE_MIN,
     PL_PARSER_FIX_DT,
     SWEEP_GLOBS,
+    SWEEP_OVERRIDE_TO_ROW,
     dt,
     re,
 ):
@@ -733,6 +960,48 @@ def _(
                 return None
             cur = cur[part]
         return cur
+
+    def parse_rate_of(mp, kind, key):
+        """Parse rate for a metrics file, or None when it records no signal.
+
+        Separate from `read_metric` on purpose: read_metric's 4-tuple is
+        consumed in two places (the results scan and the variance scan) and
+        widening it to carry a fifth field would touch every return site for
+        a value only the results table uses.
+        """
+        try:
+            return _parse_rate(_json.loads(mp.read_text()), kind, key)
+        except (ValueError, OSError):
+            return None
+
+    def _parse_rate(data, kind, key):
+        """Fraction of rows the metric could actually parse, or None.
+
+        None means "this artifact records no parse signal" — the cell is then
+        left unmarked rather than assumed clean. Each benchmark reports the
+        gate its own sanity layer checks:
+          CIRL   strict <think>/<answer> parse (parseable/total)
+          PL     the `Action:` format rate for the judged columns; QA probing
+                 has its own unparseable_rate
+          other  1 - unparseable_rate when present
+        """
+        try:
+            if kind in ("cirl_net", "cirl_scorable"):
+                _p, _t = data.get("parseable"), data.get("total")
+                return float(_p) / float(_t) if _p is not None and _t else None
+            if kind == "gc_acc":
+                pr = data.get("parseable_rate")
+                return float(pr) if pr is not None else None
+            if kind == "pl_stale":
+                fr = (data.get("leakage") or {}).get("agent_action_format_rate")
+                return float(fr) if fr is not None else None
+            if key.startswith("qa_probing"):
+                ur = (data.get("qa_probing") or {}).get("unparseable_rate")
+                return 1.0 - float(ur) if ur is not None else None
+            ur = data.get("unparseable_rate")
+            return 1.0 - float(ur) if ur is not None else None
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
 
     def read_metric(mp, key, kind, suppressed=None):
         """Read one metric. Returns (value, semantics, stale, na) or None.
@@ -843,10 +1112,19 @@ def _(
             continue
         for _sub in sorted(p for p in _mr.iterdir() if p.is_dir() and p.name.isdigit()):
             _ov = _override_model(_sub)
-            if _ov is None or _ov not in OVERRIDE_TO_ROW:
+            if _ov is None:
                 continue
-            _model, _cond = OVERRIDE_TO_ROW[_ov]
             _mr_key = str(_mr.relative_to(MULTIRUN_GLOB_ROOT))
+            # Sweep-scoped identity wins over the plain override map: the
+            # same override means different rows in different batches.
+            _row_id = next(
+                (v for (_sw, _o), v in SWEEP_OVERRIDE_TO_ROW.items()
+                 if _o == _ov and _sw in _mr_key),
+                OVERRIDE_TO_ROW.get(_ov),
+            )
+            if _row_id is None:
+                continue
+            _model, _cond = _row_id
             _judge = _served_judge(_sub)
             if _judge is None and _mr_key in JUDGE_ATTESTED_MULTIRUNS:
                 _judge, _judge_src = EXPECTED_JUDGE, "attested"
@@ -873,6 +1151,10 @@ def _(
                 if _res is None:
                     continue
                 _val, _sem, _stale, _na = _res
+                # Did the run clear its benchmark's strict-format parse gate?
+                # None = the artifact records no parse signal, which is left
+                # unmarked rather than assumed clean.
+                _prate = parse_rate_of(_mp, _kind, _key)
                 rows.append(
                     {
                         "model": _model,
@@ -882,6 +1164,10 @@ def _(
                         "col_id": f"{_grp}::{_col}",
                         "value": _val,
                         "structural_na": _na,
+                        "parse_rate": _prate,
+                        "gate_failed": (
+                            None if _prate is None else bool(_prate < PARSE_GATE_MIN)
+                        ),
                         "judged": _judged,
                         "judge": _judge,
                         "judge_src": _judge_src,
@@ -1242,16 +1528,48 @@ def _(
     _V_KEEPER_RE = re.compile(r"^(?P<slug>[\w.\-]+)/sft-canonical$")
     _V_CKPT_RE = re.compile(r"^(?P<slug>[\w.\-]+)/sft-canonical-ckpt(?P<step>\d+)$")
 
-    def _variance_identity(ovr):
+    # The PrivacyLens variance sweep's arms are the RL block's OWN cells, not
+    # family rows, so the slug→row path cannot express them and the row is
+    # named explicitly — mirroring SWEEP_OVERRIDE_TO_ROW, and for the same
+    # reason: `qwen3.5-9b/instruct` is the canonical Zero-shot arm in the
+    # judge-free record and the quartet's own Zero-shot cell here. Resolving
+    # it by slug alone would file this sweep's reps under Qwen3.5-9B
+    # Zero-shot and band the wrong row.
+    _V_RL_ARMS = {
+        "qwen3.5-9b/instruct": (RL_ROW, "Zero-shot", "instruct"),
+        "qwen3.5-9b/k3-base": (RL_ROW, "SFT base", "k3-base"),
+        "qwen3.5-9b/m2-full-ckpt450": (RL_ROW, "GRPO (full reward)", "m2-full-ckpt450"),
+        "qwen3.5-9b/k3-verdict": (RL_ROW, "KTO (label only)", "k3-verdict"),
+    }
+
+    def _variance_identity(ovr, sweep=""):
+        """Return (row, condition, variant, era_matched) or None.
+
+        `sweep` is the arm's `+sweep=` override; it disambiguates overrides
+        that mean different rows in different sweeps.
+        """
+        if "eval_pl_variance" in str(sweep or ""):
+            _rl = _V_RL_ARMS.get(ovr)
+            if _rl is None:
+                return None
+            _row, _cond, _variant = _rl
+            # Same weights, same protocol, same batch design as the RL rows —
+            # dispersion AND means are era-matched here.
+            return _row, _cond, _variant, True
         _m = _V_INSTRUCT_RE.match(ovr)
         if _m:
-            return _m.group("slug"), "Zero-shot", "instruct", True
+            return _SLUG_TO_ROW.get(_m.group("slug")), "Zero-shot", "instruct", True
         _m = _V_KEEPER_RE.match(ovr)
         if _m:
-            return _m.group("slug"), "SFT", "sft-canonical", True
+            return _SLUG_TO_ROW.get(_m.group("slug")), "SFT", "sft-canonical", True
         _m = _V_CKPT_RE.match(ovr)
         if _m:
-            return _m.group("slug"), "SFT", f"ckpt{_m.group('step')}", False
+            return (
+                _SLUG_TO_ROW.get(_m.group("slug")),
+                "SFT",
+                f"ckpt{_m.group('step')}",
+                False,
+            )
         return None
 
     _vdirs = sorted(
@@ -1286,11 +1604,11 @@ def _(
                     _vsweep = _line.split("=", 1)[1]
             if _vovr is None:
                 continue
-            _ident = _variance_identity(_vovr)
+            _ident = _variance_identity(_vovr, _vsweep)
             if _ident is None:
                 continue
-            _slug, _vcond, _vvariant, _era_matched = _ident
-            if _slug not in _SLUG_TO_ROW:
+            _vrow, _vcond, _vvariant, _era_matched = _ident
+            if _vrow is None:
                 continue
             _varms += 1
             for (
@@ -1329,7 +1647,7 @@ def _(
                         continue
                     _vrows.append(
                         {
-                            "model": _SLUG_TO_ROW[_slug],
+                            "model": _vrow,
                             "condition": _vcond,
                             "variant": _vvariant,
                             "era_matched": _era_matched,
@@ -1515,6 +1833,7 @@ def _(
             for _cond in _conds:
                 for _cid in _COL_IDS:
                     _rec, _src = None, "unmeasured"
+                    _no_transfer = _cid in NOISE_NO_TRANSFER_COLS
                     if (_mdl, _cond, _cid) in _own:
                         _rec = _own[(_mdl, _cond, _cid)]
                         _src = (
@@ -1522,6 +1841,11 @@ def _(
                             if _rec["era"]
                             else "own:sibling-ckpts"
                         )
+                    elif _no_transfer:
+                        # Measured on the RL quartet only; see
+                        # NOISE_NO_TRANSFER_COLS. Stays `unmeasured` rather
+                        # than borrowing a band from a different family.
+                        _rec = None
                     elif (_mdl, _cid) in _fam:
                         _rec = _fam[(_mdl, _cid)]
                         _src = "family:other-condition"
@@ -1581,9 +1905,11 @@ def _(mo):
     everywhere), then walk down from the leader collecting every cell whose
     ±half-band interval still overlaps the leader's. That set is the
     column's **tie set** — Phase C bolds all of it, so a column with an
-    unresolvable leader can no longer be read as a win. Columns with no
-    variance data (the judged PrivacyLens trio) are marked `°` and their
-    leader is reported as *nominal*.
+    unresolvable leader can no longer be read as a win. Cells with no
+    variance data are marked `°` and their leader is reported as *nominal*.
+    Since 2026-08-07 that set no longer includes the RL block's PrivacyLens
+    cells, which the `*_eval_pl_variance_n3` sweep bands directly; the other
+    rows' PrivacyLens cells remain ungated.
     """)
     return
 
@@ -1828,6 +2154,15 @@ def _(
         (r["model"], r["condition"], r["col_id"]): bool(r["stale"])
         for _, r in picked.iterrows()
     }
+    # Cells whose run did not clear its benchmark's strict-format parse gate.
+    # The score is still reported (the paper protocol records format misses
+    # rather than dropping them) but it describes a model that mostly failed
+    # to produce parseable output, which a bare number hides.
+    _gate_lut = {
+        (r["model"], r["condition"], r["col_id"])
+        for _, r in picked.iterrows()
+        if r.get("gate_failed") is True
+    }
     _prov = {
         (r["model"], r["condition"], r["col_id"]): (
             r["judge"],
@@ -1866,6 +2201,8 @@ def _(
             s = f"{s}†"
         if _stale_lut.get((mdl, cond, cid)):
             s = f"{s}‡"
+        if (mdl, cond, cid) in _gate_lut:
+            s = f"{s}✗"
         return s
 
     # Column headers carry the leader-resolution status so the caveat cannot
@@ -1944,8 +2281,10 @@ def _(
         "max rep-range for that cell in the judge-free seed/rep variance "
         "record (floored at the column's median range; see "
         "`noise_floor.md`). Two cells are separable only when their "
-        "intervals do not overlap. `±?` = no measured band: the variance "
-        "record is judge-free, so the three PrivacyLens columns have none. "
+        "intervals do not overlap. `±?` = no measured band. The judge-free "
+        "record covers every column except PrivacyLens; the PrivacyLens "
+        "columns are banded for the RL block only, from a dedicated 6-seed "
+        "sweep, so other rows' PrivacyLens cells carry `±?`. "
         "SFT rows' bands are transferred from post-2026-07-18 "
         "`sft-canonical-ckptNNN` siblings (dispersion transfers, means do "
         "not). SFT **training**-seed variance is not measured anywhere — "
@@ -1987,10 +2326,13 @@ def _(
         "Per-cell bands and the full derivation are in `noise_floor.md` "
         "and `benchmark_results_with_noise.md`.*"
         "\n\n*~ = the column's leader is **statistically tied** with the "
-        "other bolded cells — do not report it as best. ° = the column has "
-        "**no measured noise floor**: the variance record is judge-free by "
-        "construction, so the judged PrivacyLens columns cannot be gated "
-        "and their leader is nominal only.*"
+        "other bolded cells — do not report it as best. ° = the cell has "
+        "**no measured noise floor** and cannot be gated, so a leader among "
+        "such cells is nominal only. This is now a per-cell condition: the "
+        "PrivacyLens columns are banded for the RL block (6-seed sweep, "
+        "2026-08-07) and unbanded for every other row, because that band is "
+        "driven by `Action:`-format adherence and does not transfer across "
+        "model families.*"
         "\n\n*Bands measure **inference** re-run noise (sampling seed on "
         "temp-0.2 benchmarks; engine nondeterminism on temp-0 ones). They "
         "do NOT measure SFT **training**-seed variance — each SFT row is a "
@@ -2100,7 +2442,7 @@ def _(mo):
     ## Phase C2 — LaTeX table
 
     The same cells rendered as a booktabs `tabular` for direct inclusion in the
-    camera-ready (requires the `booktabs` and `graphicx` packages). Bold is the
+    manuscript (requires the `booktabs` and `graphicx` packages). Bold is the
     **Phase-B4 tie set**, not the argmax; the markers ($\\dagger$ self-judged,
     $\\ddagger$ stale pre-parser-fix, $\\sim$ statistically tied column,
     $\\circ$ no measured noise floor) match the markdown legend. Saved to
@@ -2113,6 +2455,7 @@ def _(mo):
 def _(
     COLUMNS,
     EXPECTED_JUDGE,
+    PARSE_GATE_MIN,
     PENDING_GROUPS,
     REPORT_DIR,
     ROW_ORDER,
@@ -2138,6 +2481,11 @@ def _(
         (_r["model"], _r["condition"], _r["col_id"])
         for _, _r in picked.iterrows()
         if bool(_r.get("structural_na"))
+    }
+    _gate_lut = {
+        (_r["model"], _r["condition"], _r["col_id"])
+        for _, _r in picked.iterrows()
+        if _r.get("gate_failed") is True
     }
     _stale_lut = {
         (_r["model"], _r["condition"], _r["col_id"]): bool(_r["stale"])
@@ -2167,6 +2515,8 @@ def _(
             _s = _s + r"$^{\dagger}$"
         if _stale_lut.get((_mdl, _cond, _cid)):
             _s = _s + r"$^{\ddagger}$"
+        if (_mdl, _cond, _cid) in _gate_lut:
+            _s = _s + r"$^{\times}$"
         return _s
 
     # Sub-header status marks, matching the markdown table.
@@ -2188,111 +2538,196 @@ def _(
 
     _colspec = "@{}ll" + "c" * len(_col_specs) + "@{}"
 
-    _L = []
-    _L.append("% Requires: booktabs, graphicx (for \\resizebox).")
-    _L.append(r"\begin{table*}[t]")
-    _L.append(r"\centering")
-    _L.append(r"\small")
-    _L.append(r"\resizebox{\textwidth}{!}{%")
-    _L.append(rf"\begin{{tabular}}{{{_colspec}}}")
-    _L.append(r"\toprule")
-
-    # Group header row (Model block spans the model + condition columns).
-    _grp_cells = [r"\multicolumn{2}{c}{Model}"]
-    for _g, _n in _groups:
-        _grp_cells.append(rf"\multicolumn{{{_n}}}{{c}}{{{_g}}}")
-    _L.append(" & ".join(_grp_cells) + r" \\")
-
-    # cmidrules under each benchmark group (offset by the 2 identity columns).
-    _rules = []
-    _start = 3
-    for _g, _n in _groups:
-        _end = _start + _n - 1
-        _rules.append(rf"\cmidrule(lr){{{_start}-{_end}}}")
-        _start = _end + 1
-    _L.append(" ".join(_rules))
-
-    # Sub-header row, with the leader-resolution mark on each column so the
-    # caveat travels with the table into the paper.
-    _sub = ["Model", "Cond."] + [
-        # `.replace("$$", "")` merges an adjacent arrow and status mark into
-        # one math group ($\downarrow^{\circ}$) instead of two.
+    # ── Three tables, one emitter ─────────────────────────────────────────
+    # The single 20-row table mixed three questions: how the canonical models
+    # compare, what the GRPO reward components contribute, and what the KTO
+    # variants contribute. Each block is read against a DIFFERENT base (the
+    # canonical SFT row; the m2 batch's own SFT base; the k3 batch's own SFT
+    # base), and a reader cannot see that from a shared body. Splitting keeps
+    # each comparison inside the batch that licenses it.
+    #
+    # The quartet's Zero-shot and SFT base rows appear in BOTH RL tables on
+    # purpose: each table needs the one-batch reference its RL arm is read
+    # against, and the quartet is where that control lives.
+    _TABLE_SPECS = [
         (
-            _col.replace("\u2193", r"$\downarrow$")
-            + _TEX_STATUS_MARK.get(col_status.get(_cid, ""), "")
-        ).replace("$$", "")
-        for (_cid, _grp, _col, _judged, _lo, _scale) in _col_specs
+            "benchmark_results.tex",
+            "tab:benchmark_results",
+            [(_m, _c) for _m, _c in ROW_ORDER
+             if _m not in (RL_ROW, KTO_ABL_ROW, GRPO_ABL_ROW)],
+            rf"Benchmark results for the canonical model set, each model in "
+            rf"its zero-shot (pre-SFT \texttt{{\textless{{}}family\textgreater{{}}/instruct}}) "
+            rf"and SFT condition. ",
+        ),
+        (
+            "benchmark_results_grpo.tex",
+            "tab:benchmark_results_grpo",
+            [(RL_ROW, ["Zero-shot", "SFT base", "GRPO (full reward)"]),
+             (GRPO_ABL_ROW, [_c for _c in dict(ROW_ORDER)[GRPO_ABL_ROW]
+                             # Both duplicates of quartet rows: the ablation
+                             # batch re-measured the SFT base and the Full
+                             # cell, and `Full` IS the reported checkpoint.
+                             if _c not in ("SFT base", "Full")])],
+            rf"GRPO results, every condition read against the single SFT base row. "
+            rf"\texttt{{GRPO (full reward)}} is the reported model, and is also "
+            rf"the \textsc{{Full}} cell that the three leave-one-out arms below it "
+            rf"are formed from. All four are at the pre-registered "
+            rf"checkpoint-450 and are named for the pre-registered grid, matching "
+            rf"\autoref{{tab:grpo-ablation}}: $-$\textsc{{aux}} removes both judged "
+            rf"auxiliaries, $-$\textsc{{core}} removes the verifiable core "
+            rf"$R_{{\text{{direct}}}}$, and $-$\textsc{{judg}} removes the judgment "
+            rf"task. The ablation arms come from a separate batch, which carried its "
+            rf"own re-measurement of the SFT base and of \textsc{{Full}}; each "
+            rf"duplicated pair agrees to within $1.4$ points on every column, so we "
+            rf"print one of each. ",
+        ),
+        (
+            "benchmark_results_kto.tex",
+            "tab:benchmark_results_kto",
+            [(RL_ROW, ["Zero-shot", "SFT base", "KTO (label only)"]),
+             (KTO_ABL_ROW, [_c for _c in dict(ROW_ORDER)[KTO_ABL_ROW]
+                            if _c not in ("SFT base", "KTO (label only)")])],
+            rf"KTO results, all conditions read against the single SFT base "
+            rf"row. \texttt{{KTO (label only)}} is the reported model; the "
+            rf"remaining rows vary what the preference labels carry (label "
+            rf"$+$ norm, label $+$ rationale) and add an SFT control trained "
+            rf"on the same corrected text with ordinary supervised loss, which "
+            rf"isolates whether KTO's use of undesirable examples adds "
+            rf"anything. The ablation arms were measured in a separate batch "
+            rf"from the first three rows; the two batches re-measured both the "
+            rf"SFT base and the label-only arm, and those pairs differ by at "
+            rf"most $1.1$ points on any column, so we print one of each. ",
+            "Qwen3.5-9B KTO",
+        ),
     ]
-    _L.append(" & ".join(_sub) + r" \\")
-    _L.append(r"\midrule")
 
-    # Body rows (drop any model/condition with no data at all).
-    for _mdl, _conds in ROW_ORDER:
-        _shown = 0
-        for _cond in _conds:
-            _cells = [
-                _fmt_tex(_cid, _grp, _judged, _lo, _scale, _mdl, _cond)
-                for (_cid, _grp, _col, _judged, _lo, _scale) in _col_specs
-            ]
-            # N/A is a result, so a row carrying one is never dropped.
-            if all(_c in ("--", r"\textit{pend.}") for _c in _cells):
-                continue
-            _mcell = _esc(_mdl) if _shown == 0 else ""
-            _L.append(" & ".join([_mcell, _cond] + _cells) + r" \\")
-            _shown += 1
-    _L.append(r"\bottomrule")
-    _L.append(r"\end{tabular}}")  # closes the \resizebox argument
-
-    _caption = (
-        rf"Benchmark results for the canonical model set. We report each model "
-        rf"under its zero-shot (the pre-SFT \texttt{{<family>/instruct}} "
-        rf"checkpoint) and SFT condition across six benchmarks: GoldCoin-HIPAA "
-        rf"(applicability and compliance, upstream-parity accuracy), PrivacyLens "
-        rf"(question-answering accuracy, adjusted leakage, and helpfulness "
-        rf"rate), ConfAIde (Tier-2b Pearson correlation), "
-        rf"CIRL-729 (leakage, utility, and net score), VLM-GeoPrivacy (Q7 "
-        rf"location-granularity accuracy), and MMLU (overall accuracy). "
-        rf"\textbf{{Bold marks a statistical tie set, not the argmax:}} a cell "
-        rf"is bold when the measured re-run noise cannot separate it from the "
-        rf"column's top value, so a column with several bold cells supports no "
-        rf"single winner. Noise bands come from a judge-free seed/rep variance "
-        rf"record (163 configurations re-run 3--8 times; sampling-seed variation "
-        rf"on temperature-0.2 benchmarks, engine nondeterminism on greedy ones), "
-        rf"and two cells count as separated only when their half-band intervals "
-        rf"are disjoint; per-cell bands are reported in the appendix. The "
-        rf"self-judged teacher is excluded from the comparison. "
-        rf"Percentages are scaled by 100, except CIRL net score ($-1$ to $1$); "
-        rf"$\downarrow$ marks lower-is-better "
-        rf"columns. All judged columns use {EXPECTED_JUDGE} as the judge. "
-        rf"$\sim$: the column's leader is statistically tied with the other "
-        rf"bold cells. $\circ$: no measured noise floor --- the variance record "
-        rf"is judge-free, so the judged PrivacyLens columns cannot be gated and "
-        rf"their leader is nominal. Bands measure inference-time re-run noise "
-        rf"only: SFT training-seed variance is not measured, and SFT bands are "
-        rf"transferred from sibling checkpoints of the same family, so every "
-        rf"band is a lower bound. "
-        rf"$\dagger$: self-judged (judge and subject share weights), an "
-        rf"optimistic bound excluded from best-per-column bolding. $\ddagger$: "
-        rf"stale, finalized before the 2026-07-21 PrivacyLens judge-response "
-        rf"parser fix. CIRL-729 scores every strict-format miss as $-1$ (paper "
-        rf"protocol); its leakage and utility rates are computed over the "
-        rf"actions for which the model produced a complete, scoreable message "
-        rf"(non-empty and not truncated). \textit{{N/A}}: the benchmark ran but "
-        rf"the model's output is structurally unscoreable --- fewer than half "
-        rf"of the 729 actions yielded a complete message --- which is a "
-        rf"property of the model on this benchmark; its paper-protocol score "
-        rf"still appears under CIRL Net. --: a metric we do not report for that "
-        rf"cell (a documented model-level finding such as a refusal or format "
-        rf"collapse, or an inapplicable column). Neither is a zero."
+    # Shared tail: symbol glossary and the bolding rule. Identical across the
+    # three captions on purpose — a reader meeting any one table alone still
+    # gets the rule that decides what bold means.
+    # Legend, emitted per table over only the markers that table's BODY
+    # actually uses. The head clauses always apply; each glossary clause is
+    # gated so a caption never explains a symbol the reader cannot find. The
+    # GRPO/KTO tables use a strict subset of the main table's markers.
+    _tail_head = (
+        rf"Values are percentages ($\times 100$) except CI-RL net score ($-1$ "
+        rf"to $1$); $\downarrow$ marks lower-is-better columns; all judged "
+        rf"columns use {EXPECTED_JUDGE}. \textbf{{Bold marks the statistical "
+        rf"tie set:}} every cell whose measured re-run noise cannot separate "
+        rf"it from the column's top value. A column with several bold cells "
+        rf"has no single winner. Bands cover inference noise only, so they "
+        rf"are lower bounds; the appendix gives their derivation and per-cell "
+        rf"values. "
     )
-    _L.append(rf"\caption{{{_caption}}}")
-    _L.append(r"\label{tab:benchmark_results}")
-    _L.append(r"\end{table*}")
 
-    table_tex = "\n".join(_L)
-    (REPORT_DIR / "benchmark_results.tex").write_text(table_tex + "\n")
-    print(f"saved LaTeX table to {REPORT_DIR / 'benchmark_results.tex'}")
-    print(table_tex)
+    #: (probe string searched in the rendered body, glossary clause)
+    _tail_clauses = [
+        (r"$^{\sim}$", r"$\sim$: the leader ties with the other bold cells. "),
+        (r"$^{\circ}$", r"$\circ$: no measured noise floor, so the lead is nominal. "),
+        (r"$^{\dagger}$", r"$\dagger$: self-judged (judge and subject share "
+                          r"weights), excluded from bolding. "),
+        (r"$^{\ddagger}$", r"$\ddagger$: finalized before the PrivacyLens "
+                           r"judge-parser fix. "),
+        (r"$^{\times}$", rf"$\times$: the run fell below the benchmark's "
+                         rf"strict-format parse gate ({PARSE_GATE_MIN * 100:.0f}\%), "
+                         rf"so the score describes a model that mostly failed to "
+                         rf"emit parseable output. "),
+        (r"\textit{N/A}", r"\textit{N/A}: the benchmark ran but the output is "
+                          r"structurally unscoreable. "),
+    ]
+
+    def _caption_tail_for(body: str) -> str:
+        _t = _tail_head
+        for _probe, _clause in _tail_clauses:
+            if _probe in body:
+                _t += _clause
+        if " & -- &" in body or body.rstrip().endswith("-- \\\\"):
+            _t += r"--: not reported, which is not a zero. "
+        return _t.rstrip()
+
+    def _emit_table(rows, label, caption_lead, merged_label=None):
+        # merged_label collapses several source row-groups into ONE printed
+        # grouping: the left column carries `merged_label` on the first row and
+        # nothing after, and no rule is drawn between the source blocks. Cells
+        # are still looked up per source group, so this changes presentation
+        # only. Used by the GRPO/KTO tables, where the block split was more
+        # bookkeeping than the reader needed.
+        _L = []
+        _L.append("% Requires: booktabs, graphicx (for \\resizebox).")
+        _L.append(r"\begin{table*}[t]")
+        _L.append(r"\centering")
+        _L.append(r"\small")
+        _L.append(r"\resizebox{\textwidth}{!}{%")
+        _L.append(rf"\begin{{tabular}}{{{_colspec}}}")
+        _L.append(r"\toprule")
+
+        # Group keys are internal identifiers ("CIRL::Net", the guard at the
+        # cirl_vignettes check) and must not be renamed. This maps a key to the
+        # name the paper uses for that benchmark, at the point of display only.
+        _GROUP_DISPLAY = {"CIRL": "CI-RL"}
+        _grp_cells = [r"\multicolumn{2}{c}{Model}"]
+        for _g, _n in _groups:
+            _grp_cells.append(
+                rf"\multicolumn{{{_n}}}{{c}}{{{_GROUP_DISPLAY.get(_g, _g)}}}")
+        _L.append(" & ".join(_grp_cells) + r" \\")
+
+        _rules = []
+        _start = 3
+        for _g, _n in _groups:
+            _end = _start + _n - 1
+            _rules.append(rf"\cmidrule(lr){{{_start}-{_end}}}")
+            _start = _end + 1
+        _L.append(" ".join(_rules))
+
+        _sub = ["Model", "Cond."] + [
+            (
+                _col.replace("↓", r"$\downarrow$")
+                + _TEX_STATUS_MARK.get(col_status.get(_cid, ""), "")
+            ).replace("$$", "")
+            for (_cid, _grp, _col, _judged, _lo, _scale) in _col_specs
+        ]
+        _L.append(" & ".join(_sub) + r" \\")
+        _L.append(r"\midrule")
+
+        _n_rows = 0
+        for _bi, (_mdl, _conds) in enumerate(rows):
+            _shown = 0
+            for _cond in _conds:
+                _cells = [
+                    _fmt_tex(_cid, _grp, _judged, _lo, _scale, _mdl, _cond)
+                    for (_cid, _grp, _col, _judged, _lo, _scale) in _col_specs
+                ]
+                # N/A is a result, so a row carrying one is never dropped.
+                if all(_c in ("--", r"\textit{pend.}") for _c in _cells):
+                    continue
+                # Rule between blocks, so the "read against the base inside
+                # your own block" instruction is visible in the table itself.
+                # Suppressed when the blocks are printed as one grouping.
+                if _shown == 0 and _bi > 0 and _n_rows and merged_label is None:
+                    _L.append(r"\midrule")
+                if merged_label is not None:
+                    _mcell = _esc(merged_label) if _n_rows == 0 else ""
+                else:
+                    _mcell = _esc(_mdl) if _shown == 0 else ""
+                _L.append(" & ".join([_mcell, _cond] + _cells) + r" \\")
+                _shown += 1
+                _n_rows += 1
+        _L.append(r"\bottomrule")
+        _L.append(r"\end{tabular}}")
+        _body = "\n".join(_L)
+        _L.append(rf"\caption{{{caption_lead}{_caption_tail_for(_body)}}}")
+        _L.append(rf"\label{{{label}}}")
+        _L.append(r"\end{table*}")
+        return "\n".join(_L), _n_rows
+
+    _tex_by_file = {}
+    for _spec in _TABLE_SPECS:
+        _fname, _label, _rows, _lead = _spec[:4]
+        _merged = _spec[4] if len(_spec) > 4 else None
+        _tex, _nr = _emit_table(_rows, _label, _lead, merged_label=_merged)
+        (REPORT_DIR / _fname).write_text(_tex + "\n")
+        _tex_by_file[_fname] = _tex
+        print(f"saved {_nr}-row LaTeX table to {REPORT_DIR / _fname}")
+    table_tex = _tex_by_file["benchmark_results.tex"]
     return (table_tex,)
 
 
