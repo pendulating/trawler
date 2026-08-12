@@ -828,8 +828,12 @@ class ModularReward:
     ) -> float | None:
         """R-DIRECT with the chunk-fixed denominator (R2, 2026-07-28).
 
-        The chunk's teacher flows carry the golds (k=3-majority over the
-        restricted index, precomputed at build). The completion's flows are
+        The chunk's teacher flows carry the golds (top-1 over the restricted
+        ``governs_info_flow`` index, precomputed at build; k=3-majority was
+        tried and REVERTED 2026-07-28 — it regressed golds toward the index's
+        72.5/27.5 prior and the acceptance bar was measured at k=1, so
+        ``direct_gold_k`` is 1. See ``build_direct_chunk_gold`` in
+        aux_scorers.py). The completion's flows are
         embedding-matched one-to-one against them (greedy, cosine >=
         ``direct_match_threshold``); each matched teacher flow scores the
         policy's ``appropriateness`` label (hedge/wrong 0.0, right 1.0), each

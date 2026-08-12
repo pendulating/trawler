@@ -283,11 +283,26 @@ def classify_response_line(response_line: dict[str, Any]) -> dict[str, Any]:
         }
     msg = (choices[0] or {}).get("message") or {}
     content = msg.get("content") or ""
+    # A 200 with choices is NOT automatically a clean response: a completion
+    # that hit max_tokens comes back finish_reason="length" with its guided
+    # JSON unterminated. On the 2026-08-04 quartet that was 334/4721 leakage
+    # calls (4.6-9.8% per cell), every one of them Gemma degenerating into
+    # whitespace padding inside the reasoning string. Those parsed only
+    # because YesNoResult declares `answer` before `reasoning`, so the verdict
+    # token was already emitted — luck, not design. Surface it so callers can
+    # count or demote instead of never seeing it.
+    finish_reason = (choices[0] or {}).get("finish_reason")
+    truncated = str(finish_reason or "").lower() == "length"
     return {
         "ok": True,
         "content": content,
         "error_kind": None,
         "error_preview": "",
+        "finish_reason": finish_reason,
+        # `ok` stays True: these responses still carry a usable verdict, and
+        # demoting them here would silently change every already-published
+        # judged number. Counting is the caller's job.
+        "truncated": truncated,
     }
 
 
