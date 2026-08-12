@@ -285,13 +285,9 @@ wandb_cache/
 papers/*.html
 
 # Notebook-generated tables/figures (regenerable analysis outputs).
-# EXCEPTION: notebooks/normative-simulacra/tables/sft_per_checkpoint_longitudinal_2026_07_20/
-# is NOT regenerable-in-practice and is read by
-# notebooks/colm-camera-ready/sft_training_diagnostics.py:471 — it stays tracked.
+# Camera-ready inputs that are NOT regenerable in practice live in
+# notebooks/colm-camera-ready/data/, which no rule here matches, so they stay tracked.
 notebooks/**/tables/
-!notebooks/normative-simulacra/tables/
-!notebooks/normative-simulacra/tables/sft_per_checkpoint_longitudinal_2026_07_20/
-!notebooks/normative-simulacra/tables/sft_per_checkpoint_longitudinal_2026_07_20/**
 notebooks/**/figures/
 
 # Editor settings
