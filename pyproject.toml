@@ -281,6 +281,12 @@ data-tools = [
 spikes = [
   "plurals",
 ]
+# Linting. [tool.ruff.lint] below configures ruff, so declare it: the config
+# was present from 2026-07 but the tool never was, which is one reason the
+# BLE001/S110 baseline drifted to 488 violations unnoticed.
+dev = [
+  "ruff",
+]
 
 [tool.setuptools.packages.find]
 include = ["dagspaces*"]
@@ -291,14 +297,128 @@ index-url = "https://pypi.org/simple"
 extra-index-url = ["https://pypi.nvidia.com"]
 
 [tool.ruff.lint]
-# Finding 5 (wiki/jul19_refactoring.md): prevent new silent exception swallowing.
-# BLE001 = blind except Exception; S110 = except Exception: pass (try-except-pass).
-# These are advisory (not auto-fixable) — existing violations are grandfathered
-# until the full audit is complete; new code must not add them.
+# Finding 5 (wiki/jul19_refactoring.md): stop NEW silent exception swallowing.
+# BLE001 = blind `except Exception`; S110 = `except Exception: pass`.
 select = ["BLE001", "S110"]
 
 [tool.ruff.lint.per-file-ignores]
-# Serialization cascades and null-object loggers legitimately swallow exceptions.
-"dagspaces/common/orchestrator.py" = ["BLE001", "S110"]
-"dagspaces/common/vllm_inference.py" = ["BLE001", "S110"]
+# THIS BLOCK IS A DEBT LEDGER, NOT AN APPROVAL.
+#
+# Before 2026-08-12 these rules were selected but only three files were
+# ignored, so `ruff check` exited non-zero on 488 violations across 78 files.
+# A rule whose baseline is red enforces nothing: you cannot tell a new
+# violation from an old one, so the stated policy — "new code must not add
+# them" — could not be applied to anything.
+#
+# Every file that carried a violation on 2026-08-12 is listed below, so the
+# baseline is green and the rules act as a RATCHET: a new violation, in a new
+# file or in any file that leaves this list, fails the check.
+#
+# To pay the debt down: fix a file's handlers, delete its line, keep the check
+# green. Do not add a line to silence new code.
+#
+# AUDIT STATE. Only `dagspaces/common/` has been read handler by handler
+# (2026-08-12). Five sites there hid real failures and now report — see
+# tests/common/test_silent_failure_audit.py. The rest of common/ guards
+# best-effort telemetry (SLURM env vars, GPU probes, disk usage), where a
+# silent skip is correct and a crash would be wrong. Every entry marked
+# UNREVIEWED below is grandfathered, not blessed.
+#
+# Tests keep a blanket ignore: a test that asserts on a failure path
+# legitimately catches broadly.
 "tests/**" = ["BLE001", "S110"]
+
+# shared layer — AUDITED 2026-08-12 (tests/common/test_silent_failure_audit.py) — 16 files, 246 violations
+"dagspaces/common/batch_api.py" = ["BLE001"]
+"dagspaces/common/config_schema.py" = ["BLE001"]
+"dagspaces/common/health_summary.py" = ["BLE001"]
+"dagspaces/common/json_extraction.py" = ["BLE001"]
+"dagspaces/common/judge_client.py" = ["BLE001"]
+"dagspaces/common/logging_filters.py" = ["BLE001"]
+"dagspaces/common/metrics_sync.py" = ["BLE001"]
+"dagspaces/common/model_registry.py" = ["BLE001"]
+"dagspaces/common/orchestrator.py" = ["BLE001", "S110"]
+"dagspaces/common/reasoning.py" = ["BLE001", "S110"]
+"dagspaces/common/runners/sanity.py" = ["BLE001", "S110"]
+"dagspaces/common/stage_utils.py" = ["BLE001", "S110"]
+"dagspaces/common/toolemu/tools/tool_interface.py" = ["BLE001"]
+"dagspaces/common/toolemu/utils/tool.py" = ["BLE001"]
+"dagspaces/common/vllm_inference.py" = ["BLE001", "S110"]
+"dagspaces/common/wandb_logger.py" = ["BLE001", "S110"]
+
+# training stack — UNREVIEWED — 14 files, 82 violations
+"dagspaces/grpo_training/gates.py" = ["BLE001", "S110"]
+"dagspaces/grpo_training/orchestrator.py" = ["BLE001", "S110"]
+"dagspaces/grpo_training/runners/grpo_training.py" = ["BLE001", "S110"]
+"dagspaces/grpo_training/runners/norm_universe.py" = ["BLE001"]
+"dagspaces/grpo_training/stages/aux_scorers.py" = ["BLE001", "S110"]
+"dagspaces/grpo_training/stages/clients.py" = ["BLE001"]
+"dagspaces/grpo_training/stages/grpo_training.py" = ["BLE001", "S110"]
+"dagspaces/grpo_training/stages/modular_reward.py" = ["BLE001", "S110"]
+"dagspaces/grpo_training/stages/online_rground.py" = ["BLE001", "S110"]
+"dagspaces/grpo_training/stages/prompt_screening.py" = ["BLE001", "S110"]
+"dagspaces/grpo_training/stages/reward_prep.py" = ["BLE001"]
+"dagspaces/grpo_training/stages/sft_data_prep.py" = ["BLE001", "S110"]
+"dagspaces/grpo_training/stages/sft_training.py" = ["BLE001", "S110"]
+"dagspaces/grpo_training/stages/vllm_weight_sync_patches.py" = ["BLE001"]
+
+# sweep driver and judge sidecar — UNREVIEWED — 3 files, 51 violations
+"dagspaces/eval_all/judge_sidecar.py" = ["BLE001", "S110"]
+"dagspaces/eval_all/orchestrator.py" = ["BLE001", "S110"]
+"dagspaces/eval_all/server.py" = ["BLE001", "S110"]
+
+# norm extraction — UNREVIEWED — 7 files, 30 violations
+"dagspaces/historical_norms/config_schema.py" = ["BLE001"]
+"dagspaces/historical_norms/name_detection.py" = ["BLE001"]
+"dagspaces/historical_norms/orchestrator.py" = ["BLE001", "S110"]
+"dagspaces/historical_norms/schema_builders.py" = ["BLE001"]
+"dagspaces/historical_norms/stages/_utils.py" = ["BLE001", "S110"]
+"dagspaces/historical_norms/stages/fetch_gutenberg.py" = ["BLE001"]
+"dagspaces/historical_norms/stages/norm_extraction.py" = ["BLE001", "S110"]
+
+# PrivacyLens — UNREVIEWED — 6 files, 12 violations
+"dagspaces/privacylens/config_schema.py" = ["BLE001"]
+"dagspaces/privacylens/perturb/perturb_dataset.py" = ["BLE001"]
+"dagspaces/privacylens/prompts.py" = ["BLE001"]
+"dagspaces/privacylens/runners/privacylens_runners.py" = ["BLE001"]
+"dagspaces/privacylens/stages/llm_inference.py" = ["BLE001", "S110"]
+"dagspaces/privacylens/stages/parse_responses.py" = ["BLE001", "S110"]
+
+# other dagspaces — UNREVIEWED — 5 files, 20 violations
+"dagspaces/confaide/stages/load_dataset.py" = ["BLE001"]
+"dagspaces/goldcoin_hipaa/stages/llm_inference.py" = ["BLE001", "S110"]
+"dagspaces/simpleqa_verified/stages/llm_inference.py" = ["BLE001", "S110"]
+"dagspaces/vlm_geoprivacy_aug/vlm_inference.py" = ["BLE001", "S110"]
+"dagspaces/vlm_geoprivacy_bench/vlm_inference.py" = ["BLE001", "S110"]
+
+# operational scripts and inspectors — UNREVIEWED — 18 files, 33 violations
+"scripts/_inspector_common.py" = ["BLE001"]
+"scripts/clean_multirun.py" = ["BLE001"]
+"scripts/clean_scratch_models.py" = ["BLE001"]
+"scripts/clean_wandb.py" = ["BLE001"]
+"scripts/collect_k3_eval.py" = ["BLE001"]
+"scripts/completion_inspector.py" = ["BLE001"]
+"scripts/find_eval_runs.py" = ["BLE001", "S110"]
+"scripts/grpo_inspector.py" = ["BLE001"]
+"scripts/k0_mining_probe.py" = ["BLE001"]
+"scripts/k1_full_build.py" = ["BLE001"]
+"scripts/measure_sft_force_accuracy.py" = ["BLE001"]
+"scripts/run_probe_calibration.py" = ["BLE001"]
+"scripts/sanity_check_eval.py" = ["BLE001", "S110"]
+"scripts/sanity_check_lora.py" = ["BLE001", "S110"]
+"scripts/sft_inspector.py" = ["BLE001", "S110"]
+"scripts/validate_reranker_judge.py" = ["BLE001"]
+"scripts/vlm_geoprivacy_inspector.py" = ["BLE001"]
+"scripts/wandb_local_sync.py" = ["BLE001"]
+
+# camera-ready analysis notebooks — UNREVIEWED — 3 files, 5 violations
+"notebooks/colm-camera-ready/m2_external_benchmarks.py" = ["BLE001"]
+"notebooks/colm-camera-ready/norm_distribution_top100_vs_fiction10.py" = ["BLE001"]
+"notebooks/colm-camera-ready/sft_per_checkpoint_longitudinal.py" = ["BLE001"]
+
+# prompt-development spikes — UNREVIEWED — 5 files, 8 violations
+"prompt_dev/helpers/compile_run_markdown.py" = ["BLE001"]
+"prompt_dev/llm_client.py" = ["BLE001"]
+"prompt_dev/orchestrator.py" = ["BLE001", "S110"]
+"prompt_dev/steps/step_03_subcomponent_decomposition.py" = ["BLE001"]
+"prompt_dev/steps/step_07_question_generation.py" = ["BLE001"]
