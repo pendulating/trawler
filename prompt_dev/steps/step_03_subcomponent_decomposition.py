@@ -52,6 +52,12 @@ def run(ctx) -> dict:
         except Exception:
             continue
     pbar.update(2)
+    n_dropped = len(components) - len(validated)
+    if n_dropped:
+        # The guard below only fires when EVERY component fails. A partial
+        # drop is the silent case: fewer components, no explanation.
+        print(f"[step03] dropped {n_dropped}/{len(components)} components that "
+              f"failed Component validation", flush=True)
     if not validated:
         raise ValueError("Step 03 failed: no valid components could be parsed.")
 

@@ -44,6 +44,13 @@ def run(ctx) -> dict:
         except Exception:
             continue
     pbar.update(1)
+    n_seen = len(questions[:50])
+    n_dropped = n_seen - len(validated)
+    if n_dropped:
+        # The guard below only fires below 10 survivors. Dropping 40 of 50 and
+        # keeping 10 passes it silently.
+        print(f"[step07] dropped {n_dropped}/{n_seen} questions that failed "
+              f"QuestionRecord validation", flush=True)
     if len(validated) < 10:
         raise ValueError("Step 07 produced too few valid questions; expected >=10.")
 

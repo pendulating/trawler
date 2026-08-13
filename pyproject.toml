@@ -317,7 +317,7 @@ select = ["BLE001", "S110"]
 # To pay the debt down: fix a file's handlers, delete its line, keep the check
 # green. Do not add a line to silence new code.
 #
-# AUDIT STATE (2026-08-12). Two passes have run, both over the SILENT
+# AUDIT STATE (2026-08-12). Three passes have run, all over the SILENT
 # handlers — `except Exception: pass` / `: continue`. A handler that catches
 # broadly and then logs is a weaker signal and was not chased.
 #
@@ -326,14 +326,21 @@ select = ["BLE001", "S110"]
 #   Pass 2 — every silent site on a RESULT-BEARING path outside common/:
 #            the stages, the promotion gates, the inference modules, the
 #            judge infrastructure and the orchestrators. Four more fixed,
-#            plus the reasoning-budget defect below.
+#            plus the reasoning-budget defect (see
+#            tests/common/test_reasoning_budget_callers.py).
+#   Pass 3 — the remaining 14, in scripts/ (9), prompt_dev/ (4) and
+#            notebooks/ (1). All 14 are malformed-input tolerance in
+#            inspectors and one-off scripts: a json.loads inside a loop that
+#            skips a bad line, or best-effort config scraping. None sits on a
+#            pipeline path. Two prompt_dev steps dropped Pydantic-invalid
+#            records silently — their guards fired only on TOTAL loss, so a
+#            partial drop went unmentioned — and now count what they drop.
 #
-# The rest guard best-effort telemetry (SLURM env vars, GPU probes, disk
-# usage) or process teardown (proc.kill, run.finish, signal handlers), where
-# a silent skip is correct and a crash would be wrong.
-#
-# NOT yet read: the silent handlers in scripts/ (9), prompt_dev/ (4) and
-# notebooks/ (1). None of those sit on a pipeline path.
+# EVERY silent handler in the repository has been read. The ones that remain
+# guard best-effort telemetry (SLURM env vars, GPU probes, disk usage),
+# process teardown (proc.kill, run.finish, signal handlers), or a parse that
+# has an explicit fallback immediately below. For those a silent skip is
+# correct and a crash would be wrong.
 #
 # An entry below is grandfathered, not blessed: it means the file still has
 # BLE001/S110 hits, most of which are the legitimate kind.
@@ -405,7 +412,7 @@ select = ["BLE001", "S110"]
 "dagspaces/vlm_geoprivacy_aug/vlm_inference.py" = ["BLE001", "S110"]
 "dagspaces/vlm_geoprivacy_bench/vlm_inference.py" = ["BLE001", "S110"]
 
-# operational scripts and inspectors — NOT reviewed — 18 files, 33 violations
+# operational scripts and inspectors — reviewed 2026-08-12 — 18 files, 33 violations
 "scripts/_inspector_common.py" = ["BLE001"]
 "scripts/clean_multirun.py" = ["BLE001"]
 "scripts/clean_scratch_models.py" = ["BLE001"]
@@ -425,12 +432,12 @@ select = ["BLE001", "S110"]
 "scripts/vlm_geoprivacy_inspector.py" = ["BLE001"]
 "scripts/wandb_local_sync.py" = ["BLE001"]
 
-# camera-ready analysis notebooks — NOT reviewed — 3 files, 5 violations
+# camera-ready analysis notebooks — reviewed 2026-08-12 — 3 files, 5 violations
 "notebooks/colm-camera-ready/m2_external_benchmarks.py" = ["BLE001"]
 "notebooks/colm-camera-ready/norm_distribution_top100_vs_fiction10.py" = ["BLE001"]
 "notebooks/colm-camera-ready/sft_per_checkpoint_longitudinal.py" = ["BLE001"]
 
-# prompt-development spikes — NOT reviewed — 5 files, 8 violations
+# prompt-development spikes — reviewed 2026-08-12 — 5 files, 8 violations
 "prompt_dev/helpers/compile_run_markdown.py" = ["BLE001"]
 "prompt_dev/llm_client.py" = ["BLE001"]
 "prompt_dev/orchestrator.py" = ["BLE001", "S110"]
