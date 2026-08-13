@@ -42,6 +42,7 @@ import pandas as pd
 # Allow running as `python scripts/sft_inspector.py` in addition to `-m`.
 sys.path.insert(0, str(Path(__file__).parent))
 from _inspector_common import (  # noqa: E402
+    _esc,
     _serialize,
     extract_assistant_content,
     extract_user_prompt,
@@ -281,10 +282,6 @@ def load_traces(path: Path) -> dict[str, Any]:
 
 
 # ── Overview panel HTML ─────────────────────────────────────────────────
-
-
-def _esc(s: Any) -> str:
-    return html_lib.escape(str(s))
 
 
 def _curve_svg(

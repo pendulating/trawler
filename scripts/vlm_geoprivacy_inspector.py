@@ -43,6 +43,12 @@ from PIL import Image
 # the bench prompts without duplicating the question registry here.
 from dagspaces.vlm_geoprivacy_bench.prompts import NUM_QUESTIONS, QUESTION_DATA
 
+# Allow running as `python scripts/vlm_geoprivacy_inspector.py` in addition to `-m`.
+sys.path.insert(0, str(Path(__file__).parent))
+from _inspector_common import (  # noqa: E402
+    parse_run_arg,
+)
+
 MCQ_REL = "outputs/parse_mcq/dataset.parquet"
 FREEFORM_PARSE_REL = "outputs/parse_freeform/dataset.parquet"
 FREEFORM_JUDGE_REL = "outputs/granularity_judge/dataset.parquet"
@@ -54,28 +60,31 @@ Q7_ORDER = {"A": 0, "B": 1, "C": 2}
 
 # ── Run discovery ────────────────────────────────────────────────────────
 
-def resolve_root(run_path: str) -> Path:
-    """Resolve a run root, handling Hydra multirun /0/ subdirectory."""
+def resolve_vlm_root(run_path: str) -> Path:
+    """Resolve a VLM run root by probing for this benchmark's artifacts.
+
+    Do NOT replace this with ``_inspector_common.resolve_root``. That one
+    descends into a ``0/`` subdirectory when it finds one. This one must also
+    look for a ``vlm_geoprivacy_bench/`` level, and it picks the candidate
+    that actually HOLDS an MCQ or free-form parse file. The four layouts come
+    from running this benchmark alone or under eval_all, each with or without
+    a Hydra multirun wrapper.
+
+    The name differs from the shared helper on purpose, so a reader does not
+    read one as a stale copy of the other. They were reconciled 2026-08-12;
+    this difference survived because it is real.
+    """
     p = Path(run_path)
-    # Hydra multirun puts the single run under /0/
     for candidate in (p, p / "0", p / "vlm_geoprivacy_bench", p / "0" / "vlm_geoprivacy_bench"):
         if (candidate / MCQ_REL).is_file() or (candidate / FREEFORM_PARSE_REL).is_file():
             return candidate
-    # Fallback: return as-is; caller will error out if nothing is found
+    # Fallback: return as-is; the caller errors out if nothing is found.
     return p
 
 
 def find_stage_parquet(root: Path, relpath: str) -> Path | None:
     p = root / relpath
     return p if p.is_file() else None
-
-
-def parse_run_arg(arg: str) -> tuple[str, str]:
-    """Parse 'Label=/path' or '/path' into (label, path)."""
-    if "=" in arg:
-        label, path = arg.split("=", 1)
-        return label.strip(), path.strip()
-    return Path(arg).name, arg
 
 
 # ── Image bank ──────────────────────────────────────────────────────────
@@ -341,7 +350,7 @@ def main():
     runs: dict[str, Path] = {}
     for r in args.runs:
         label, path = parse_run_arg(r)
-        root = resolve_root(path)
+        root = resolve_vlm_root(path)
         runs[label] = root
         print(f"[run] {label}: {root}")
 

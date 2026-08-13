@@ -21,6 +21,8 @@ modal (HTML + PDF).
 
 from __future__ import annotations
 
+import html as html_lib
+
 import json
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,11 @@ import numpy as np
 
 
 # ── Python helpers ────────────────────────────────────────────────────────
+
+
+def _esc(s: Any) -> str:
+    """HTML-escape a value for inclusion in an inspector page."""
+    return html_lib.escape(str(s))
 
 
 def _serialize(v: Any) -> Any:
@@ -74,8 +81,27 @@ def parse_run_arg(arg: str) -> tuple[str, str]:
 def parse_row_slice(spec: str, n: int) -> list[int]:
     """Parse Python slice syntax into a deduplicated list of row indices.
 
-    Supports single indices, slices, negative indices, and comma-separated
-    unions: '0:100', '::10', '-50:', '42', '0:10,50:60'.
+    Supports::
+
+        "42"          -> [42]
+        "10:20"       -> [10, 11, ..., 19]
+        ":50"         -> [0, 1, ..., 49]
+        "100:"        -> [100, 101, ..., n-1]
+        "::2"         -> [0, 2, 4, ...]
+        "-10:"        -> the last 10 rows
+        "0:100:5"     -> [0, 5, 10, ..., 95]
+        "0,5,10,42"   -> [0, 5, 10, 42]
+        "0:10,50:60"  -> [0..9, 50..59]
+
+    Args:
+        spec: The row specification.
+        n: The number of rows available.
+
+    Returns:
+        A sorted list of valid row indices, without duplicates.
+
+    Raises:
+        ValueError: if the spec is malformed, or gives no valid index.
     """
     indices: set[int] = set()
     for part in spec.split(","):
@@ -85,7 +111,10 @@ def parse_row_slice(spec: str, n: int) -> list[int]:
         if ":" in part:
             pieces = part.split(":")
             if len(pieces) > 3:
-                raise ValueError(f"Invalid slice '{part}': too many colons")
+                raise ValueError(
+                    f"Invalid slice '{part}': too many colons "
+                    f"(the format is start:stop:step)"
+                )
             try:
                 args = [int(p) if p.strip() else None for p in pieces]
             except ValueError:
@@ -93,7 +122,9 @@ def parse_row_slice(spec: str, n: int) -> list[int]:
             sl = slice(*args)
             resolved = range(*sl.indices(n))
             if len(resolved) == 0:
-                raise ValueError(f"Slice '{part}' produces no rows (n={n})")
+                raise ValueError(
+                    f"Slice '{part}' produces no rows (the dataset has {n})"
+                )
             indices.update(resolved)
         else:
             try:
@@ -102,7 +133,10 @@ def parse_row_slice(spec: str, n: int) -> list[int]:
                 raise ValueError(f"Invalid index '{part}': not an integer")
             resolved_idx = idx if idx >= 0 else n + idx
             if resolved_idx < 0 or resolved_idx >= n:
-                raise ValueError(f"Index {idx} out of range (n={n})")
+                raise ValueError(
+                    f"Index {idx} is out of range (the dataset has {n} rows; "
+                    f"the valid range is {-n}..{n - 1})"
+                )
             indices.add(resolved_idx)
     if not indices:
         raise ValueError(f"Row spec '{spec}' produced no indices")

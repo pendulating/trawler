@@ -61,16 +61,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+# Allow running as `python scripts/completion_inspector.py` in addition to `-m`.
+sys.path.insert(0, str(Path(__file__).parent))
+from _inspector_common import (  # noqa: E402
+    _serialize,
+    parse_row_slice,
+    parse_run_arg,
+    resolve_root,
+)
+
 
 # ── Auto-discovery ────────────────────────────────────────────────────────
-
-def resolve_root(run_path: str) -> Path:
-    """Resolve eval_all run root, handling /0/ multirun subdirectory."""
-    p = Path(run_path)
-    if (p / "0").is_dir():
-        return p / "0"
-    return p
-
 
 def _parse_stage_key(pq: Path, root: Path) -> tuple[str, str, str] | None:
     """Parse a parquet path into (benchmark, stage_name, stage_key)."""
@@ -555,29 +556,6 @@ _CONTEXT_SUBFIELDS = {
 
 
 # ── Data serialization ───────────────────────────────────────────────────
-
-def _serialize(v: Any) -> Any:
-    """Make a value JSON-serializable."""
-    if v is None:
-        return None
-    if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
-        return None
-    if isinstance(v, np.ndarray):
-        return [_serialize(x) for x in v]
-    if isinstance(v, (np.integer,)):
-        return int(v)
-    if isinstance(v, (np.floating,)):
-        return float(v)
-    if isinstance(v, (np.bool_,)):
-        return bool(v)
-    if isinstance(v, dict):
-        return {k: _serialize(val) for k, val in v.items()}
-    if isinstance(v, (list, tuple)):
-        return [_serialize(x) for x in v]
-    if isinstance(v, bytes):
-        return v.decode("utf-8", errors="replace")
-    return v
-
 
 def _reformat_prompt_repr(record: dict, col_name: str, col_val: dict) -> None:
     """Replace Python repr of a dict column inside the prompt text with valid JSON.
@@ -3307,88 +3285,6 @@ init();
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────
-
-def parse_run_arg(arg: str) -> tuple[str, str]:
-    """Parse a run argument like 'Label=/path/to/run' or just '/path/to/run'."""
-    if "=" in arg:
-        label, path = arg.split("=", 1)
-        return label.strip(), path.strip()
-    # Auto-label from directory name
-    p = Path(arg)
-    return p.name, arg
-
-
-def parse_row_slice(spec: str, n: int) -> list[int]:
-    """Parse a Python-style array index/slice spec into a list of row indices.
-
-    Supports:
-        "42"          → [42]
-        "10:20"       → [10, 11, ..., 19]
-        ":50"         → [0, 1, ..., 49]
-        "100:"        → [100, 101, ..., n-1]
-        "::2"         → [0, 2, 4, ...]
-        "-10:"        → last 10 rows
-        "0:100:5"     → [0, 5, 10, ..., 95]
-        "0,5,10,42"   → [0, 5, 10, 42]
-        "0:10,50:60"  → [0..9, 50..59]
-
-    Args:
-        spec: The row specification string.
-        n: Total number of available rows.
-
-    Returns:
-        Sorted, deduplicated list of valid row indices.
-
-    Raises:
-        ValueError: If the spec is malformed or produces no valid indices.
-    """
-    indices: set[int] = set()
-
-    for part in spec.split(","):
-        part = part.strip()
-        if not part:
-            continue
-
-        if ":" in part:
-            # Slice syntax
-            pieces = part.split(":")
-            if len(pieces) > 3:
-                raise ValueError(
-                    f"Invalid slice '{part}': too many colons (max format is start:stop:step)"
-                )
-            try:
-                args = [int(p) if p.strip() else None for p in pieces]
-            except ValueError:
-                raise ValueError(
-                    f"Invalid slice '{part}': non-integer component"
-                )
-            sl = slice(*args)
-            resolved = range(*sl.indices(n))
-            if len(resolved) == 0:
-                raise ValueError(
-                    f"Slice '{part}' produces no rows (dataset has {n} rows)"
-                )
-            indices.update(resolved)
-        else:
-            # Single index
-            try:
-                idx = int(part)
-            except ValueError:
-                raise ValueError(f"Invalid index '{part}': not an integer")
-            # Resolve negative indices
-            resolved_idx = idx if idx >= 0 else n + idx
-            if resolved_idx < 0 or resolved_idx >= n:
-                raise ValueError(
-                    f"Index {idx} is out of range (dataset has {n} rows, "
-                    f"valid range: {-n}..{n - 1})"
-                )
-            indices.add(resolved_idx)
-
-    if not indices:
-        raise ValueError(f"Row spec '{spec}' produced no indices")
-
-    return sorted(indices)
-
 
 def _validate_stage_key(requested: str, available: list[str]) -> str:
     """Resolve a user-supplied --stage value against discovered stage keys.

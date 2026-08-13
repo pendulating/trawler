@@ -57,6 +57,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+# Allow running as `python scripts/norms_inspector.py` in addition to `-m`.
+sys.path.insert(0, str(Path(__file__).parent))
+from _inspector_common import (  # noqa: E402
+    _serialize,
+)
+
 
 # ── Data loading ────────────────────────────────────────────────────────
 
@@ -95,29 +101,6 @@ def resolve_corpus(corpus: str) -> dict[str, Path]:
         raise ValueError(f"unknown corpus {corpus!r}; choose from {sorted(SOURCES)}")
     src = SOURCES[corpus]
     return {"abstracted_norms": Path(src["norms"]), "ci_flows": Path(src["flows"])}
-
-
-def _serialize(v: Any) -> Any:
-    """Make a value JSON-serializable."""
-    if v is None:
-        return None
-    if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
-        return None
-    if isinstance(v, np.ndarray):
-        return [_serialize(x) for x in v]
-    if isinstance(v, (np.integer,)):
-        return int(v)
-    if isinstance(v, (np.floating,)):
-        return float(v)
-    if isinstance(v, (np.bool_,)):
-        return bool(v)
-    if isinstance(v, dict):
-        return {k: _serialize(val) for k, val in v.items()}
-    if isinstance(v, (list, tuple)):
-        return [_serialize(x) for x in v]
-    if isinstance(v, bytes):
-        return v.decode("utf-8", errors="replace")
-    return v
 
 
 # ── Stage-specific schemas ──────────────────────────────────────────────

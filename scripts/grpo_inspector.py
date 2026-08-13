@@ -33,7 +33,7 @@ from typing import Any
 
 # Allow running as a script.
 sys.path.insert(0, str(Path(__file__).parent))
-from _inspector_common import _serialize, parse_row_slice, render_page  # noqa: E402
+from _inspector_common import _esc, _serialize, parse_row_slice, render_page  # noqa: E402
 
 
 # ── Discovery ───────────────────────────────────────────────────────────
@@ -184,10 +184,6 @@ def build_judgment_call_rows(calls: list[list[dict]]) -> list[dict]:
 
 
 COMPONENT_NAMES = ["r_uncert", "r_complete", "r_consist", "r_context", "r_cohere", "r_ground"]
-
-
-def _esc(s: Any) -> str:
-    return html_lib.escape(str(s))
 
 
 def _trend_svg(
