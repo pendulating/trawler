@@ -10,8 +10,8 @@ from omegaconf import OmegaConf
 from dagspaces.common.orchestrator import (
     StageExecutionContext,
     StageResult,
-    _collect_outputs,
-    _save_stage_outputs,
+    collect_outputs,
+    save_stage_outputs,
 )
 
 from .base import StageRunner
@@ -43,7 +43,7 @@ class SFTDataPrepRunner(StageRunner):
         out = run_sft_data_prep_stage(ci_reasoning_df, ci_extraction_df, cfg)
 
         output_rows = len(out) if isinstance(out, pd.DataFrame) else 0
-        _save_stage_outputs(out, context.output_paths)
+        save_stage_outputs(out, context.output_paths)
 
         metadata: dict[str, Any] = {
             "rows": output_rows,
@@ -56,7 +56,7 @@ class SFTDataPrepRunner(StageRunner):
             "include_negative_examples": bool(OmegaConf.select(cfg, "training.sft.include_negative_examples", default=True)),
         }
 
-        outputs = _collect_outputs(
+        outputs = collect_outputs(
             context,
             {name: spec.optional for name, spec in context.node.outputs.items()},
         )

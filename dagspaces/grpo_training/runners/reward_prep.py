@@ -10,8 +10,8 @@ import pandas as pd
 from dagspaces.common.orchestrator import (
     StageExecutionContext,
     StageResult,
-    _collect_outputs,
-    _save_stage_outputs,
+    collect_outputs,
+    save_stage_outputs,
 )
 
 from .base import StageRunner
@@ -53,7 +53,7 @@ class RewardPrepRunner(StageRunner):
         )
 
         output_rows = len(out) if isinstance(out, pd.DataFrame) else 0
-        _save_stage_outputs(out, context.output_paths)
+        save_stage_outputs(out, context.output_paths)
 
         metadata: dict[str, Any] = {
             "rows": output_rows,
@@ -61,7 +61,7 @@ class RewardPrepRunner(StageRunner):
             "num_universes": len(norm_universes),
         }
 
-        outputs = _collect_outputs(
+        outputs = collect_outputs(
             context,
             {name: spec.optional for name, spec in context.node.outputs.items()},
         )

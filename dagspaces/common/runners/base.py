@@ -68,8 +68,8 @@ class DataFrameStageRunner(StageRunner):
 
     1. Read input dataset via ``prepare_stage_input``
     2. Call ``self.transform(df, cfg)``
-    3. Save outputs via ``_save_stage_outputs``
-    4. Collect output paths via ``_collect_outputs``
+    3. Save outputs via ``save_stage_outputs``
+    4. Collect output paths via ``collect_outputs``
     5. Return ``StageResult`` with row-count metadata
 
     Subclasses only need to set ``stage_name`` and implement
@@ -101,8 +101,8 @@ class DataFrameStageRunner(StageRunner):
             StageResult as _StageResult,
         )
         from dagspaces.common.orchestrator import (
-            _collect_outputs,
-            _save_stage_outputs,
+            collect_outputs,
+            save_stage_outputs,
             prepare_stage_input,
         )
 
@@ -121,14 +121,14 @@ class DataFrameStageRunner(StageRunner):
 
         output_rows = len(out) if out is not None and hasattr(out, "__len__") else 0
         print(f"[{self.stage_name}] Output: {output_rows} rows")
-        _save_stage_outputs(out, context.output_paths)  # type: ignore[arg-type]
+        save_stage_outputs(out, context.output_paths)  # type: ignore[arg-type]
 
         metadata: dict[str, Any] = {
             "rows": output_rows,
             "input_rows": input_rows,
             "streaming": False,
         }
-        outputs = _collect_outputs(
+        outputs = collect_outputs(
             context,  # type: ignore[arg-type]
             {name: spec.optional for name, spec in context.node.outputs.items()},
         )

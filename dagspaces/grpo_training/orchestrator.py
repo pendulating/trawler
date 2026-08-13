@@ -20,13 +20,13 @@ from dagspaces.common.orchestrator import (
     ArtifactRegistry,
     StageExecutionContext,
     StageResult,
-    _create_submitit_executor,
-    _node_inputs,
-    _node_output_paths,
-    _NoOpLogger,
-    _print_status,
-    _sanitize_cuda_visible_devices,
-    _submit_slurm_job,
+    create_submitit_executor,
+    node_inputs,
+    node_output_paths,
+    NoOpLogger,
+    print_status,
+    sanitize_cuda_visible_devices,
+    submit_slurm_job,
     build_run_config,
     common_parent,
     prepare_node_config,
@@ -46,15 +46,15 @@ _CONF_DIR = os.path.join(os.path.dirname(__file__), "conf")
 _GPU_SANITIZE_PREFIX = "GRPO_TRAINING"
 
 
-def _inject_prompt_from_file(cfg: DictConfig, prompt_filename: str) -> None:
+def inject_prompt_from_file(cfg: DictConfig, prompt_filename: str) -> None:
     """Inject prompt from YAML file into cfg.prompt."""
-    from dagspaces.common.orchestrator import _inject_prompt_from_file as _common_inject
+    from dagspaces.common.orchestrator import inject_prompt_from_file as _common_inject
     _common_inject(cfg, prompt_filename, config_dir=_CONF_DIR)
 
 
-def _load_launcher_config(cfg: DictConfig, launcher_name: str) -> DictConfig | None:
+def load_launcher_config(cfg: DictConfig, launcher_name: str) -> DictConfig | None:
     """Load a launcher configuration using this dagspace's conf/ directory."""
-    from dagspaces.common.orchestrator import _load_launcher_config as _common_load
+    from dagspaces.common.orchestrator import load_launcher_config as _common_load
     return _common_load(cfg, launcher_name, config_dir=_CONF_DIR)
 
 
@@ -64,7 +64,7 @@ def _get_wandb_logger(cfg: DictConfig, stage: str, run_id: str | None = None, ru
     if wb_config.enabled:
         return WandbLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
     else:
-        return _NoOpLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
+        return NoOpLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
 
 
 from .runners.base import StageRunner
@@ -115,7 +115,7 @@ def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
     # Only sanitize GPUs for stages that need them
     _GPU_STAGES = {"sft_training", "grpo_training", "reward_prep", "norm_universe"}
     if node.stage in _GPU_STAGES:
-        _sanitize_cuda_visible_devices(reason=f"job:{node.key}", env_prefix=_GPU_SANITIZE_PREFIX, cfg=cfg)
+        sanitize_cuda_visible_devices(reason=f"job:{node.key}", env_prefix=_GPU_SANITIZE_PREFIX, cfg=cfg)
 
     wandb_run_id = node.wandb_suffix or node.key
     run_config = build_run_config(cfg, node, context.inputs, context.output_paths, dagspace_name="grpo_training")
@@ -123,7 +123,7 @@ def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
     with _get_wandb_logger(cfg, stage=node.stage, run_id=wandb_run_id, run_config=run_config) as logger:
         try:
             context.logger = logger
-            _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": context.inputs})
+            print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": context.inputs})
             stage_start = time.time()
 
             result = runner.run(context)
@@ -138,8 +138,8 @@ def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
                 try:
                     import pandas as pd
 
-                    from dagspaces.common.orchestrator import _safe_log_table
-                    _safe_log_table(logger, pd.read_parquet(_ds), f"{node.stage}/results")
+                    from dagspaces.common.orchestrator import safe_log_table
+                    safe_log_table(logger, pd.read_parquet(_ds), f"{node.stage}/results")
                 except Exception as te:
                     print(f"Warning: failed to log output table for {node.key}: {te}", flush=True)
             try:
@@ -222,8 +222,8 @@ def run_experiment(cfg: DictConfig) -> None:
                 runner = stage_registry.get(node.stage)
                 if runner is None:
                     raise ValueError(f"No runner registered for stage '{node.stage}' (node '{node.key}')")
-                inputs = _node_inputs(node, registry)
-                output_paths = _node_output_paths(node, registry, output_root)
+                inputs = node_inputs(node, registry)
+                output_paths = node_output_paths(node, registry, output_root)
                 output_dir = common_parent(output_paths.values())
                 if not output_dir:
                     output_dir = os.path.join(output_root, node.key)
@@ -241,9 +241,9 @@ def run_experiment(cfg: DictConfig) -> None:
                 node_start = time.time()
 
                 if node.launcher:
-                    _print_status({"node": node.key, "stage": node.stage, "status": "submitting", "launcher": node.launcher, "inputs": inputs})
+                    print_status({"node": node.key, "stage": node.stage, "status": "submitting", "launcher": node.launcher, "inputs": inputs})
                     try:
-                        launcher_cfg = _load_launcher_config(cfg, node.launcher)
+                        launcher_cfg = load_launcher_config(cfg, node.launcher)
                     except ValueError as e:
                         raise ValueError(f"Could not load launcher config '{node.launcher}' for node '{node.key}': {e}") from e
 
@@ -262,12 +262,12 @@ def run_experiment(cfg: DictConfig) -> None:
                     log_folder = os.path.abspath(log_folder)
                     os.makedirs(log_folder, exist_ok=True)
                     job_name = f"GRPO-{node.key}"
-                    executor = _create_submitit_executor(launcher_cfg, job_name, log_folder)
+                    executor = create_submitit_executor(launcher_cfg, job_name, log_folder)
 
                     if parent_group:
                         try:
                             # Re-add the TRAWLER_DRIVER_VENV export that
-                            # _create_submitit_executor prepends (so
+                            # create_submitit_executor prepends (so
                             # activate_stage_venv.sh can match the node-local
                             # /scratch venv mirror). update_parameters(slurm_setup=)
                             # below *replaces* the executor's setup, so rebuilding
@@ -309,7 +309,7 @@ def run_experiment(cfg: DictConfig) -> None:
                         "output_root": output_root,
                     }
 
-                    job = _submit_slurm_job(executor, execute_stage_job, context_data, node.key, node.launcher)
+                    job = submit_slurm_job(executor, execute_stage_job, context_data, node.key, node.launcher)
 
                     try:
                         job_result = job.result()
@@ -339,7 +339,7 @@ def run_experiment(cfg: DictConfig) -> None:
                                     break
                             break
                         if not _resolved:
-                            _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": str(exc)})
+                            print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": str(exc)})
                             raise
 
                     # Submitit may return (outcome, payload) tuple or the payload directly
@@ -362,14 +362,14 @@ def run_experiment(cfg: DictConfig) -> None:
                             f"result type {type(job_result).__name__}: {str(job_result)[:500]}"
                         )
                 else:
-                    _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})
+                    print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})
                     try:
                         _GPU_STAGES = {"sft_training", "grpo_training", "reward_prep", "norm_universe"}
                         if node.stage in _GPU_STAGES:
-                            _sanitize_cuda_visible_devices(reason=f"node:{node.key}", env_prefix=_GPU_SANITIZE_PREFIX, cfg=node_cfg)
+                            sanitize_cuda_visible_devices(reason=f"node:{node.key}", env_prefix=_GPU_SANITIZE_PREFIX, cfg=node_cfg)
                         result = runner.run(context)
                     except Exception as exc:
-                        _print_status({"node": node.key, "stage": node.stage, "status": "failed", "error": str(exc)})
+                        print_status({"node": node.key, "stage": node.stage, "status": "failed", "error": str(exc)})
                         raise
 
                 registry.register_outputs(node.key, result.outputs)
@@ -381,7 +381,7 @@ def run_experiment(cfg: DictConfig) -> None:
                     "metadata": result.metadata,
                     "duration_s": duration,
                 }
-                _print_status({
+                print_status({
                     "node": node.key,
                     "stage": node.stage,
                     "status": "completed",
@@ -416,7 +416,7 @@ def run_experiment(cfg: DictConfig) -> None:
                 "orchestrator/nodes_completed": len(manifest["nodes"]),
             })
 
-            _print_status({
+            print_status({
                 "pipeline": {
                     "output_root": output_root,
                     "nodes": ordered_nodes,

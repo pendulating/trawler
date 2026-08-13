@@ -164,18 +164,18 @@ def launch_vllm_server(
         in ``/v1``), ``served_name``, ``address_file``.
     """
     from dagspaces.common.orchestrator import (
-        _create_submitit_executor,
-        _load_launcher_config,
-        _submit_slurm_job,
+        create_submitit_executor,
+        load_launcher_config,
+        submit_slurm_job,
     )
 
     port = int(server_cfg.get("port", 8000))
     launcher_name = str(server_cfg.get("launcher", "slurm_gpu_1x"))
     # Launcher yamls live under common/conf/hydra/launcher/; pass the
-    # eval_all local conf dir so _load_launcher_config's fallback kicks in.
+    # eval_all local conf dir so load_launcher_config's fallback kicks in.
     conf_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conf")
 
-    launcher_cfg = _load_launcher_config(
+    launcher_cfg = load_launcher_config(
         cfg, launcher_name, config_dir=conf_dir,
     )
     # Orphan guard: cleanup is atexit/SIGTERM-based, so a SIGKILLed monitor
@@ -262,12 +262,12 @@ def launch_vllm_server(
         "extra_args": list(server_cfg.get("extra_args", []) or []),
     }
 
-    executor = _create_submitit_executor(
+    executor = create_submitit_executor(
         launcher_cfg=launcher_cfg,
         job_name="vllm-server",
         log_folder=log_folder,
     )
-    job = _submit_slurm_job(
+    job = submit_slurm_job(
         executor=executor,
         execute_fn=_serve_entrypoint,
         context_data=args,

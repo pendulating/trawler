@@ -19,14 +19,14 @@ from dagspaces.common.orchestrator import (
     ArtifactRegistry,
     StageExecutionContext,
     StageResult,
-    _create_submitit_executor,
-    _node_inputs,
-    _node_output_paths,
-    _NoOpLogger,
-    _print_status,
-    _safe_log_table,
-    _sanitize_cuda_visible_devices,
-    _submit_slurm_job,
+    create_submitit_executor,
+    node_inputs,
+    node_output_paths,
+    NoOpLogger,
+    print_status,
+    safe_log_table,
+    sanitize_cuda_visible_devices,
+    submit_slurm_job,
     build_run_config,
     common_parent,
     prepare_node_config,
@@ -47,15 +47,15 @@ _CONF_DIR = os.path.join(os.path.dirname(__file__), "conf")
 _GPU_SANITIZE_PREFIX = "HISTORICAL_NORMS"
 
 
-def _inject_prompt_from_file(cfg: DictConfig, prompt_filename: str) -> None:
+def inject_prompt_from_file(cfg: DictConfig, prompt_filename: str) -> None:
     """Inject prompt from YAML file into cfg.prompt."""
-    from dagspaces.common.orchestrator import _inject_prompt_from_file as _common_inject
+    from dagspaces.common.orchestrator import inject_prompt_from_file as _common_inject
     _common_inject(cfg, prompt_filename, config_dir=_CONF_DIR)
 
 
-def _load_launcher_config(cfg: DictConfig, launcher_name: str) -> DictConfig | None:
+def load_launcher_config(cfg: DictConfig, launcher_name: str) -> DictConfig | None:
     """Load a launcher configuration using this dagspace's conf/ directory."""
-    from dagspaces.common.orchestrator import _load_launcher_config as _common_load
+    from dagspaces.common.orchestrator import load_launcher_config as _common_load
     return _common_load(cfg, launcher_name, config_dir=_CONF_DIR)
 
 
@@ -68,7 +68,7 @@ def _get_wandb_logger(cfg: DictConfig, stage: str, run_id: str | None = None, ru
     if wb_config.enabled:
         return WandbLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
     else:
-        return _NoOpLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
+        return NoOpLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
 
 
 # StageRunner base class moved to .runners.base
@@ -124,7 +124,7 @@ def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
     if runner is None:
         raise ValueError(f"No runner registered for stage '{node.stage}' (node '{node.key}')")
 
-    _sanitize_cuda_visible_devices(reason=f"job:{node.key}", env_prefix=_GPU_SANITIZE_PREFIX, cfg=cfg)
+    sanitize_cuda_visible_devices(reason=f"job:{node.key}", env_prefix=_GPU_SANITIZE_PREFIX, cfg=cfg)
     
     # Execute stage with wandb logging context
     wandb_run_id = node.wandb_suffix or node.key
@@ -136,7 +136,7 @@ def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
             context.logger = logger
             
             # Execute the stage
-            _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": context.inputs})
+            print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": context.inputs})
             stage_start = time.time()
             
             result = runner.run(context)
@@ -175,7 +175,7 @@ def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
                             if extra in df_out.columns and extra not in prefer_cols:
                                 prefer_cols.append(extra)
                     
-                    _safe_log_table(logger, df_out, f"{node.stage}/results", prefer_cols=prefer_cols)
+                    safe_log_table(logger, df_out, f"{node.stage}/results", prefer_cols=prefer_cols)
 
                     # Quality scalars (data_quality/*): parse-error rates,
                     # label distributions, chunk-length stats — auditable
@@ -276,8 +276,8 @@ def run_experiment(cfg: DictConfig) -> None:
                 runner = stage_registry.get(node.stage)
                 if runner is None:
                     raise ValueError(f"No runner registered for stage '{node.stage}' (node '{node.key}')")
-                inputs = _node_inputs(node, registry)
-                output_paths = _node_output_paths(node, registry, output_root)
+                inputs = node_inputs(node, registry)
+                output_paths = node_output_paths(node, registry, output_root)
                 output_dir = common_parent(output_paths.values())
                 if not output_dir:
                     output_dir = os.path.join(output_root, node.key)
@@ -296,9 +296,9 @@ def run_experiment(cfg: DictConfig) -> None:
                 
                 # Check if this node should be launched as a separate SLURM job
                 if node.launcher:
-                    _print_status({"node": node.key, "stage": node.stage, "status": "submitting", "launcher": node.launcher, "inputs": inputs})
+                    print_status({"node": node.key, "stage": node.stage, "status": "submitting", "launcher": node.launcher, "inputs": inputs})
                     try:
-                        launcher_cfg = _load_launcher_config(cfg, node.launcher)
+                        launcher_cfg = load_launcher_config(cfg, node.launcher)
                     except ValueError as e:
                         raise ValueError(f"Could not load launcher config '{node.launcher}' for node '{node.key}': {e}") from e
                     
@@ -311,19 +311,19 @@ def run_experiment(cfg: DictConfig) -> None:
                         if hydra_cfg and hydra_cfg.runtime and hydra_cfg.runtime.output_dir:
                             hydra_output_dir = hydra_cfg.runtime.output_dir
                             log_folder = os.path.join(hydra_output_dir, ".slurm_jobs", node.key)
-                            _print_status({"debug": "using_hydra_output_dir", "log_folder": log_folder})
+                            print_status({"debug": "using_hydra_output_dir", "log_folder": log_folder})
                     except Exception as e:
-                        _print_status({"debug": "hydra_config_error", "error": str(e)})
+                        print_status({"debug": "hydra_config_error", "error": str(e)})
                     
                     # Priority 2: Fall back to output_root
                     if not log_folder:
                         log_folder = os.path.join(output_root, ".slurm_jobs", node.key)
-                        _print_status({"debug": "using_output_root_fallback", "log_folder": log_folder, "output_root": output_root})
+                        print_status({"debug": "using_output_root_fallback", "log_folder": log_folder, "output_root": output_root})
                     
                     log_folder = os.path.abspath(log_folder)
                     os.makedirs(log_folder, exist_ok=True)
                     job_name = f"HNORMS-{node.key}"
-                    executor = _create_submitit_executor(launcher_cfg, job_name, log_folder)
+                    executor = create_submitit_executor(launcher_cfg, job_name, log_folder)
                     
                     # Ensure child job uses parent's W&B group for proper grouping
                     # Submitit doesn't auto-inherit env vars, so we need to explicitly set them
@@ -332,7 +332,7 @@ def run_experiment(cfg: DictConfig) -> None:
                         # This ensures it's available in the SLURM job's environment
                         try:
                             # Get current setup commands and prepend WANDB_GROUP export.
-                            # NB: _create_submitit_executor() prepends
+                            # NB: create_submitit_executor() prepends
                             # `export TRAWLER_DRIVER_VENV={sys.prefix}` so the launcher's
                             # activate_stage_venv.sh can match the node-local /scratch venv
                             # mirror. update_parameters(slurm_setup=...) below *replaces*
@@ -354,9 +354,9 @@ def run_experiment(cfg: DictConfig) -> None:
                             if wandb_group_export not in current_setup:
                                 current_setup.insert(insert_idx, wandb_group_export)
                                 executor.update_parameters(slurm_setup=current_setup)
-                                _print_status({"debug": "injected_wandb_group", "group": parent_group, "node": node.key})
+                                print_status({"debug": "injected_wandb_group", "group": parent_group, "node": node.key})
                         except Exception as e:
-                            _print_status({"debug": "failed_to_inject_wandb_group", "error": str(e)})
+                            print_status({"debug": "failed_to_inject_wandb_group", "error": str(e)})
                     
                     # Prepare serializable context data
                     context_data = {
@@ -381,7 +381,7 @@ def run_experiment(cfg: DictConfig) -> None:
                     }
                     
                     # Submit the job
-                    job = _submit_slurm_job(executor, execute_stage_job, context_data, node.key, node.launcher)
+                    job = submit_slurm_job(executor, execute_stage_job, context_data, node.key, node.launcher)
                     
                     # Wait for the job to complete
                     try:
@@ -394,7 +394,7 @@ def run_experiment(cfg: DictConfig) -> None:
                             import subprocess
                             check = subprocess.run(["squeue", "-j", str(job.job_id), "-h", "-o", "%t"], capture_output=True, text=True)
                             if check.stdout.strip() in ("R", "PD", "CG"):
-                                _print_status({"debug": "job_misreported_as_failed", "job_id": job.job_id, "state": check.stdout.strip()})
+                                print_status({"debug": "job_misreported_as_failed", "job_id": job.job_id, "state": check.stdout.strip()})
                                 # Fallback to manual wait
                                 while True:
                                     time.sleep(30)
@@ -410,13 +410,13 @@ def run_experiment(cfg: DictConfig) -> None:
                                         _outcome, _result = pickle.load(f)
                                         job_result = _result
                                 else:
-                                    _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": str(exc)})
+                                    print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": str(exc)})
                                     raise
                             else:
-                                _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": str(exc)})
+                                print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": str(exc)})
                                 raise
                         except Exception as inner_exc:
-                            _print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": f"{exc} (inner: {inner_exc})"})
+                            print_status({"node": node.key, "stage": node.stage, "status": "failed", "job_id": job.job_id, "error": f"{exc} (inner: {inner_exc})"})
                             raise
 
                     # Submitit may return (outcome, payload) tuple or the payload directly
@@ -432,12 +432,12 @@ def run_experiment(cfg: DictConfig) -> None:
                     )
                 else:
                     # Run locally in the current process
-                    _print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})
+                    print_status({"node": node.key, "stage": node.stage, "status": "running", "inputs": inputs})
                     try:
-                        _sanitize_cuda_visible_devices(reason=f"node:{node.key}", env_prefix=_GPU_SANITIZE_PREFIX, cfg=node_cfg)
+                        sanitize_cuda_visible_devices(reason=f"node:{node.key}", env_prefix=_GPU_SANITIZE_PREFIX, cfg=node_cfg)
                         result = runner.run(context)
                     except Exception as exc:
-                        _print_status({"node": node.key, "stage": node.stage, "status": "failed", "error": str(exc)})
+                        print_status({"node": node.key, "stage": node.stage, "status": "failed", "error": str(exc)})
                         raise
                 
                 registry.register_outputs(node.key, result.outputs)
@@ -449,7 +449,7 @@ def run_experiment(cfg: DictConfig) -> None:
                     "metadata": result.metadata,
                     "duration_s": duration,
                 }
-                _print_status({
+                print_status({
                     "node": node.key,
                     "stage": node.stage,
                     "status": "completed",
@@ -485,7 +485,7 @@ def run_experiment(cfg: DictConfig) -> None:
                 "orchestrator/nodes_completed": len(manifest["nodes"]),
             })
             
-            _print_status({
+            print_status({
                 "pipeline": {
                     "output_root": output_root,
                     "nodes": ordered_nodes,

@@ -214,7 +214,7 @@ class TestMakeWandbLogger:
     def test_disabled_returns_noop(self, monkeypatch):
         hooks, _ = _install_fake_dagspace(monkeypatch, enabled=False)
         logger = make_wandb_logger(OmegaConf.create({}), hooks, stage="x")
-        assert isinstance(logger, orch._NoOpLogger)
+        assert isinstance(logger, orch.NoOpLogger)
 
     def test_wandb_dagspace_callable_honored(self, monkeypatch):
         hooks, _ = _install_fake_dagspace(monkeypatch, enabled=False)

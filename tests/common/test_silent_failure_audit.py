@@ -43,13 +43,13 @@ class _ExplodingReport:
 
 
 # --------------------------------------------------------------------------
-# 1. _NoOpLogger.log_sanity_report
+# 1. NoOpLogger.log_sanity_report
 # --------------------------------------------------------------------------
 
 def test_noop_logger_reports_a_broken_sanity_report(capsys):
-    from dagspaces.common.orchestrator import _NoOpLogger
+    from dagspaces.common.orchestrator import NoOpLogger
 
-    logger = _NoOpLogger(SimpleNamespace(), stage="parse_responses")
+    logger = NoOpLogger(SimpleNamespace(), stage="parse_responses")
     logger.log_sanity_report(_ExplodingReport())   # must NOT raise
 
     err = capsys.readouterr().err

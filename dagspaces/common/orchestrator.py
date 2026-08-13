@@ -40,6 +40,55 @@ except Exception:
 # ---------------------------------------------------------------------------
 
 
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+# Every name below is imported by at least one module outside this file, so it
+# is API whether or not it is spelled like one. Twelve of them carried a
+# leading underscore until 2026-08-12 while three dagspaces and the shared
+# runner base imported them anyway — a private marker that nothing honoured
+# tells a reader the wrong thing about what is safe to change.
+#
+# Anything NOT listed here is genuinely internal. Two such helpers
+# (``_mirror_stage_metrics``, ``_rebuild_node``) are reached only by tests,
+# which is a deliberate exception: a test may inspect internals.
+#
+# tests/common/test_orchestrator_api.py fails if production code imports a
+# private name from this module again.
+__all__ = [
+    # Pipeline dataclasses and context
+    "ArtifactRegistry",
+    "OrchestratorHooks",
+    "StageExecutionContext",
+    "StageResult",
+    # Entry points
+    "run_experiment",
+    "build_run_config",
+    "prepare_node_config",
+    # Stage I/O
+    "prepare_stage_input",
+    "save_stage_outputs",
+    "collect_outputs",
+    "node_inputs",
+    "node_output_paths",
+    "serialize_context_data",
+    # SLURM / submitit
+    "create_submitit_executor",
+    "load_launcher_config",
+    "submit_slurm_job",
+    "await_slurm_result",
+    "sanitize_cuda_visible_devices",
+    # Logging
+    "NoOpLogger",
+    "make_wandb_logger",
+    "safe_log_table",
+    "print_status",
+    # Misc helpers
+    "common_parent",
+    "inject_prompt_from_file",
+]
+
 @dataclass
 class StageExecutionContext:
     cfg: DictConfig
@@ -62,7 +111,7 @@ class StageResult:
 # ---------------------------------------------------------------------------
 
 
-class _NoOpLogger:
+class NoOpLogger:
     """No-op logger that matches WandbLogger interface when wandb is disabled."""
 
     def __init__(
@@ -139,7 +188,7 @@ class _NoOpLogger:
                 flush=True,
             )
 
-    def __enter__(self) -> _NoOpLogger:
+    def __enter__(self) -> NoOpLogger:
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
@@ -342,7 +391,7 @@ def _resolve_checkpoint_name(cfg: DictConfig) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _inject_prompt_from_file(
+def inject_prompt_from_file(
     cfg: DictConfig, prompt_filename: str, config_dir: str
 ) -> None:
     """Inject prompt from YAML file into ``cfg.prompt``.
@@ -370,7 +419,7 @@ def _inject_prompt_from_file(
         )
 
 
-def _load_launcher_config(
+def load_launcher_config(
     cfg: DictConfig, launcher_name: str, config_dir: str
 ) -> DictConfig | None:
     """Load a launcher configuration from Hydra config.
@@ -595,7 +644,7 @@ def _clean_df_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _save_stage_outputs(out: pd.DataFrame, output_paths: dict[str, str]) -> None:
+def save_stage_outputs(out: pd.DataFrame, output_paths: dict[str, str]) -> None:
     """Save DataFrame outputs to disk with parquet primary, CSV/pickle fallback."""
     if isinstance(out, pd.DataFrame):
         for _output_name, output_path in output_paths.items():
@@ -623,7 +672,7 @@ def _save_stage_outputs(out: pd.DataFrame, output_paths: dict[str, str]) -> None
                         raise parquet_err  # Re-raise original error
 
 
-def _safe_log_table(
+def safe_log_table(
     logger: Any | None,
     df: pd.DataFrame,
     key: str,
@@ -638,7 +687,7 @@ def _safe_log_table(
             print(f"Warning: Failed to log {key} to wandb: {e}", flush=True)
 
 
-def _collect_outputs(
+def collect_outputs(
     context: StageExecutionContext, optional: Mapping[str, bool]
 ) -> dict[str, str]:
     resolved: dict[str, str] = {}
@@ -646,7 +695,7 @@ def _collect_outputs(
         if os.path.exists(path):
             resolved[key] = path
         else:
-            # Check fallback extensions written by _save_stage_outputs
+            # Check fallback extensions written by save_stage_outputs
             found = False
             for alt_ext in (".csv", ".pkl"):
                 alt_path = (
@@ -680,7 +729,7 @@ def _node_optional_outputs(node: PipelineNodeSpec) -> dict[str, bool]:
     return {name: spec.optional for name, spec in node.outputs.items()}
 
 
-def _node_output_paths(
+def node_output_paths(
     node: PipelineNodeSpec, registry: ArtifactRegistry, output_root: str
 ) -> dict[str, str]:
     resolved: dict[str, str] = {}
@@ -692,7 +741,7 @@ def _node_output_paths(
     return resolved
 
 
-def _node_inputs(
+def node_inputs(
     node: PipelineNodeSpec, registry: ArtifactRegistry
 ) -> dict[str, str]:
     resolved: dict[str, str] = {}
@@ -739,7 +788,7 @@ class ArtifactRegistry:
 # ---------------------------------------------------------------------------
 
 
-def _print_status(payload: dict[str, Any]) -> None:
+def print_status(payload: dict[str, Any]) -> None:
     try:
         print(json.dumps(payload, indent=2))
     except Exception:
@@ -896,12 +945,12 @@ def _log_gpu_environment(reason: str, env_prefix: str = "UAIR") -> None:
                 payload["tensor_parallel_size"] = int(tp_env)
             except Exception:
                 payload["tensor_parallel_size"] = tp_env
-        _print_status({"gpu_env": payload})
+        print_status({"gpu_env": payload})
     except Exception as exc:
         print(f"[orchestrator] WARNING: GPU env logging failed: {exc}", flush=True)
 
 
-def _sanitize_cuda_visible_devices(
+def sanitize_cuda_visible_devices(
     reason: str = "",
     env_prefix: str = "UAIR",
     cfg: DictConfig | None = None,
@@ -954,7 +1003,7 @@ def _sanitize_cuda_visible_devices(
         os.environ[f"{env_prefix}_GPU_SANITIZE_TS"] = str(int(time.time()))
         os.environ.pop(f"{env_prefix}_GPU_SANITIZE_ORIGINAL", None)
         os.environ.pop(f"{env_prefix}_SANITIZED_DROPPED_GPUS", None)
-        _print_status(
+        print_status(
             {
                 "gpu_sanitize": {
                     "reason": reason or "stage_start",
@@ -970,7 +1019,7 @@ def _sanitize_cuda_visible_devices(
                 "stdout": details.get("stdout"),
                 "stderr": details.get("stderr"),
             }
-        _print_status({"gpu_sanitize_failures": failure_summary})
+        print_status({"gpu_sanitize_failures": failure_summary})
         raise RuntimeError(
             "GPU sanitize failed for every visible device before stage startup. "
             f"reason={reason or 'stage_start'} visible={normalized}. "
@@ -1009,7 +1058,7 @@ def _sanitize_cuda_visible_devices(
                 flush=True,
             )
 
-    _print_status(
+    print_status(
         {
             "gpu_sanitize": {
                 "reason": reason or "stage_start",
@@ -1048,7 +1097,7 @@ def _clean_slurm_env():  # type: ignore[return]
         os.environ.update(slurm_vars)
 
 
-def _create_submitit_executor(
+def create_submitit_executor(
     launcher_cfg: DictConfig,
     job_name: str,
     log_folder: str,
@@ -1155,7 +1204,7 @@ def _create_submitit_executor(
     return executor
 
 
-def _submit_slurm_job(
+def submit_slurm_job(
     executor,
     execute_fn,
     context_data: dict[str, Any],
@@ -1172,7 +1221,7 @@ def _submit_slurm_job(
         with _clean_slurm_env():
             job = executor.submit(execute_fn, context_data)
     except Exception as e:
-        _print_status(
+        print_status(
             {
                 "node": node_key,
                 "status": "submission_failed",
@@ -1183,7 +1232,7 @@ def _submit_slurm_job(
         raise RuntimeError(
             f"SLURM submission failed for '{node_key}' (launcher={launcher_name}): {e}"
         ) from e
-    _print_status({"node": node_key, "status": "submitted", "job_id": job.job_id})
+    print_status({"node": node_key, "status": "submitted", "job_id": job.job_id})
     return job
 
 
@@ -1308,7 +1357,7 @@ def make_wandb_logger(
             wandb_id=pipeline_id,
             resume="allow" if pipeline_id else None,
         )
-    return _NoOpLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
+    return NoOpLogger(cfg, stage=stage, run_id=run_id, run_config=run_config)
 
 
 def serialize_context_data(
@@ -1393,7 +1442,7 @@ def await_slurm_result(job: Any, cfg: DictConfig, node_key: str) -> StageResult:
             wait_s = int(
                 OmegaConf.select(cfg, "runtime.submitit_result_wait_s", default=300)
             )
-            _print_status(
+            print_status(
                 {
                     "debug": "waiting_for_result_pickle",
                     "job_id": job.job_id,
@@ -1408,7 +1457,7 @@ def await_slurm_result(job: Any, cfg: DictConfig, node_key: str) -> StageResult:
                 with open(result_path, "rb") as f:
                     _outcome, _result = pickle.load(f)
                 job_result = _result
-                _print_status(
+                print_status(
                     {"debug": "recovered_result_after_wait", "job_id": job.job_id}
                 )
 
@@ -1422,7 +1471,7 @@ def await_slurm_result(job: Any, cfg: DictConfig, node_key: str) -> StageResult:
                 )
                 state = check.stdout.strip()
                 if state in ("R", "PD", "CG"):
-                    _print_status(
+                    print_status(
                         {
                             "debug": "job_still_running_in_squeue",
                             "job_id": job.job_id,
@@ -1451,14 +1500,14 @@ def await_slurm_result(job: Any, cfg: DictConfig, node_key: str) -> StageResult:
                     with open(result_path, "rb") as f:
                         _outcome, _result = pickle.load(f)
                     job_result = _result
-                    _print_status(
+                    print_status(
                         {
                             "debug": "recovered_result_after_squeue_wait",
                             "job_id": job.job_id,
                         }
                     )
             except Exception as inner_exc:
-                _print_status(
+                print_status(
                     {
                         "debug": "squeue_fallback_failed",
                         "job_id": job.job_id,
@@ -1467,7 +1516,7 @@ def await_slurm_result(job: Any, cfg: DictConfig, node_key: str) -> StageResult:
                 )
 
         if job_result is None:
-            _print_status(
+            print_status(
                 {
                     "node": node_key,
                     "status": "failed",
@@ -1536,7 +1585,7 @@ def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
         cfg, hooks, stage=node.stage, run_id=wandb_run_id, run_config=run_config
     ) as logger:
         context.logger = logger
-        _print_status(
+        print_status(
             {
                 "node": node.key,
                 "stage": node.stage,
@@ -1551,7 +1600,7 @@ def execute_stage_job(context_data: dict[str, Any]) -> dict[str, Any]:
         if result.outputs and "dataset" in result.outputs:
             try:
                 df_out = pd.read_parquet(result.outputs["dataset"])
-                _safe_log_table(logger, df_out, f"{node.stage}/results")
+                safe_log_table(logger, df_out, f"{node.stage}/results")
             except Exception as e:
                 print(
                     f"Warning: Failed to log output table for {node.key}: {e}",
@@ -1616,8 +1665,8 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                         f"No runner registered for stage '{node.stage}' (node '{node.key}')"
                     )
 
-                inputs = _node_inputs(node, registry)
-                output_paths = _node_output_paths(node, registry, output_root)
+                inputs = node_inputs(node, registry)
+                output_paths = node_output_paths(node, registry, output_root)
                 output_dir = common_parent(output_paths.values())
                 if not output_dir:
                     output_dir = os.path.join(output_root, node.key)
@@ -1636,7 +1685,7 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                 node_start = time.time()
 
                 if node.launcher and _SUBMITIT_AVAILABLE:
-                    _print_status(
+                    print_status(
                         {
                             "node": node.key,
                             "stage": node.stage,
@@ -1645,7 +1694,7 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                         }
                     )
 
-                    launcher_cfg = _load_launcher_config(
+                    launcher_cfg = load_launcher_config(
                         cfg, node.launcher, config_dir=hooks.config_dir
                     )
 
@@ -1653,7 +1702,7 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                     log_folder = os.path.join(log_base, ".slurm_jobs", node.key)
                     os.makedirs(log_folder, exist_ok=True)
 
-                    executor = _create_submitit_executor(
+                    executor = create_submitit_executor(
                         launcher_cfg,
                         f"{hooks.job_prefix}-{node.key}",
                         log_folder,
@@ -1669,7 +1718,7 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                         hooks.dagspace_module,
                     )
 
-                    job = _submit_slurm_job(
+                    job = submit_slurm_job(
                         executor,
                         execute_stage_job,
                         context_data,
@@ -1678,7 +1727,7 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                     )
                     result = await_slurm_result(job, cfg, node.key)
                 else:
-                    _print_status(
+                    print_status(
                         {
                             "node": node.key,
                             "stage": node.stage,
@@ -1689,7 +1738,7 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                     try:
                         result = runner.run(context)
                     except Exception as exc:
-                        _print_status(
+                        print_status(
                             {
                                 "node": node.key,
                                 "stage": node.stage,
@@ -1713,7 +1762,7 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                     "metadata": result.metadata,
                     "duration_s": round(duration, 3),
                 }
-                _print_status(
+                print_status(
                     {
                         "node": node.key,
                         "stage": node.stage,
@@ -1734,7 +1783,7 @@ def run_experiment(cfg: DictConfig, hooks: OrchestratorHooks) -> None:
                 )
 
             total_duration = time.time() - pipeline_start
-            _print_status(
+            print_status(
                 {
                     "pipeline": {
                         "output_root": output_root,
