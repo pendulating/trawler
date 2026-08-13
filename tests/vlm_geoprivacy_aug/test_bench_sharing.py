@@ -11,9 +11,9 @@ this dagspace:
   character in {A, B, C, D}, which is the ``a`` of "answer" in any verbose
   completion, so the row got the abstention class. A completion with no such
   character got the default ``D``, a real class.
-* 2026-07-18 — ``build_gemma4_prompt``. Without it a gemma-4 run fell to the
-  gemma-3 builder, which corrupts the gemma-4 system prompt and raises
-  nothing.
+* 2026-07-18 — ``build_gemma4_prompt``. Without it, and without a "gemma-4"
+  registry key, get_prompt_builder raised "Unknown model_family 'gemma-4'":
+  gemma-4 could not run on this dagspace at all.
 * 2026-07-21 — the accuracy denominator, from the parity review.
 
 Each test below fails if somebody replaces a shared module with a copy again.
@@ -84,11 +84,17 @@ def test_aug_reexports_bench_objects(aug_mod, bench_mod, names):
 
 
 def test_gemma4_builder_is_reachable_from_aug():
-    """gemma-4 must NOT fall through to the gemma-3 builder.
+    """gemma-4 must resolve to its OWN builder.
 
-    The gemma-3 builder passes a list-valued system message. Gemma4Processor
-    renders that list as its Python repr, so the system prompt is corrupt and
-    nothing raises. This was the state of vlm_geoprivacy_aug until 2026-08-12.
+    Until 2026-08-12 this dagspace had no "gemma-4" key at all, and
+    get_prompt_builder RAISES on an unknown family rather than substituting
+    another builder, so gemma-4 simply could not run here.
+
+    The second assertion guards the separate hazard that motivated a distinct
+    builder: the gemma-3 one passes a list-valued system message, which
+    Gemma4Processor renders as a Python repr instead of text — corrupt, and
+    with no error. Nothing routes gemma-4 there today; the assertion keeps it
+    that way.
     """
     from dagspaces.vlm_geoprivacy_aug.model_prompts import (
         build_gemma3_prompt,

@@ -5,12 +5,21 @@ does NOT change how a prompt renders for a model family, so it uses the
 builders of ``vlm_geoprivacy_bench`` without a copy.
 
 Before 2026-08-12 this file was a copy. The copy fell behind: it had no
-``build_gemma4_prompt``, so a gemma-4 run went to the gemma-3 builder. That
-builder gives ``Gemma4Processor`` a list-valued system message, and the
-processor renders the list as its Python repr. The system prompt is then
-corrupt, and nothing raises an error. ``vlm_geoprivacy_bench`` corrected this
-on 2026-07-18. This dagspace never got the correction, because nobody knew
-that the file was a copy.
+``build_gemma4_prompt`` and no ``"gemma-4"`` key in ``PROMPT_BUILDERS``. The
+gemma-4 configs all declare ``model_family: gemma-4``, and
+``get_prompt_builder`` RAISES ``ValueError`` on an unknown family — it does
+not substitute another builder. So gemma-4 could not run on this dagspace at
+all; the stage stopped with "Unknown model_family 'gemma-4'".
+
+The failure was loud, not silent. It produced no wrong output, because it
+produced no output. ``vlm_geoprivacy_bench`` added the builder on 2026-07-18
+and this dagspace never got it, because nobody knew that the file was a copy.
+
+Read ``build_gemma4_prompt`` in the benchmark module for the separate reason
+that gemma-4 needs its OWN builder: the gemma-3 builder passes a list-valued
+system message, which Gemma4Processor renders as a Python repr rather than
+text. That is a reason not to REUSE the gemma-3 builder. It is not what
+happened here.
 """
 
 from __future__ import annotations
