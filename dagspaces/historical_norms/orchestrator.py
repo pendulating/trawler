@@ -461,8 +461,18 @@ def run_experiment(cfg: DictConfig) -> None:
             try:
                 with open(manifest_path, "w", encoding="utf-8") as fh:
                     json.dump(manifest, fh, indent=2)
-            except Exception:
-                pass
+            except Exception as e:
+                # Do NOT swallow silently. This file is the run's provenance
+                # record — every stage, its duration and its outputs. A run
+                # that finishes without one looks complete and is not
+                # reconstructable, and nothing else reports the loss.
+                print(
+                    f"[orchestrator] FAILED to write the pipeline manifest at "
+                    f"{manifest_path}; this run has no provenance record. "
+                    f"{type(e).__name__}: {e}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             total_duration = time.time() - pipeline_start
             
             # Log final pipeline metrics to wandb

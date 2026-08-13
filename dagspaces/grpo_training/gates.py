@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from typing import Any
 
 DEFAULT_THRESHOLDS: dict[str, float] = {
@@ -309,8 +310,19 @@ def check_promotion_gates(
             n_no_flow = meta.get("n_no_flow_chunks")
             if n_flow is not None and n_no_flow is not None and (n_flow + n_no_flow) > 0:
                 gold_base_rate = n_no_flow / (n_flow + n_no_flow)
-        except Exception:
-            pass
+        except Exception as e:
+            # Do NOT swallow silently. gold_base_rate stays None, and
+            # _gate_no_flow then returns status="skipped". A silently skipped
+            # promotion gate is a known failure mode in this file — see the
+            # comment in _gate_no_flow about the gate being DEAD on every
+            # modular run until 2026-07-28. The verdict must say WHY.
+            print(
+                f"[gates] could not read n_flow_chunks / n_no_flow_chunks from "
+                f"{meta_path}, so the no-flow gate will SKIP: "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     # Trend gate: use the held-out dev-split curve when it has enough
     # points; fall back to the training-batch reward otherwise (runs with

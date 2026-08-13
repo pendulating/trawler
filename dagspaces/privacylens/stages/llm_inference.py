@@ -61,19 +61,20 @@ def run_qa_probe_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
 
     sp_base = dict(OmegaConf.to_container(cfg.sampling_params, resolve=True))
 
-    # Reasoning models (enable_thinking=false + think-block stripping) burn
-    # tokens on <think> blocks before producing the answer.  512 is too low —
-    # the model hits the limit mid-reasoning and the stripped output is empty.
-    _strips_thinking = False
-    try:
-        ctk = getattr(cfg.model, "chat_template_kwargs", None) or {}
-        if hasattr(ctk, "enable_thinking"):
-            _strips_thinking = not bool(ctk.enable_thinking)
-        elif isinstance(ctk, dict):
-            _strips_thinking = not bool(ctk.get("enable_thinking", True))
-    except Exception:
-        pass
-    qa_max_tokens = 4096 if _strips_thinking else sp_base.get("max_tokens", 2048)
+    # Reasoning models burn tokens on hidden chain-of-thought before the
+    # answer; too small a budget means the model hits the limit mid-reasoning
+    # and the stripped output is empty.
+    #
+    # This used a hand-rolled enable_thinking check while the action stage
+    # below (action_max_tokens) used model_needs_reasoning_budget — two rules
+    # in one file. The hand-rolled one misses models that reason
+    # STRUCTURALLY (harmony, or a vLLM reasoning parser) with a bare
+    # `chat_template_kwargs: {}`, i.e. gpt-oss and openthinker3, so the QA
+    # probe under-budgeted exactly those two while the action stage did not.
+    qa_max_tokens = (
+        4096 if model_needs_reasoning_budget(cfg.model)
+        else sp_base.get("max_tokens", 2048)
+    )
     sp_qa = dict(sp_base, max_tokens=qa_max_tokens)
 
     # Structured decoding for QA probing

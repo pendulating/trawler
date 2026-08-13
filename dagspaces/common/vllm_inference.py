@@ -119,6 +119,7 @@ from dagspaces.common.reasoning import (  # noqa: E402, F401
     _split_reasoning,
     _strip_think_blocks,
     model_needs_reasoning_budget,
+    strips_think_blocks,
 )
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ from dagspaces.common.vllm_inference import (
     filter_vllm_engine_kwargs,
     get_pcie_nccl_env_vars,
     get_vllm_runtime_env_vars,
+    strips_think_blocks,
 )
 
 logger = logging.getLogger(__name__)
@@ -241,15 +242,11 @@ def run_vlm_inference(
     llm = LLM(**engine_kwargs)
 
     # Determine whether to strip <think> blocks
-    _strip_thinking = False
-    try:
-        ctk = getattr(cfg.model, "chat_template_kwargs", None) or {}
-        if hasattr(ctk, "enable_thinking"):
-            _strip_thinking = not bool(ctk.enable_thinking)
-        elif isinstance(ctk, dict):
-            _strip_thinking = not bool(ctk.get("enable_thinking", True))
-    except Exception:
-        pass
+    # Whether vLLM strips <think> blocks — the enable_thinking question ONLY.
+    # Deliberately NOT model_needs_reasoning_budget: that one also fires for
+    # structurally-reasoning models, which is right for sizing a token budget
+    # and wrong for deciding whether to strip.
+    _strip_thinking = strips_think_blocks(cfg.model)
     if _strip_thinking:
         print(f"[{stage_name}] Thinking block stripping enabled (enable_thinking=false)")
 

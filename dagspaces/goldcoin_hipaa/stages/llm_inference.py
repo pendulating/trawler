@@ -10,7 +10,10 @@ from typing import Any
 import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 
-from dagspaces.common.vllm_inference import run_vllm_inference
+from dagspaces.common.vllm_inference import (
+    model_needs_reasoning_budget,
+    run_vllm_inference,
+)
 
 from ..prompts import build_prompt_for_row
 
@@ -26,20 +29,17 @@ def run_llm_inference(df: pd.DataFrame, cfg: DictConfig) -> pd.DataFrame:
     few_shot = bool(getattr(prompt_cfg, "few_shot", False))
 
     # Build sampling params dict.
-    # Reasoning models (enable_thinking=false + think-block stripping) burn
-    # tokens on <think> blocks before producing the answer.  Bump max_tokens
-    # to 2048 so the model can finish reasoning and emit the classification.
+    # Reasoning models spend tokens on hidden chain-of-thought before the
+    # answer. model_needs_reasoning_budget covers BOTH triggers: an explicit
+    # enable_thinking=false, AND a model that reasons structurally (a vLLM
+    # reasoning parser, or harmony). The hand-rolled check this replaced only
+    # had the first, so gpt-oss and openthinker3 — whose configs carry a bare
+    # `chat_template_kwargs: {}` — silently kept the small budget and
+    # truncated. Measured on the 2026-07-17 canonical instruct run, GoldCoin
+    # compliance: gpt-oss 24/107 rows hit finish_reason=length and 17 came
+    # back EMPTY; openthinker3 12/107.
     sp_dict = dict(OmegaConf.to_container(cfg.sampling_params, resolve=True))
-    _strips_thinking = False
-    try:
-        ctk = getattr(cfg.model, "chat_template_kwargs", None) or {}
-        if hasattr(ctk, "enable_thinking"):
-            _strips_thinking = not bool(ctk.enable_thinking)
-        elif isinstance(ctk, dict):
-            _strips_thinking = not bool(ctk.get("enable_thinking", True))
-    except Exception:
-        pass
-    if _strips_thinking:
+    if model_needs_reasoning_budget(cfg.model):
         sp_dict["max_tokens"] = max(sp_dict.get("max_tokens", 1024), 4096)
 
     # Structured decoding: enforce JSON schema for deterministic parsing

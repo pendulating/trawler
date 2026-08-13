@@ -26,6 +26,7 @@ model_needs_reasoning_budget(model_cfg)
 from __future__ import annotations
 
 import re
+import sys
 from typing import Any
 
 
@@ -88,6 +89,15 @@ _HARMONY_WARNED = False
 # Reasoning parsers that already reported a fallback. `_split_reasoning`
 # runs per completion, so each parser warns one time per process.
 _PARSER_FALLBACK_WARNED: set[str] = set()
+
+# Reported one time per process: see strips_think_blocks().
+_STRIP_PREDICATE_WARNED = False
+
+
+def _mark_strip_predicate_warned() -> None:
+    global _STRIP_PREDICATE_WARNED
+    _STRIP_PREDICATE_WARNED = True
+
 
 
 def _split_harmony(text: str) -> tuple[str, str] | None:
@@ -161,6 +171,48 @@ def _detect_reasoning_parser(model_source: str) -> str | None:
         return "qwen3"
     # Non-thinking families: Phi-4, Llama-3.x, Gemma-3, Qwen2.5, OpenThinker (custom tags → regex).
     return None
+
+
+def strips_think_blocks(model_cfg: Any) -> bool:
+    """True if vLLM will strip ``<think>`` blocks from this model's output.
+
+    This asks ONE question: is ``chat_template_kwargs.enable_thinking``
+    explicitly ``False``? vLLM strips the blocks in that mode, so a caller that
+    post-processes generated text must know.
+
+    Do NOT confuse this with :func:`model_needs_reasoning_budget`. That one
+    also returns True for a model that reasons STRUCTURALLY (a vLLM reasoning
+    parser, or harmony) regardless of ``enable_thinking``, because such a model
+    spends tokens on reasoning either way. Using this predicate to size a token
+    budget under-budgets exactly those models — which is the defect this
+    function was extracted to stop repeating.
+
+    Guarded by tests/common/test_reasoning_budget.py.
+    """
+    try:
+        ctk = getattr(model_cfg, "chat_template_kwargs", None)
+        if ctk is None and isinstance(model_cfg, dict):
+            ctk = model_cfg.get("chat_template_kwargs")
+        ctk = ctk or {}
+        if hasattr(ctk, "enable_thinking"):
+            return not bool(ctk.enable_thinking)
+        if isinstance(ctk, dict) and "enable_thinking" in ctk:
+            return not bool(ctk.get("enable_thinking"))
+    except Exception as e:
+        # Report and fall back to False. An unresolvable OmegaConf
+        # interpolation in enable_thinking would otherwise either crash the
+        # inference stage (if this raised) or silently disable think-block
+        # stripping (if this swallowed). Neither is acceptable unannounced.
+        if not _STRIP_PREDICATE_WARNED:
+            _mark_strip_predicate_warned()
+            print(
+                f"[reasoning] WARNING: could not read "
+                f"chat_template_kwargs.enable_thinking, so <think> blocks will "
+                f"NOT be stripped. {type(e).__name__}: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
+    return False
 
 
 def model_needs_reasoning_budget(model_cfg: Any) -> bool:
