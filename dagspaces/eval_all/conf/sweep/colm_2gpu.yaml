@@ -14,7 +14,11 @@ hydra:
     array_parallelism: 3
   sweeper:
     params:
+      # llama3.3-70b/instruct removed 2026-08-12: its model_source
+      # (/share/pierson/matt/zoo/Llama-3.3-70B-Instruct) was never
+      # downloaded, so the cell composed and then failed at load. None of the
+      # models in this sweep appears in the camera-ready table; it is a
+      # large-model exploration sweep, and it has no run directory.
       model: >-
         qwen3.5-27b/base,
-        qwen2.5-72b/instruct-awq,
-        llama3.3-70b/instruct
+        qwen2.5-72b/instruct-awq
