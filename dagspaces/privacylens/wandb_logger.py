@@ -1,114 +1,60 @@
-"""Wandb logger for the privacylens (PrivacyLens) dagspace.
+"""W&B logger for the privacylens dagspace.
 
-Thin wrapper around dagspaces.common.wandb_logger that supplies
-PrivacyLens-specific defaults:
+``extra_internal_columns`` holds nested dicts and numpy arrays of mixed shape
+(``seed``, ``vignette``, ``trajectory``, ``S``, ``V``, ``T``). W&B tables break
+on those.
 
-- project:                "privacylens-eval"
-- default_experiment_name: "privacylens"
-- full_column_stages:     qa_probe_inference / agent_action_inference /
-                          leakage_judge_inference / compute_metrics
-
-All public names are re-exported so that existing
-``from .wandb_logger import WandbLogger, WandbConfig`` imports continue to work.
-
-Tmpdir strategy: On import the module ensures TMPDIR points at a writable local
-path (/scratch or /tmp) rather than a /share network mount.
+Built by ``dagspaces/common/wandb_shim.py``; see that module for the two
+details a dagspace must keep here (the import-time ``ensure_local_tmpdir``
+call, and the ``pipeline_run_id`` re-export).
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-from dagspaces.common.wandb_logger import (
-    WandbConfig as _WandbConfigBase,
-)
-from dagspaces.common.wandb_logger import (
-    WandbLogger as _WandbLoggerBase,
-)
 from dagspaces.common.wandb_logger import (
     collect_compute_metadata,
     ensure_local_tmpdir,
     pipeline_run_id,  # re-export: common/orchestrator.make_wandb_logger calls wl.pipeline_run_id on this shim
 )
+from dagspaces.common.wandb_shim import make_wandb_shim
 
-# Set a suitable local TMPDIR at import time
 ensure_local_tmpdir("privacylens")
 
-# ---- PrivacyLens-specific defaults -----------------------------------------
-
-_PL_FULL_COLUMN_STAGES = frozenset(
-    {
-        "qa_probe_inference",
-        "agent_action_inference",
-        "leakage_judge_inference",
-        "compute_metrics",
-    }
+WandbConfig, WandbLogger = make_wandb_shim(
+    "privacylens",
+    default_project='privacylens-eval',
+    default_experiment_name='privacylens',
+    env_var_prefix='',
+    full_column_stages=frozenset(
+        {
+            'agent_action_inference',
+            'compute_metrics',
+            'leakage_judge_inference',
+            'qa_probe_inference',
+        }
+    ),
+    full_column_key_prefixes=frozenset(
+        {
+            'agent_action_inference/',
+            'compute_metrics/',
+            'leakage_judge_inference/',
+            'qa_probe_inference/',
+        }
+    ),
+    extra_internal_columns=frozenset(
+        {
+            'S',
+            'T',
+            'V',
+            'seed',
+            'trajectory',
+            'vignette',
+        }
+    ),
+    extra_pattern_prefixes=[],
+    extra_pattern_names=frozenset(),
+    extra_runtime_keys=[],
+    classify_variant_field=None,
 )
 
-_PL_FULL_COLUMN_KEY_PREFIXES = frozenset(
-    {
-        "qa_probe_inference/",
-        "agent_action_inference/",
-        "leakage_judge_inference/",
-        "compute_metrics/",
-    }
-)
-
-# Nested dicts/numpy arrays with heterogeneous shapes that break W&B tables
-_PL_EXTRA_INTERNAL_COLUMNS = frozenset(
-    {
-        "seed",
-        "vignette",
-        "trajectory",
-        "S",
-        "V",
-        "T",
-    }
-)
-
-
-class WandbConfig(_WandbConfigBase):
-    """WandbConfig with PrivacyLens defaults baked in."""
-
-    @classmethod
-    def from_hydra_config(cls, cfg, **kwargs) -> WandbConfig:  # type: ignore[override]
-        kwargs.setdefault("default_project", "privacylens-eval")
-        kwargs.setdefault("default_experiment_name", "privacylens")
-        kwargs.setdefault("env_var_prefix", "")
-        kwargs.setdefault("full_column_stages", _PL_FULL_COLUMN_STAGES)
-        kwargs.setdefault("full_column_key_prefixes", _PL_FULL_COLUMN_KEY_PREFIXES)
-        kwargs.setdefault("extra_internal_columns", _PL_EXTRA_INTERNAL_COLUMNS)
-        kwargs.setdefault("extra_pattern_prefixes", [])
-        kwargs.setdefault("extra_pattern_names", frozenset())
-        kwargs.setdefault("extra_runtime_keys", [])
-        kwargs.setdefault("classify_variant_field", None)
-        kwargs.setdefault("dagspace_name", "privacylens")
-        return super().from_hydra_config(cfg, **kwargs)
-
-
-class WandbLogger(_WandbLoggerBase):
-    """WandbLogger that auto-applies PrivacyLens WandbConfig defaults."""
-
-    def __init__(
-        self,
-        cfg,
-        stage: str,
-        run_id: str | None = None,
-        run_config: dict[str, Any] | None = None,
-        *,
-        wandb_id: str | None = None,
-        resume: str | None = None,
-    ) -> None:
-        super().__init__(
-            cfg, stage=stage, run_id=run_id, run_config=run_config,
-            wandb_id=wandb_id, resume=resume,
-        )
-        self.wb_config = WandbConfig.from_hydra_config(cfg)
-
-
-__all__ = [
-    "WandbConfig",
-    "WandbLogger",
-    "ensure_local_tmpdir",
-    "collect_compute_metadata",
-]
+__all__ = ["WandbConfig", "WandbLogger", "ensure_local_tmpdir", "collect_compute_metadata"]

@@ -1,134 +1,60 @@
-"""Wandb logger for the historical_norms dagspace.
+"""W&B logger for the historical_norms dagspace.
 
-Thin wrapper around dagspaces.common.wandb_logger that supplies
-historical_norms-specific defaults:
+``extra_internal_columns`` holds the two columns whose nested arrays vary in
+length per row (``reasoning_data`` carries a ``norms`` array, ``ci_flows_raw``
+carries CI flow objects). W&B tables cannot take those.
 
-- project:                "historical-norms-extraction"
-- env_var_prefix:         "HISTORICAL_NORMS"  (reads HISTORICAL_NORMS_GPU_SANITIZE_* etc.)
-- default_experiment_name: "historical_norms"
-- full_column_stages:     norm_reasoning / norm_extraction / norm_role_abstraction /
-                          ci_reasoning / ci_extraction / fetch_gutenberg
-- extra_internal_columns: reasoning_data, ci_flows_raw
-- extra_pattern_prefixes: (none — these columns are handled by extra_internal_columns)
-- extra_pattern_names:    (none)
-
-All public names are re-exported so that existing
-``from .wandb_logger import WandbLogger, WandbConfig`` imports continue to work
-without modification.
-
-Tmpdir strategy: On import the module ensures TMPDIR points at a writable local
-path (/scratch or /tmp) rather than a /share network mount, using the
-`ensure_local_tmpdir` helper from the common module.
+Built by ``dagspaces/common/wandb_shim.py``; see that module for the two
+details a dagspace must keep here (the import-time ``ensure_local_tmpdir``
+call, and the ``pipeline_run_id`` re-export).
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-from dagspaces.common.wandb_logger import (
-    WandbConfig as _WandbConfigBase,
-)
-from dagspaces.common.wandb_logger import (
-    WandbLogger as _WandbLoggerBase,
-)
 from dagspaces.common.wandb_logger import (
     collect_compute_metadata,
     ensure_local_tmpdir,
     pipeline_run_id,  # re-export: common/orchestrator.make_wandb_logger calls wl.pipeline_run_id on this shim
 )
+from dagspaces.common.wandb_shim import make_wandb_shim
 
-# Set a suitable local TMPDIR at import time (same side-effect as before)
 ensure_local_tmpdir("historical_norms")
 
-# ---- historical_norms-specific defaults ------------------------------------
-
-_HN_FULL_COLUMN_STAGES = frozenset(
-    {
-        "norm_reasoning",
-        "norm_extraction",
-        "norm_role_abstraction",
-        "ci_reasoning",
-        "ci_extraction",
-        "fetch_gutenberg",
-    }
+WandbConfig, WandbLogger = make_wandb_shim(
+    "historical_norms",
+    default_project='historical-norms-extraction',
+    default_experiment_name='historical_norms',
+    env_var_prefix='HISTORICAL_NORMS',
+    full_column_stages=frozenset(
+        {
+            'ci_extraction',
+            'ci_reasoning',
+            'fetch_gutenberg',
+            'norm_extraction',
+            'norm_reasoning',
+            'norm_role_abstraction',
+        }
+    ),
+    full_column_key_prefixes=frozenset(
+        {
+            'ci_extraction/',
+            'ci_reasoning/',
+            'fetch_gutenberg/',
+            'norm_extraction/',
+            'norm_reasoning/',
+            'norm_role_abstraction/',
+        }
+    ),
+    extra_internal_columns=frozenset(
+        {
+            'ci_flows_raw',
+            'reasoning_data',
+        }
+    ),
+    extra_pattern_prefixes=[],
+    extra_pattern_names=frozenset(),
+    extra_runtime_keys=[],
+    classify_variant_field=None,
 )
 
-_HN_FULL_COLUMN_KEY_PREFIXES = frozenset(
-    {
-        "norm_reasoning/",
-        "norm_extraction/",
-        "norm_role_abstraction/",
-        "ci_reasoning/",
-        "ci_extraction/",
-        "fetch_gutenberg/",
-    }
-)
-
-# Nested dicts/arrays that cause wandb schema issues
-_HN_EXTRA_INTERNAL_COLUMNS = frozenset(
-    {
-        "reasoning_data",  # contains nested 'norms' array with varying lengths
-        "ci_flows_raw",   # contains nested CI flow objects with varying lengths
-    }
-)
-
-
-class WandbConfig(_WandbConfigBase):
-    """WandbConfig with historical_norms defaults baked in.
-
-    Callers may still instantiate WandbConfig() directly and override any
-    field, or use WandbConfig.from_hydra_config() without extra arguments.
-    """
-
-    @classmethod
-    def from_hydra_config(cls, cfg, **kwargs) -> WandbConfig:  # type: ignore[override]
-        """Build a WandbConfig from a Hydra config with historical_norms defaults."""
-        kwargs.setdefault("default_project", "historical-norms-extraction")
-        kwargs.setdefault("default_experiment_name", "historical_norms")
-        kwargs.setdefault("env_var_prefix", "HISTORICAL_NORMS")
-        kwargs.setdefault("full_column_stages", _HN_FULL_COLUMN_STAGES)
-        kwargs.setdefault(
-            "full_column_key_prefixes", _HN_FULL_COLUMN_KEY_PREFIXES
-        )
-        kwargs.setdefault(
-            "extra_internal_columns", _HN_EXTRA_INTERNAL_COLUMNS
-        )
-        kwargs.setdefault("extra_pattern_prefixes", [])
-        kwargs.setdefault("extra_pattern_names", frozenset())
-        kwargs.setdefault("extra_runtime_keys", [])
-        kwargs.setdefault("classify_variant_field", None)
-        kwargs.setdefault("dagspace_name", "historical_norms")
-        return super().from_hydra_config(cfg, **kwargs)
-
-
-class WandbLogger(_WandbLoggerBase):
-    """WandbLogger that auto-applies historical_norms WandbConfig defaults.
-
-    When callers do ``WandbLogger(cfg, stage=...)``, this subclass ensures the
-    historical_norms-flavoured WandbConfig is created automatically.
-    """
-
-    def __init__(
-        self,
-        cfg,
-        stage: str,
-        run_id: str | None = None,
-        run_config: dict[str, Any] | None = None,
-        *,
-        wandb_id: str | None = None,
-        resume: str | None = None,
-    ) -> None:
-        super().__init__(
-            cfg, stage=stage, run_id=run_id, run_config=run_config,
-            wandb_id=wandb_id, resume=resume,
-        )
-        # Override wb_config with the historical_norms-specific version
-        self.wb_config = WandbConfig.from_hydra_config(cfg)
-
-
-__all__ = [
-    "WandbConfig",
-    "WandbLogger",
-    "ensure_local_tmpdir",
-    "collect_compute_metadata",
-]
+__all__ = ["WandbConfig", "WandbLogger", "ensure_local_tmpdir", "collect_compute_metadata"]
