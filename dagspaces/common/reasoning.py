@@ -85,6 +85,10 @@ _HARMONY_STRIPPED_FINAL = re.compile(r"assistantfinal", re.IGNORECASE)
 
 _HARMONY_WARNED = False
 
+# Reasoning parsers that already reported a fallback. `_split_reasoning`
+# runs per completion, so each parser warns one time per process.
+_PARSER_FALLBACK_WARNED: set[str] = set()
+
 
 def _split_harmony(text: str) -> tuple[str, str] | None:
     """Split a gpt-oss harmony completion into ``(reasoning, final_content)``.
@@ -290,8 +294,21 @@ def _split_reasoning(
             # reasoning tags, something went wrong — fall through to regex.
             if "<think>" not in content and "</think>" not in content:
                 return reasoning, content
-        except Exception:
-            pass  # fall through
+        except Exception as e:
+            # Fall through to the regex path — but say so ONCE per parser.
+            # This function runs per completion, so a per-call warning would
+            # drown the log. Silence, though, means a broken vLLM parser
+            # quietly degrades EVERY completion in the run to the regex
+            # fallback. The two paths do not agree on all outputs, so that
+            # difference lands in results, not only in the log.
+            if parser_name not in _PARSER_FALLBACK_WARNED:
+                _PARSER_FALLBACK_WARNED.add(parser_name)
+                print(
+                    f"[reasoning] WARNING: the vLLM reasoning parser "
+                    f"{parser_name!r} failed, so this run uses the regex "
+                    f"fallback for EVERY completion. The two paths do not "
+                    f"agree on all outputs. {type(e).__name__}: {e}"
+                )
 
     # Fallback path.
     content = _fallback_strip_reasoning(text)

@@ -22,6 +22,8 @@ flow into ``metrics.json``. Override for a single run with
 
 from __future__ import annotations
 
+import sys
+
 from typing import Any
 
 from omegaconf import OmegaConf
@@ -51,8 +53,17 @@ def sanity_overrides(cfg: Any) -> tuple[dict[str, float] | None, list[str] | Non
             p = OmegaConf.select(sanity_cfg, "refusal_patterns")
             if p is not None:
                 patterns = [str(x) for x in OmegaConf.to_container(p, resolve=True)]
-    except Exception:
-        pass
+    except Exception as e:
+        # Do NOT swallow silently. Falling back to the defaults here WEAKENS
+        # the health gate — a malformed `sanity.thresholds` would otherwise
+        # look exactly like "no overrides configured", and the stage would
+        # pass checks the operator believed they had tightened.
+        print(
+            f"[sanity] could not read the sanity overrides from the config, "
+            f"so the DEFAULT thresholds apply: {type(e).__name__}: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
     return thresholds, patterns
 
 

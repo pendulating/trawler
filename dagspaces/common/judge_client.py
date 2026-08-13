@@ -27,6 +27,8 @@ Usage (commercial API — just add base_url + model_name + api key)::
 
 from __future__ import annotations
 
+import sys
+
 import json
 import os
 from collections.abc import Callable
@@ -221,8 +223,18 @@ class JudgeClient:
                     models = list(self._client.models.list())
                     if models:
                         self.model_name = models[0].id
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Do NOT swallow silently: model_name stays "default",
+                    # and that literal string then travels into every judge
+                    # request, where it fails far from the cause.
+                    print(
+                        f"[judge_client] could not auto-discover the served "
+                        f"model name at {self.base_url!r}; model_name stays "
+                        f"'default' and requests will use that literally. "
+                        f"{type(e).__name__}: {e}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
             return True
 
         # Commercial providers: require explicit model name.

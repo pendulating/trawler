@@ -127,8 +127,17 @@ class _NoOpLogger:
         # operator sees them. Tolerate any non-SanityReport object.
         try:
             report.print_loud()
-        except Exception:
-            pass
+        except Exception as e:
+            # Do NOT swallow silently: the whole purpose of this call is to
+            # be loud. A silent failure here means a sanity FAILURE reaches
+            # nobody. Fall back to a minimal stderr line instead.
+            print(
+                f"[sanity] could not print the report for "
+                f"{getattr(report, 'dagspace', '?')}.{getattr(report, 'stage', '?')}: "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def __enter__(self) -> _NoOpLogger:
         return self

@@ -1911,8 +1911,16 @@ class WandbLogger:
         # Loud first — even when wandb is disabled, the operator sees them.
         try:
             report.print_loud()
-        except Exception:
-            pass
+        except Exception as e:
+            # Do NOT swallow silently: this call exists to be loud. A silent
+            # failure means a sanity FAILURE reaches nobody.
+            print(
+                f"[sanity] could not print the report for "
+                f"{getattr(report, 'dagspace', '?')}.{getattr(report, 'stage', '?')}: "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
 
         if not self.enabled or self._run is None:
             return
