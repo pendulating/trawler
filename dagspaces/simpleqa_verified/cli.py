@@ -1,17 +1,10 @@
-import hydra
-from omegaconf import DictConfig, OmegaConf
+"""SimpleQA-Verified factuality evaluation CLI."""
 
-from dagspaces.common.stage_utils import ensure_dotenv
+from dagspaces.common.cli import make_cli
 
 from .orchestrator import run_experiment
 
-
-@hydra.main(version_base=None, config_path="conf", config_name="config")
-def main(cfg: DictConfig) -> None:
-    """SimpleQA-Verified factuality evaluation CLI."""
-    ensure_dotenv()
-    print(OmegaConf.to_yaml(cfg))
-    run_experiment(cfg)
+main = make_cli(run_experiment)
 
 
 if __name__ == "__main__":

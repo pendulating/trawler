@@ -11,26 +11,15 @@ Usage:
 
     # Local (no SLURM):
     python -m dagspaces.eval_all.cli model=qwen3.5-9b/base hydra/launcher=null
+
 """
 
-import hydra
-from omegaconf import DictConfig, OmegaConf
-
-from dagspaces.common.stage_utils import ensure_dotenv
+from dagspaces.common.cli import make_cli
 
 from .orchestrator import run_eval_all
 
-
-@hydra.main(version_base=None, config_path="conf", config_name="config")
-def main(cfg: DictConfig) -> None:
-    """Evaluate a model on all benchmarks."""
-    # Idempotent. Must run inside main() so it fires in submitit-launched
-    # workers too (those import the module rather than executing __main__,
-    # so a __main__-guarded call would skip them and downstream
-    # ${oc.env:...}-style interpolations would fail.)
-    ensure_dotenv()
-    print(OmegaConf.to_yaml(cfg))
-    run_eval_all(cfg)
+# Explicit description: this module's docstring carries usage lines too.
+main = make_cli(run_eval_all, description="Evaluate a model on all benchmarks.")
 
 
 if __name__ == "__main__":

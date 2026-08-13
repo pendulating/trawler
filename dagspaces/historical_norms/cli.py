@@ -1,21 +1,10 @@
-import hydra
-from omegaconf import DictConfig, OmegaConf
+"""Historical Norms Extraction CLI."""
 
-from dagspaces.common.stage_utils import ensure_dotenv
+from dagspaces.common.cli import make_cli
 
 from .orchestrator import run_experiment
 
-
-@hydra.main(version_base=None, config_path="conf", config_name="config")
-def main(cfg: DictConfig) -> None:
-    """Historical Norms Extraction CLI."""
-    # Idempotent. Must run inside main() so it fires in submitit-launched
-    # workers too (those import the module rather than executing __main__,
-    # so a __main__-guarded call would skip them and downstream
-    # ${oc.env:...}-style interpolations would fail.)
-    ensure_dotenv()
-    print(OmegaConf.to_yaml(cfg))
-    run_experiment(cfg)
+main = make_cli(run_experiment)
 
 
 if __name__ == "__main__":
